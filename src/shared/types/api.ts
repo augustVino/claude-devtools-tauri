@@ -39,6 +39,14 @@ export interface AgentConfig {
   color?: string;
 }
 
+/**
+ * Agent config entry for IPC (flattened from HashMap).
+ */
+export interface AgentConfigEntry {
+  name: string;
+  color?: string;
+}
+
 // =============================================================================
 // Notifications API
 // =============================================================================
@@ -374,10 +382,10 @@ export interface ElectronAPI {
     absolutePath: string,
     projectRoot: string,
     maxTokens?: number
-  ) => Promise<ClaudeMdFileInfo | null>;
+  ) => Promise<string | null>;
 
   // Agent config reading
-  readAgentConfigs: (projectRoot: string) => Promise<Record<string, AgentConfig>>;
+  readAgentConfigs: (projectRoot: string) => Promise<AgentConfigEntry[]>;
 
   // Notifications API
   notifications: NotificationsAPI;
