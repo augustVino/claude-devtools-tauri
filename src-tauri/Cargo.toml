@@ -1,10 +1,13 @@
 [package]
-name = "app"
+name = "claude-devtools-tauri"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
+description = "Tauri v2 desktop app for visualizing Claude Code session execution — explore conversations, track context usage, and analyze tool calls"
+authors = ["claude-devtools-tauri contributors"]
+license = "MIT"
+repository = "https://github.com/augustVino/claude-devtools-tauri"
+readme = "../README.md"
+keywords = ["claude", "devtools", "tauri", "session-visualization"]
+categories = ["development-tools"]
 edition = "2021"
 rust-version = "1.77.2"
 

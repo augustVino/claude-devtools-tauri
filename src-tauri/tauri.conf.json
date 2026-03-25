@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "claude-devtools",
+  "productName": "claude-devtools-tauri",
   "version": "0.1.0",
-  "identifier": "com.claudecode.context",
+  "identifier": "com.augustvino.claude-devtools-tauri",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",

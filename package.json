@@ -1,7 +1,20 @@
 {
   "name": "claude-devtools-tauri",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Tauri v2 desktop app for visualizing Claude Code session execution — explore conversations, track context usage, and analyze tool calls",
+  "license": "MIT",
+  "author": {
+    "name": "claude-devtools-tauri contributors"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/augustVino/claude-devtools-tauri.git"
+  },
+  "homepage": "https://github.com/augustVino/claude-devtools-tauri",
+  "bugs": {
+    "url": "https://github.com/augustVino/claude-devtools-tauri/issues"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
