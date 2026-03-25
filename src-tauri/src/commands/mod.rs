@@ -6,6 +6,7 @@ pub mod search;
 pub mod validation;
 pub mod utility;
 pub mod projects;
+pub mod subagents;
 
 pub use window::*;
 pub use version::*;
@@ -15,4 +16,5 @@ pub use search::*;
 pub use validation::*;
 pub use utility::*;
 pub use projects::*;
+pub use subagents::*;
 pub use sessions::AppState;

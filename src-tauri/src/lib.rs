@@ -68,6 +68,7 @@ pub fn run() {
       commands::utility::get_zoom_factor,
       commands::projects::get_repository_groups,
       commands::projects::get_worktree_sessions,
+      commands::subagents::get_subagent_detail,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
