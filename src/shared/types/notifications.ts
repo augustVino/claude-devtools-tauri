@@ -9,7 +9,7 @@
  * Shared between preload and renderer processes.
  */
 
-import type { TriggerColor } from '@shared/constants/triggerColors';
+import type { TriggerColor } from "@shared/constants/triggerColors";
 
 // =============================================================================
 // Detected Error Types
@@ -66,52 +66,58 @@ export interface DetectedError {
 /**
  * Content types that can trigger notifications.
  */
-export type TriggerContentType = 'tool_result' | 'tool_use' | 'thinking' | 'text';
+export type TriggerContentType =
+  | "tool_result"
+  | "tool_use"
+  | "thinking"
+  | "text";
 
 /**
  * Known tool names that can be filtered for tool_use triggers.
  */
 export const KNOWN_TOOL_NAMES = [
-  'Bash',
-  'Task',
-  'TodoWrite',
-  'Read',
-  'Write',
-  'Edit',
-  'Grep',
-  'Glob',
-  'WebFetch',
-  'WebSearch',
-  'LSP',
-  'Skill',
-  'NotebookEdit',
-  'AskUserQuestion',
-  'KillShell',
-  'TaskOutput',
+  "Bash",
+  "Task",
+  "TodoWrite",
+  "Read",
+  "Write",
+  "Edit",
+  "Grep",
+  "Glob",
+  "WebFetch",
+  "WebSearch",
+  "LSP",
+  "Skill",
+  "NotebookEdit",
+  "AskUserQuestion",
+  "KillShell",
+  "TaskOutput",
 ] as const;
 
 /**
  * Tool names that can be filtered for tool_use triggers.
  * Accepts known tool names or any custom tool name.
  */
-export type TriggerToolName = (typeof KNOWN_TOOL_NAMES)[number] | (string & Record<never, never>);
+export type TriggerToolName =
+  | (typeof KNOWN_TOOL_NAMES)[number]
+  | (string & Record<never, never>);
 
 /**
  * Match fields available for different content types and tools.
  */
-export type MatchFieldForToolResult = 'content';
-export type MatchFieldForBash = 'command' | 'description';
-export type MatchFieldForTask = 'description' | 'prompt' | 'subagent_type';
-export type MatchFieldForRead = 'file_path';
-export type MatchFieldForWrite = 'file_path' | 'content';
-export type MatchFieldForEdit = 'file_path' | 'old_string' | 'new_string';
-export type MatchFieldForGlob = 'pattern' | 'path';
-export type MatchFieldForGrep = 'pattern' | 'path' | 'glob';
-export type MatchFieldForWebFetch = 'url' | 'prompt';
-export type MatchFieldForWebSearch = 'query';
-export type MatchFieldForSkill = 'skill' | 'args';
-export type MatchFieldForThinking = 'thinking';
-export type MatchFieldForText = 'text';
+export type MatchFieldForToolResult = "content";
+export type MatchFieldForBash = "command" | "description";
+export type MatchFieldForTask = "description" | "prompt" | "subagent_type";
+export type MatchFieldForRead = "file_path";
+export type MatchFieldForWrite = "file_path" | "content";
+export type MatchFieldForEdit = "file_path" | "old_string" | "new_string";
+export type MatchFieldForGlob = "pattern" | "path";
+export type MatchFieldForGrep = "pattern" | "path" | "glob";
+export type MatchFieldForWebFetch = "url" | "prompt";
+export type MatchFieldForWebSearch = "query";
+export type MatchFieldForSkill = "skill" | "args";
+export type MatchFieldForThinking = "thinking";
+export type MatchFieldForText = "text";
 
 /**
  * Combined type for all possible match fields.
@@ -137,12 +143,12 @@ export type TriggerMatchField =
  * - 'content_match': Triggers when content matches a regex pattern
  * - 'token_threshold': Triggers when token count exceeds threshold
  */
-export type TriggerMode = 'error_status' | 'content_match' | 'token_threshold';
+export type TriggerMode = "error_status" | "content_match" | "token_threshold";
 
 /**
  * Token type for threshold triggers.
  */
-export type TriggerTokenType = 'input' | 'output' | 'total';
+export type TriggerTokenType = "input" | "output" | "total";
 
 /**
  * Notification trigger configuration.
@@ -257,9 +263,9 @@ export interface AppConfig {
     /** Whether to show icon in dock (macOS) */
     showDockIcon: boolean;
     /** Application theme */
-    theme: 'dark' | 'light' | 'system';
+    theme: "dark" | "light" | "system";
     /** Default tab to show on app launch */
-    defaultTab: 'dashboard' | 'last-session';
+    defaultTab: "dashboard" | "last-session";
     /** Optional custom Claude root folder (auto-detected when null) */
     claudeRootPath: string | null;
     /** Whether to auto-expand AI response groups when opening a transcript or receiving new messages */
@@ -290,7 +296,7 @@ export interface AppConfig {
       host: string;
       port: number;
       username: string;
-      authMethod: 'password' | 'privateKey' | 'agent' | 'auto';
+      authMethod: "password" | "privateKey" | "agent" | "auto";
       privateKeyPath?: string;
     } | null;
     /** Whether to auto-reconnect on launch */
@@ -302,7 +308,7 @@ export interface AppConfig {
       host: string;
       port: number;
       username: string;
-      authMethod: 'password' | 'privateKey' | 'agent' | 'auto';
+      authMethod: "password" | "privateKey" | "agent" | "auto";
       privateKeyPath?: string;
     }[];
     /** Last active context ID */
@@ -315,4 +321,73 @@ export interface AppConfig {
     /** Port for the HTTP server (default 3456) */
     port: number;
   };
+}
+
+// =============================================================================
+// Notification Store Types (Tauri backend mirrors)
+// =============================================================================
+
+/**
+ * Stored notification — extends DetectedError with read state and creation time.
+ * Mirrors the Rust StoredNotification struct.
+ */
+export interface StoredNotification extends DetectedError {
+  /** Whether the notification has been read */
+  isRead: boolean;
+  /** Unix timestamp when the notification was stored */
+  createdAt: number;
+}
+
+/**
+ * Options for querying notifications with pagination.
+ * Mirrors the Rust GetNotificationsOptions struct.
+ */
+export interface GetNotificationsOptions {
+  /** Maximum number of notifications to return */
+  limit?: number;
+  /** Number of notifications to skip */
+  offset?: number;
+}
+
+/**
+ * Paginated result from get_notifications command.
+ * Mirrors the Rust GetNotificationsResult struct.
+ */
+export interface GetNotificationsResult {
+  /** Notifications for the current page */
+  notifications: StoredNotification[];
+  /** Total notification count */
+  total: number;
+  /** Total notification count (alias for total) */
+  totalCount: number;
+  /** Unread notification count */
+  unreadCount: number;
+  /** Whether more notifications exist beyond this page */
+  hasMore: boolean;
+}
+
+/**
+ * Notification count result.
+ * Mirrors the Rust NotificationCountResult struct.
+ */
+export interface NotificationCountResult {
+  /** Total notification count */
+  total: number;
+  /** Unread notification count */
+  unreadCount: number;
+}
+
+/**
+ * Notification statistics.
+ * Mirrors the Rust NotificationStats struct.
+ */
+export interface NotificationStats {
+  /** Total notification count */
+  total: number;
+  /** Unread notification count */
+  unread: number;
+  /** Count of notifications grouped by project ID */
+  byProject: Record<string, number>;
+  /** Count of notifications grouped by source (tool name) */
+  bySource: Record<string, number>;
 }

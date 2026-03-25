@@ -1,8 +1,8 @@
 /**
  * Tauri API client — implements ElectronAPI via @tauri-apps/api invoke/listen.
  *
- * Window controls, version, sessions, config, search, validation, and utility
- * commands are implemented. Notifications and advanced features are stubbed.
+ * Window controls, version, sessions, config, search, validation, notifications,
+ * and trigger commands are implemented. Session, updater, and SSH features are stubbed.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -28,7 +28,17 @@ import type {
   RepositoryGroup,
   RawSubagentDetail,
 } from "@main/types";
-import type { AppConfig } from "@shared/types/notifications";
+import type {
+  AppConfig,
+  DetectedError,
+  NotificationTrigger,
+  TriggerTestResult,
+  StoredNotification,
+  GetNotificationsOptions,
+  GetNotificationsResult,
+  NotificationCountResult,
+  NotificationStats,
+} from "@shared/types/notifications";
 
 const NOT_IMPLEMENTED = new Error("Not yet implemented in Tauri backend");
 
@@ -298,8 +308,68 @@ export class TauriAPIClient implements ElectronAPI {
     invoke("read_agent_configs", { projectRoot });
 
   // Nested API objects — partially implemented
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly notifications = stubEventAPI() as any;
+  readonly notifications = {
+    get: (options?: GetNotificationsOptions): Promise<GetNotificationsResult> =>
+      invoke("get_notifications", { options: options ?? null }),
+    markRead: (id: string): Promise<boolean> =>
+      invoke<boolean>("mark_notification_read", { notificationId: id }),
+    markAllRead: (): Promise<boolean> =>
+      invoke<boolean>("mark_all_notifications_read"),
+    delete: (id: string): Promise<boolean> =>
+      invoke<boolean>("delete_notification", { notificationId: id }),
+    clear: (): Promise<boolean> => invoke<boolean>("clear_notifications"),
+    getUnreadCount: (): Promise<NotificationCountResult> =>
+      invoke<NotificationCountResult>("get_notification_count"),
+    getStats: (): Promise<NotificationStats> =>
+      invoke<NotificationStats>("get_notification_stats"),
+    onNew: (cb: (_event: unknown, error: unknown) => void): (() => void) => {
+      let unlisten: UnlistenFn | null = null;
+      listen<StoredNotification>("notification:new", (e) => cb(e, e.payload))
+        .then((fn) => {
+          unlisten = fn;
+        })
+        .catch((err) => {
+          console.error("Failed to listen to notification:new event:", err);
+        });
+      return () => {
+        if (unlisten) unlisten();
+      };
+    },
+    onUpdated: (
+      cb: (
+        _event: unknown,
+        payload: { total: number; unreadCount: number },
+      ) => void,
+    ): (() => void) => {
+      let unlisten: UnlistenFn | null = null;
+      listen<{ total: number; unreadCount: number }>(
+        "notification:updated",
+        (e) => cb(e, e.payload),
+      )
+        .then((fn) => {
+          unlisten = fn;
+        })
+        .catch((err) => {
+          console.error("Failed to listen to notification:updated event:", err);
+        });
+      return () => {
+        if (unlisten) unlisten();
+      };
+    },
+    onClicked: (cb: (_event: unknown, data: unknown) => void): (() => void) => {
+      let unlisten: UnlistenFn | null = null;
+      listen<DetectedError>("notification:clicked", (e) => cb(e, e.payload))
+        .then((fn) => {
+          unlisten = fn;
+        })
+        .catch((err) => {
+          console.error("Failed to listen to notification:clicked event:", err);
+        });
+      return () => {
+        if (unlisten) unlisten();
+      };
+    },
+  };
   readonly session = stubEventAPI() as any;
   readonly updater = stubEventAPI() as any;
   readonly ssh = stubEventAPI() as any;
@@ -320,11 +390,20 @@ export class TauriAPIClient implements ElectronAPI {
     snooze: (minutes: number): Promise<AppConfig> =>
       invoke<AppConfig>("snooze", { minutes }),
     clearSnooze: (): Promise<AppConfig> => invoke<AppConfig>("clear_snooze"),
-    addTrigger: notImplemented,
-    updateTrigger: notImplemented,
-    removeTrigger: notImplemented,
-    getTriggers: notImplemented,
-    testTrigger: notImplemented,
+    addTrigger: (
+      trigger: Omit<NotificationTrigger, "isBuiltin">,
+    ): Promise<AppConfig> => invoke<AppConfig>("add_trigger", { trigger }),
+    updateTrigger: (
+      triggerId: string,
+      updates: Partial<NotificationTrigger>,
+    ): Promise<AppConfig> =>
+      invoke<AppConfig>("update_trigger", { triggerId, updates }),
+    removeTrigger: (triggerId: string): Promise<AppConfig> =>
+      invoke<AppConfig>("remove_trigger", { triggerId }),
+    getTriggers: (): Promise<NotificationTrigger[]> =>
+      invoke<NotificationTrigger[]>("get_triggers"),
+    testTrigger: (trigger: NotificationTrigger): Promise<TriggerTestResult> =>
+      invoke<TriggerTestResult>("test_trigger", { trigger }),
     selectFolders: async (): Promise<string[]> => {
       const result = await open({
         multiple: true,
