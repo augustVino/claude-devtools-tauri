@@ -182,3 +182,12 @@ pub struct TokenBreakdown {
     #[serde(rename = "cacheCreation")]
     pub cache_creation: u64,
 }
+
+/// Group of semantic steps originating from the same source message.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SemanticStepGroup {
+    pub id: String,
+    pub label: String,
+    #[serde(rename = "stepIds")]
+    pub step_ids: Vec<String>,
+}

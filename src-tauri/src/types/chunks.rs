@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::messages::{ParsedMessage, SemanticStep, ToolCall, ToolResult};
+use super::messages::{ParsedMessage, SemanticStep, SemanticStepGroup, ToolCall, ToolResult};
 use crate::types::domain::{Session, SessionMetrics};
 
 // =============================================================================
@@ -47,6 +47,10 @@ pub struct AiChunk {
     pub sidechain_messages: Vec<ParsedMessage>,
     #[serde(rename = "toolExecutions", default)]
     pub tool_executions: Vec<ToolExecution>,
+    #[serde(rename = "semanticSteps", default, skip_serializing_if = "Vec::is_empty")]
+    pub semantic_steps: Vec<SemanticStep>,
+    #[serde(rename = "semanticStepGroups", default, skip_serializing_if = "Vec::is_empty")]
+    pub semantic_step_groups: Vec<SemanticStepGroup>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -171,6 +171,8 @@ fn test_get_total_chunk_metrics() {
             processes: vec![],
             sidechain_messages: vec![],
             tool_executions: vec![],
+            semantic_steps: vec![],
+            semantic_step_groups: vec![],
         }),
     ];
 

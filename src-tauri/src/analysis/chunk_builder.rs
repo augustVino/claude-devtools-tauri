@@ -88,6 +88,7 @@ impl ChunkBuilder {
             duration_ms: Self::duration_ms(buf), metrics: calculate_metrics(buf),
             responses: buf.to_vec(), processes: Self::link_subs(buf, subs),
             sidechain_messages: vec![], tool_executions: Self::tool_execs(buf),
+            semantic_steps: vec![], semantic_step_groups: vec![],
         }));
     }
 
