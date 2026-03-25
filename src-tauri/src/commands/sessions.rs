@@ -9,6 +9,9 @@ use crate::infrastructure::{DataCache, ConfigManager};
 use crate::parsing::{parse_session_file, ParsedSession};
 use crate::types::domain::{Session, SessionMetrics, PaginatedSessionsResult};
 use crate::types::chunks::SessionDetail;
+use crate::utils::content_sanitizer::{
+    extract_command_display, sanitize_display_content, is_command_output_content, is_command_content,
+};
 use crate::utils::{decode_path, extract_base_dir, extract_project_name, get_projects_base_path};
 use crate::analysis::ChunkBuilder;
 
@@ -268,13 +271,64 @@ async fn build_session_metadata(path: &std::path::Path, project_id: &str) -> Opt
 
     let parsed = parse_session_file(path).await;
 
-    // Extract first user message as title
-    let first_message = parsed.by_type.real_user.first().map(|m| {
-        match &m.content {
-            serde_json::Value::String(s) => s.chars().take(100).collect(),
-            _ => String::new(),
+    // Extract first user message as title (aligned with Electron's analyzeSessionFileMetadata)
+    let mut first_user_text: Option<String> = None;
+    let mut first_command_text: Option<String> = None;
+
+    for msg in &parsed.messages {
+        if msg.message_type != crate::types::domain::MessageType::User {
+            continue;
         }
-    });
+        if msg.is_meta {
+            continue;
+        }
+
+        let text = match &msg.content {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Array(arr) => arr
+                .iter()
+                .filter_map(|block| {
+                    if block.get("type")?.as_str()? == "text" {
+                        block.get("text")?.as_str().map(|s| s.trim().to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+            _ => continue,
+        };
+
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Skip command output and interruptions
+        if is_command_output_content(trimmed)
+            || trimmed.starts_with("[Request interrupted by user")
+        {
+            continue;
+        }
+
+        // Store command-name as fallback, keep looking for real text
+        if is_command_content(trimmed) {
+            if first_command_text.is_none() {
+                first_command_text = extract_command_display(trimmed);
+            }
+            continue;
+        }
+
+        // Real user text found — sanitize and truncate to 500 chars
+        let sanitized = sanitize_display_content(trimmed);
+        if sanitized.is_empty() {
+            continue;
+        }
+        first_user_text = Some(sanitized.chars().take(500).collect());
+        break;
+    }
+
+    let first_message = first_user_text.or(first_command_text);
 
     Some(Session {
         id: filename,

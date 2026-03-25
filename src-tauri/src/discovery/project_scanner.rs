@@ -7,6 +7,9 @@
 //! - Return sorted list of projects by recent activity
 
 use crate::types::domain::{Project, Session, SessionMetadataLevel};
+use crate::utils::content_sanitizer::{
+    extract_command_display, sanitize_display_content, is_command_output_content, is_command_content,
+};
 use crate::utils::path_decoder;
 use std::collections::HashMap;
 use std::fs;
@@ -20,6 +23,8 @@ struct SessionPreview {
     message_count: u32,
     is_ongoing: Option<bool>,
     git_branch: Option<String>,
+    /// Stored command display as fallback title (e.g., "/model sonnet").
+    command_fallback: Option<String>,
 }
 
 impl Default for SessionPreview {
@@ -28,6 +33,7 @@ impl Default for SessionPreview {
             first_message: None,
             first_timestamp: None,
             has_task_calls: false,
+            command_fallback: None,
             message_count: 0,
             is_ongoing: None,
             git_branch: None,
@@ -288,32 +294,69 @@ impl ProjectScanner {
                     // Extract first message text — handle both string and array content
                     let msg_content = json.pointer("/message/content");
                     let text = if let Some(s) = msg_content.and_then(|v| v.as_str()) {
-                        // Simple string content
                         Some(s.to_string())
                     } else if let Some(arr) = msg_content.and_then(|v| v.as_array()) {
-                        // Array content: extract text from {type: "text", text: "..."} blocks
-                        let parts: Vec<&str> = arr.iter()
+                        let parts: Vec<String> = arr
+                            .iter()
                             .filter_map(|block| {
                                 if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                                    block.get("text").and_then(|t| t.as_str())
+                                    block.get("text").and_then(|t| t.as_str()).map(|s| s.trim().to_string())
                                 } else {
                                     None
                                 }
                             })
                             .collect();
-                        if parts.is_empty() { None } else { Some(parts.join(" ")) }
+                        if parts.is_empty() {
+                            None
+                        } else {
+                            Some(parts.join(" "))
+                        }
                     } else {
                         None
                     };
 
                     if let Some(text) = text {
-                        // Skip command-output noise (starts with "[") and interruptions
                         let trimmed = text.trim();
-                        if !trimmed.starts_with('[') && !trimmed.starts_with("[Request interrupted") {
-                            preview.first_message = Some(trimmed.chars().take(100).collect());
-                            found_first_user = true;
+
+                        // Skip command output and interruptions
+                        if is_command_output_content(trimmed)
+                            || trimmed.starts_with("[Request interrupted by user")
+                        {
+                            // Still capture metadata even when skipping
+                            if preview.first_timestamp.is_none() {
+                                if let Some(ts) =
+                                    json.get("timestamp").and_then(|v| v.as_str())
+                                {
+                                    preview.first_timestamp = Some(ts.to_string());
+                                }
+                            }
+                            if preview.git_branch.is_none() {
+                                if let Some(branch) =
+                                    json.get("gitBranch").and_then(|v| v.as_str())
+                                {
+                                    preview.git_branch = Some(branch.to_string());
+                                }
+                            }
+                            continue;
+                        }
+
+                        // Store command-name as fallback, keep looking for real text
+                        if is_command_content(trimmed) {
+                            if preview.command_fallback.is_none() {
+                                preview.command_fallback =
+                                    extract_command_display(trimmed);
+                            }
+                        } else {
+                            // Real user text found — sanitize and truncate to 500 chars
+                            let sanitized = sanitize_display_content(trimmed);
+                            if !sanitized.is_empty() {
+                                preview.first_message =
+                                    Some(sanitized.chars().take(500).collect());
+                                found_first_user = true;
+                            }
                         }
                     }
+
                     if let Some(ts) = json.get("timestamp").and_then(|v| v.as_str()) {
                         preview.first_timestamp = Some(ts.to_string());
                     }
@@ -337,6 +380,11 @@ impl ProjectScanner {
                     }
                 }
             }
+        }
+
+        // Fall back to command display if no real user text was found
+        if preview.first_message.is_none() {
+            preview.first_message = preview.command_fallback.take();
         }
 
         preview
