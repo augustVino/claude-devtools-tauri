@@ -525,8 +525,10 @@ mod tests {
             "2026-01-01T00:00:01Z",
             Some("2026-01-01T00:00:02Z"),
         );
-        let process = make_process("sub-1", 1500, 3000, None, None);
-        let chunks = vec![make_ai_chunk("a1", 1000, 4000, vec![tool_exec], vec![process])];
+        // Use timestamps in the same range as the RFC3339-parsed tool times
+        let base_ts = parse_ts_ms("2026-01-01T00:00:00Z").unwrap();
+        let process = make_process("sub-1", base_ts + 1500, base_ts + 3000, None, None);
+        let chunks = vec![make_ai_chunk("a1", base_ts + 1000, base_ts + 4000, vec![tool_exec], vec![process])];
         let data = build_waterfall_data(&chunks, &[]);
 
         // AI chunk + tool + process = 3 items
@@ -687,7 +689,7 @@ mod tests {
     fn test_parse_ts_ms_valid() {
         assert_eq!(
             parse_ts_ms("2026-01-01T00:00:00Z"),
-            Some(1735689600000)
+            Some(1767225600000)
         );
     }
 
