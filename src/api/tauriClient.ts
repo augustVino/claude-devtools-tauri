@@ -5,11 +5,17 @@
  * commands are implemented. Notifications and advanced features are stubbed.
  */
 
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 
-import type { ElectronAPI, ConfigAPI, ClaudeMdFileInfo, AgentConfigEntry } from '@shared/types/api';
+import type {
+  ElectronAPI,
+  ConfigAPI,
+  ClaudeMdFileInfo,
+  AgentConfigEntry,
+} from "@shared/types/api";
 import type {
   Session,
   SessionDetail,
@@ -21,10 +27,10 @@ import type {
   TodoChangeEvent,
   RepositoryGroup,
   RawSubagentDetail,
-} from '@main/types';
-import type { AppConfig } from '@shared/types/notifications';
+} from "@main/types";
+import type { AppConfig } from "@shared/types/notifications";
 
-const NOT_IMPLEMENTED = new Error('Not yet implemented in Tauri backend');
+const NOT_IMPLEMENTED = new Error("Not yet implemented in Tauri backend");
 
 function notImplemented(): Promise<never> {
   return Promise.reject(NOT_IMPLEMENTED);
@@ -42,7 +48,7 @@ function stubEventAPI(): Record<string, unknown> {
   return new Proxy({} as Record<string, unknown>, {
     get(_target, prop) {
       // Event listener methods return a no-op cleanup function
-      if (typeof prop === 'string' && prop.startsWith('on')) {
+      if (typeof prop === "string" && prop.startsWith("on")) {
         return () => () => {};
       }
       // Other methods return rejected Promise
@@ -58,8 +64,8 @@ function stubEventAPI(): Record<string, unknown> {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function createContextAPI(): any {
   return {
-    getActive: () => Promise.resolve('local'),
-    list: () => Promise.resolve([{ id: 'local', type: 'local' }]),
+    getActive: () => Promise.resolve("local"),
+    list: () => Promise.resolve([{ id: "local", type: "local" }]),
     switch: notImplemented,
     onChanged: () => () => {},
   };
@@ -102,16 +108,16 @@ export class TauriAPIClient implements ElectronAPI {
   // Implemented commands
   // ===========================================================================
 
-  readonly getAppVersion = (): Promise<string> => invoke('get_app_version');
+  readonly getAppVersion = (): Promise<string> => invoke("get_app_version");
 
   readonly windowControls = {
-    minimize: (): Promise<void> => invoke('minimize'),
-    maximize: (): Promise<void> => invoke('maximize'),
-    close: (): Promise<void> => invoke('close'),
-    isMaximized: (): Promise<boolean> => invoke<boolean>('is_maximized'),
+    minimize: (): Promise<void> => invoke("minimize"),
+    maximize: (): Promise<void> => invoke("maximize"),
+    close: (): Promise<void> => invoke("close"),
+    isMaximized: (): Promise<boolean> => invoke<boolean>("is_maximized"),
     relaunch: async (): Promise<void> => {
       try {
-        await invoke('process_relaunch');
+        await invoke("process_relaunch");
       } catch {
         window.location.reload();
       }
@@ -119,7 +125,7 @@ export class TauriAPIClient implements ElectronAPI {
   };
 
   readonly getZoomFactor = async (): Promise<number> => {
-    const result = await invoke<ZoomFactorResult>('get_zoom_factor');
+    const result = await invoke<ZoomFactorResult>("get_zoom_factor");
     return result.factor;
   };
   readonly onZoomFactorChanged = (): (() => void) => () => {};
@@ -128,30 +134,30 @@ export class TauriAPIClient implements ElectronAPI {
   // Project and Session commands
   // ===========================================================================
 
-  readonly getProjects = (): Promise<Project[]> => invoke('get_projects');
+  readonly getProjects = (): Promise<Project[]> => invoke("get_projects");
 
   readonly getSessions = (projectId: string): Promise<Session[]> =>
-    invoke('get_sessions', { projectId });
+    invoke("get_sessions", { projectId });
 
   readonly getSessionsPaginated = (
     projectId: string,
     cursor: string | null,
     limit?: number,
-    options?: unknown
+    options?: unknown,
   ): Promise<PaginatedSessionsResult> =>
-    invoke('get_sessions_paginated', { projectId, cursor, limit, options });
+    invoke("get_sessions_paginated", { projectId, cursor, limit, options });
 
   readonly getSessionDetail = (
     projectId: string,
-    sessionId: string
+    sessionId: string,
   ): Promise<SessionDetail | null> =>
-    invoke('get_session_detail', { projectId, sessionId });
+    invoke("get_session_detail", { projectId, sessionId });
 
   readonly getSessionMetrics = (
     projectId: string,
-    sessionId: string
+    sessionId: string,
   ): Promise<SessionMetrics | null> =>
-    invoke('get_session_metrics', { projectId, sessionId });
+    invoke("get_session_metrics", { projectId, sessionId });
 
   // ===========================================================================
   // Search commands
@@ -160,15 +166,15 @@ export class TauriAPIClient implements ElectronAPI {
   readonly searchSessions = (
     projectId: string,
     query: string,
-    maxResults?: number
+    maxResults?: number,
   ): Promise<SearchSessionsResult> =>
-    invoke('search_sessions', { projectId, query, maxResults });
+    invoke("search_sessions", { projectId, query, maxResults });
 
   readonly searchAllProjects = (
     query: string,
-    maxResults?: number
+    maxResults?: number,
   ): Promise<SearchSessionsResult> =>
-    invoke('search_all_projects', { query, maxResults });
+    invoke("search_all_projects", { query, maxResults });
 
   // ===========================================================================
   // Validation commands
@@ -176,9 +182,9 @@ export class TauriAPIClient implements ElectronAPI {
 
   readonly validatePath = async (
     relativePath: string,
-    _projectPath: string
+    _projectPath: string,
   ): Promise<{ exists: boolean; isDirectory?: boolean }> => {
-    const result = await invoke<PathValidationResult>('validate_path', {
+    const result = await invoke<PathValidationResult>("validate_path", {
       path: relativePath,
     });
     return {
@@ -188,11 +194,11 @@ export class TauriAPIClient implements ElectronAPI {
   };
 
   readonly validateMentions = async (
-    mentions: { type: 'path'; value: string }[],
-    _projectPath: string
+    mentions: { type: "path"; value: string }[],
+    _projectPath: string,
   ): Promise<Record<string, boolean>> => {
     const paths = mentions.map((m) => m.value);
-    const result = await invoke<MentionsValidationResult>('validate_mentions', {
+    const result = await invoke<MentionsValidationResult>("validate_mentions", {
       mentions: paths,
     });
     // Return a map where all paths have the same validity
@@ -209,10 +215,10 @@ export class TauriAPIClient implements ElectronAPI {
 
   readonly openPath = async (
     targetPath: string,
-    _projectRoot?: string
+    _projectRoot?: string,
   ): Promise<{ success: boolean; error?: string }> => {
     try {
-      await invoke('open_path', { path: targetPath });
+      await invoke("open_path", { path: targetPath });
       return { success: true };
     } catch (e) {
       return { success: false, error: String(e) };
@@ -220,10 +226,10 @@ export class TauriAPIClient implements ElectronAPI {
   };
 
   readonly openExternal = async (
-    url: string
+    url: string,
   ): Promise<{ success: boolean; error?: string }> => {
     try {
-      await invoke('open_external', { url });
+      await invoke("open_external", { url });
       return { success: true };
     } catch (e) {
       return { success: false, error: String(e) };
@@ -242,10 +248,10 @@ export class TauriAPIClient implements ElectronAPI {
   // ===========================================================================
 
   readonly getRepositoryGroups = (): Promise<RepositoryGroup[]> =>
-    invoke('get_repository_groups');
+    invoke("get_repository_groups");
 
   readonly getWorktreeSessions = (worktreeId: string): Promise<Session[]> =>
-    invoke('get_worktree_sessions', { worktreeId });
+    invoke("get_worktree_sessions", { worktreeId });
 
   // ===========================================================================
   // Session commands (additional)
@@ -254,42 +260,42 @@ export class TauriAPIClient implements ElectronAPI {
   readonly getSubagentDetail = (
     projectId: string,
     sessionId: string,
-    subagentId: string
+    subagentId: string,
   ): Promise<RawSubagentDetail | null> =>
-    invoke('get_subagent_detail', { projectId, sessionId, subagentId });
+    invoke("get_subagent_detail", { projectId, sessionId, subagentId });
 
   readonly getSessionsByIds = (
     projectId: string,
     sessionIds: string[],
-    _options?: unknown
+    _options?: unknown,
   ): Promise<Session[]> =>
-    invoke('get_sessions_by_ids', { projectId, sessionIds });
+    invoke("get_sessions_by_ids", { projectId, sessionIds });
 
   // ===========================================================================
   // CLAUDE.md and Agent Config commands
   // ===========================================================================
 
   readonly readClaudeMdFiles = (
-    projectRoot: string
+    projectRoot: string,
   ): Promise<Record<string, ClaudeMdFileInfo>> =>
-    invoke('read_claude_md_files', { projectRoot });
+    invoke("read_claude_md_files", { projectRoot });
 
   readonly readDirectoryClaudeMd = (
-    directory: string
+    directory: string,
   ): Promise<ClaudeMdFileInfo> =>
-    invoke('read_directory_claude_md', { directory });
+    invoke("read_directory_claude_md", { directory });
 
   readonly readMentionedFile = async (
     filePath: string,
     projectRoot: string,
-    _maxTokens?: number
+    _maxTokens?: number,
   ): Promise<string | null> =>
-    invoke('read_mentioned_file', { filePath, projectRoot });
+    invoke("read_mentioned_file", { filePath, projectRoot });
 
   readonly readAgentConfigs = (
-    projectRoot: string
+    projectRoot: string,
   ): Promise<AgentConfigEntry[]> =>
-    invoke('read_agent_configs', { projectRoot });
+    invoke("read_agent_configs", { projectRoot });
 
   // Nested API objects — partially implemented
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -302,67 +308,99 @@ export class TauriAPIClient implements ElectronAPI {
 
   // Config API — implemented
   readonly config: ConfigAPI = {
-    get: (): Promise<AppConfig> => invoke<AppConfig>('get_config'),
+    get: (): Promise<AppConfig> => invoke<AppConfig>("get_config"),
     update: (section: string, data: object): Promise<AppConfig> =>
-      invoke<AppConfig>('update_config', { section, data }),
+      invoke<AppConfig>("update_config", { section, data }),
     addIgnoreRegex: (pattern: string): Promise<AppConfig> =>
-      invoke<AppConfig>('add_ignore_regex', { pattern }),
+      invoke<AppConfig>("add_ignore_regex", { pattern }),
     removeIgnoreRegex: (pattern: string): Promise<AppConfig> =>
-      invoke<AppConfig>('remove_ignore_regex', { pattern }),
+      invoke<AppConfig>("remove_ignore_regex", { pattern }),
     addIgnoreRepository: notImplemented,
     removeIgnoreRepository: notImplemented,
-    snooze: (minutes: number): Promise<AppConfig> => invoke<AppConfig>('snooze', { minutes }),
-    clearSnooze: (): Promise<AppConfig> => invoke<AppConfig>('clear_snooze'),
+    snooze: (minutes: number): Promise<AppConfig> =>
+      invoke<AppConfig>("snooze", { minutes }),
+    clearSnooze: (): Promise<AppConfig> => invoke<AppConfig>("clear_snooze"),
     addTrigger: notImplemented,
     updateTrigger: notImplemented,
     removeTrigger: notImplemented,
     getTriggers: notImplemented,
     testTrigger: notImplemented,
-    selectFolders: notImplemented,
-    selectClaudeRootFolder: notImplemented,
+    selectFolders: async (): Promise<string[]> => {
+      const result = await open({
+        multiple: true,
+        directory: true,
+        title: "Select Project Folders",
+      });
+      if (result === null) return [];
+      return result as string[];
+    },
+    selectClaudeRootFolder: async (): Promise<{
+      path: string;
+      isClaudeDirName: boolean;
+      hasProjectsDir: boolean;
+    } | null> => {
+      const { homeDir } = await import("@tauri-apps/api/path");
+      const home = await homeDir();
+      const result = await open({
+        directory: true,
+        title: "Select Claude Root Folder",
+        defaultPath: home,
+      });
+      if (result === null) return null;
+      const selectedPath = Array.isArray(result) ? result[0] : result;
+      return {
+        path: selectedPath,
+        isClaudeDirName: selectedPath.endsWith(".claude"),
+        hasProjectsDir: false,
+      };
+    },
     getClaudeRootInfo: () =>
       Promise.resolve({
-        defaultPath: '',
-        resolvedPath: '',
+        defaultPath: "",
+        resolvedPath: "",
         customPath: null,
       }),
     findWslClaudeRoots: () => Promise.resolve([]),
     openInEditor: notImplemented,
     pinSession: (projectId: string, sessionId: string): Promise<void> =>
-      invoke('pin_session', { projectId, sessionId }),
+      invoke("pin_session", { projectId, sessionId }),
     unpinSession: (projectId: string, sessionId: string): Promise<void> =>
-      invoke('unpin_session', { projectId, sessionId }),
+      invoke("unpin_session", { projectId, sessionId }),
     hideSession: (projectId: string, sessionId: string): Promise<void> =>
-      invoke('hide_session', { projectId, sessionId }),
+      invoke("hide_session", { projectId, sessionId }),
     unhideSession: (projectId: string, sessionId: string): Promise<void> =>
-      invoke('unhide_session', { projectId, sessionId }),
+      invoke("unhide_session", { projectId, sessionId }),
     hideSessions: notImplemented,
     unhideSessions: notImplemented,
   };
 
   // Event listeners — wired to Tauri events
-  readonly onFileChange = (callback: (event: FileChangeEvent) => void): (() => void) => {
+  readonly onFileChange = (
+    callback: (event: FileChangeEvent) => void,
+  ): (() => void) => {
     let unlisten: UnlistenFn | null = null;
-    listen<FileChangeEvent>('file-change', (e) => callback(e.payload))
+    listen<FileChangeEvent>("file-change", (e) => callback(e.payload))
       .then((fn) => {
         unlisten = fn;
       })
       .catch((err) => {
-        console.error('Failed to listen to file-change event:', err);
+        console.error("Failed to listen to file-change event:", err);
       });
     return () => {
       if (unlisten) unlisten();
     };
   };
 
-  readonly onTodoChange = (callback: (event: TodoChangeEvent) => void): (() => void) => {
+  readonly onTodoChange = (
+    callback: (event: TodoChangeEvent) => void,
+  ): (() => void) => {
     let unlisten: UnlistenFn | null = null;
-    listen<TodoChangeEvent>('todo-change', (e) => callback(e.payload))
+    listen<TodoChangeEvent>("todo-change", (e) => callback(e.payload))
       .then((fn) => {
         unlisten = fn;
       })
       .catch((err) => {
-        console.error('Failed to listen to todo-change event:', err);
+        console.error("Failed to listen to todo-change event:", err);
       });
     return () => {
       if (unlisten) unlisten();

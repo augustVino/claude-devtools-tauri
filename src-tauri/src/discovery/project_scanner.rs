@@ -12,6 +12,29 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Light-weight session preview extracted from the first few KB of a JSONL file.
+struct SessionPreview {
+    first_message: Option<String>,
+    first_timestamp: Option<String>,
+    has_task_calls: bool,
+    message_count: u32,
+    is_ongoing: Option<bool>,
+    git_branch: Option<String>,
+}
+
+impl Default for SessionPreview {
+    fn default() -> Self {
+        Self {
+            first_message: None,
+            first_timestamp: None,
+            has_task_calls: false,
+            message_count: 0,
+            is_ongoing: None,
+            git_branch: None,
+        }
+    }
+}
+
 /// ProjectScanner scans the ~/.claude/projects/ directory for projects and sessions.
 pub struct ProjectScanner {
     projects_dir: PathBuf,
@@ -153,8 +176,8 @@ impl ProjectScanner {
             path: actual_path,
             name: base_name,
             sessions: session_ids,
-            created_at: if created_at == u64::MAX { 0 } else { created_at / 1000 },
-            most_recent_session: most_recent_session.map(|t| t / 1000),
+            created_at: if created_at == u64::MAX { 0 } else { created_at },
+            most_recent_session,
         })
     }
 
@@ -199,18 +222,21 @@ impl ProjectScanner {
 
             let decoded_path = self.resolve_project_path(&base_dir);
 
+            // Light-weight preview: read first few KB to extract first user message
+            let preview = self.extract_session_preview(&path);
+
             sessions.push(Session {
                 id: session_id,
                 project_id: project_id.to_string(),
                 project_path: decoded_path,
-                created_at: created_at / 1000,
+                created_at,
                 todo_data: self.load_todo_data(&file_name.trim_end_matches(".jsonl")),
-                first_message: None,
-                message_timestamp: None,
-                has_subagents: false,
-                message_count: 0,
-                is_ongoing: None,
-                git_branch: None,
+                first_message: preview.first_message,
+                message_timestamp: preview.first_timestamp,
+                has_subagents: preview.has_task_calls,
+                message_count: preview.message_count,
+                is_ongoing: preview.is_ongoing,
+                git_branch: preview.git_branch,
                 metadata_level: Some(SessionMetadataLevel::Light),
                 context_consumption: None,
                 compaction_count: None,
@@ -222,6 +248,98 @@ impl ProjectScanner {
         sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
         sessions
+    }
+
+    /// Read the first 8KB of a JSONL file to extract preview metadata.
+    fn extract_session_preview(&self, path: &Path) -> SessionPreview {
+        let content = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(_) => return SessionPreview::default(),
+        };
+
+        let preview_bytes = &content[..content.len().min(8192)];
+        let preview_str = match std::str::from_utf8(preview_bytes) {
+            Ok(s) => s,
+            Err(_) => return SessionPreview::default(),
+        };
+
+        let mut preview = SessionPreview::default();
+        let mut found_first_user = false;
+
+        for line in preview_str.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            let Ok(json) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+
+            let msg_type = json.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+            if matches!(msg_type, "user" | "assistant" | "system") {
+                preview.message_count += 1;
+            }
+
+            if !found_first_user && msg_type == "user" {
+                let is_meta = json.get("isMeta").and_then(|v| v.as_bool()).unwrap_or(false);
+                if !is_meta {
+                    // Extract first message text — handle both string and array content
+                    let msg_content = json.pointer("/message/content");
+                    let text = if let Some(s) = msg_content.and_then(|v| v.as_str()) {
+                        // Simple string content
+                        Some(s.to_string())
+                    } else if let Some(arr) = msg_content.and_then(|v| v.as_array()) {
+                        // Array content: extract text from {type: "text", text: "..."} blocks
+                        let parts: Vec<&str> = arr.iter()
+                            .filter_map(|block| {
+                                if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                    block.get("text").and_then(|t| t.as_str())
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        if parts.is_empty() { None } else { Some(parts.join(" ")) }
+                    } else {
+                        None
+                    };
+
+                    if let Some(text) = text {
+                        // Skip command-output noise (starts with "[") and interruptions
+                        let trimmed = text.trim();
+                        if !trimmed.starts_with('[') && !trimmed.starts_with("[Request interrupted") {
+                            preview.first_message = Some(trimmed.chars().take(100).collect());
+                            found_first_user = true;
+                        }
+                    }
+                    if let Some(ts) = json.get("timestamp").and_then(|v| v.as_str()) {
+                        preview.first_timestamp = Some(ts.to_string());
+                    }
+                    if let Some(branch) = json.get("gitBranch").and_then(|v| v.as_str()) {
+                        preview.git_branch = Some(branch.to_string());
+                    }
+                }
+            }
+
+            if !preview.has_task_calls {
+                if let Some(content) = json.pointer("/message/content") {
+                    if let Some(arr) = content.as_array() {
+                        for block in arr {
+                            if block.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+                                && block.get("name").and_then(|t| t.as_str()) == Some("Task")
+                            {
+                                preview.has_task_calls = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        preview
     }
 
     /// Get the path to a session file.

@@ -24,10 +24,10 @@ export type {
   SessionMetrics,
   Worktree,
   WorktreeSource,
-} from '@shared/types';
+} from "@shared/types";
 
 // Message types
-export type { ParsedMessage } from '@shared/types';
+export type { ParsedMessage } from "@shared/types";
 
 // Chunk types
 export type {
@@ -41,20 +41,20 @@ export type {
   SemanticStep,
   SessionDetail,
   SubagentDetail,
-} from '@shared/types';
+} from "@shared/types";
 
 // Chunk type guards
-export { isEnhancedAIChunk } from '@shared/types';
+export { isEnhancedAIChunk } from "@shared/types";
 
 // JSONL types (for components that need content block types)
-export type { ToolUseResultData } from '@shared/types';
+export type { ToolUseResultData } from "@shared/types";
 
 // =============================================================================
 // Re-exports from Renderer-Specific Types
 // =============================================================================
 
 // API types
-export type { ClaudeMdFileInfo } from './api';
+export type { ClaudeMdFileInfo } from "./api";
 
 // Notification types
 export type {
@@ -67,14 +67,14 @@ export type {
   TriggerTestResult,
   TriggerTokenType,
   TriggerToolName,
-} from './notifications';
+} from "./notifications";
 
 // =============================================================================
 // Session Sort Mode
 // =============================================================================
 
 /** Sort mode for session list in sidebar */
-export type SessionSortMode = 'recent' | 'most-context';
+export type SessionSortMode = "recent" | "most-context";
 
 // =============================================================================
 // Renderer-Specific Type Guards
@@ -87,49 +87,66 @@ import type {
   EnhancedSystemChunk,
   EnhancedUserChunk,
   ParsedMessage,
-} from '@shared/types';
+} from "@shared/types";
 
 /**
  * Type guard: Check if message is an assistant message.
  */
 export function isAssistantMessage(msg: ParsedMessage): boolean {
-  return msg.type === 'assistant';
+  return msg.type === "assistant";
 }
 
 /**
  * Type guard to check if a chunk is an EnhancedUserChunk.
  */
-export function isEnhancedUserChunk(chunk: Chunk | EnhancedChunk): chunk is EnhancedUserChunk {
-  return 'chunkType' in chunk && chunk.chunkType === 'user' && 'rawMessages' in chunk;
+export function isEnhancedUserChunk(
+  chunk: Chunk | EnhancedChunk,
+): chunk is EnhancedUserChunk {
+  return (
+    "chunkType" in chunk && chunk.chunkType === "user" && "rawMessages" in chunk
+  );
 }
 
 /**
  * Type guard to check if a chunk is an EnhancedSystemChunk.
  */
-export function isEnhancedSystemChunk(chunk: Chunk | EnhancedChunk): chunk is EnhancedSystemChunk {
-  return 'chunkType' in chunk && chunk.chunkType === 'system' && 'rawMessages' in chunk;
+export function isEnhancedSystemChunk(
+  chunk: Chunk | EnhancedChunk,
+): chunk is EnhancedSystemChunk {
+  return (
+    "chunkType" in chunk &&
+    chunk.chunkType === "system" &&
+    "rawMessages" in chunk
+  );
 }
 
 /**
  * Type guard to check if a chunk is an EnhancedCompactChunk.
  */
 export function isEnhancedCompactChunk(
-  chunk: Chunk | EnhancedChunk
+  chunk: Chunk | EnhancedChunk,
 ): chunk is EnhancedCompactChunk {
-  return 'chunkType' in chunk && chunk.chunkType === 'compact' && 'rawMessages' in chunk;
+  return (
+    "chunkType" in chunk &&
+    chunk.chunkType === "compact" &&
+    "rawMessages" in chunk
+  );
 }
 
 /**
  * Type guard to check if a single chunk is an EnhancedChunk.
  * Enhanced chunks have 'chunkType' and 'rawMessages' properties.
+ * Plain chunks (from Tauri backend) have 'chunkType' but no 'rawMessages'.
  */
 function isEnhancedChunk(chunk: Chunk | EnhancedChunk): chunk is EnhancedChunk {
-  return 'chunkType' in chunk && 'rawMessages' in chunk;
+  return "chunkType" in chunk && "rawMessages" in chunk;
 }
 
 /**
  * Type guard to check if an array of chunks are all EnhancedChunks.
  * Returns the array typed as EnhancedChunk[] if valid.
+ * For plain chunks from Tauri backend (without rawMessages/semanticSteps),
+ * augments them with empty arrays so the conversation transformer works.
  */
 export function asEnhancedChunkArray(chunks: Chunk[]): EnhancedChunk[] | null {
   if (chunks.length === 0) {
@@ -140,5 +157,28 @@ export function asEnhancedChunkArray(chunks: Chunk[]): EnhancedChunk[] | null {
   if (isEnhancedChunk(chunks[0])) {
     return chunks as EnhancedChunk[];
   }
-  return null;
+  // Plain chunks from Tauri backend — add missing enhanced fields
+  const enhanced = chunks.map((chunk) => {
+    const base = { ...chunk };
+    if (!("rawMessages" in chunk)) {
+      (base as Record<string, unknown>).rawMessages = [];
+    }
+    if (chunk.chunkType === "ai" && !("semanticSteps" in chunk)) {
+      (base as Record<string, unknown>).semanticSteps = [];
+      (base as Record<string, unknown>).semanticStepGroups = [];
+    }
+    // Tauri backend sends millisecond timestamps as numbers — convert to Date objects
+    if (typeof base.startTime === "number") {
+      base.startTime = new Date(
+        base.startTime,
+      ) as unknown as EnhancedChunk["startTime"];
+    }
+    if (typeof base.endTime === "number") {
+      base.endTime = new Date(
+        base.endTime,
+      ) as unknown as EnhancedChunk["endTime"];
+    }
+    return base as EnhancedChunk;
+  });
+  return enhanced;
 }

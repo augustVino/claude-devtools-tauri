@@ -9,7 +9,8 @@ use crate::infrastructure::{DataCache, ConfigManager};
 use crate::parsing::{parse_session_file, ParsedSession};
 use crate::types::domain::{Session, SessionMetrics, PaginatedSessionsResult};
 use crate::types::chunks::SessionDetail;
-use crate::utils::{decode_path, extract_project_name, get_projects_base_path};
+use crate::utils::{decode_path, extract_base_dir, extract_project_name, get_projects_base_path};
+use crate::analysis::ChunkBuilder;
 
 /// Application state shared across commands
 pub struct AppState {
@@ -37,7 +38,8 @@ impl AppState {
 #[command]
 pub async fn get_sessions(project_id: String) -> Result<Vec<Session>, String> {
     let base_path = get_projects_base_path();
-    let project_dir = base_path.join(decode_path(&project_id));
+    let project_dir_name = extract_base_dir(&project_id);
+    let project_dir = base_path.join(&project_dir_name);
 
     if !project_dir.exists() {
         return Ok(vec![]);
@@ -82,8 +84,9 @@ pub async fn get_session_detail(
 
     // Parse session file
     let base_path = get_projects_base_path();
+    let project_dir = extract_base_dir(&project_id);
     let session_path = base_path
-        .join(decode_path(&project_id))
+        .join(&project_dir)
         .join(format!("{}.jsonl", session_id));
 
     if !session_path.exists() {
@@ -92,29 +95,30 @@ pub async fn get_session_detail(
 
     let parsed = parse_session_file(&session_path).await;
 
-    let detail = SessionDetail {
-        session: build_session_metadata(&session_path, &project_id).await.unwrap_or_else(|| Session {
-            id: session_id.clone(),
-            project_id: project_id.clone(),
-            project_path: decode_path(&project_id),
-            created_at: 0,
-            todo_data: None,
-            first_message: None,
-            message_timestamp: None,
-            has_subagents: !parsed.task_calls.is_empty(),
-            message_count: parsed.messages.len() as u32,
-            is_ongoing: None,
-            git_branch: None,
-            metadata_level: None,
-            context_consumption: None,
-            compaction_count: None,
-            phase_breakdown: None,
-        }),
-        messages: parsed.messages.clone(),
-        chunks: vec![], // Will be filled by ChunkBuilder
-        processes: vec![],
-        metrics: parsed.metrics,
-    };
+    let session = build_session_metadata(&session_path, &project_id).await.unwrap_or_else(|| Session {
+        id: session_id.clone(),
+        project_id: project_id.clone(),
+        project_path: decode_path(&project_id),
+        created_at: 0,
+        todo_data: None,
+        first_message: None,
+        message_timestamp: None,
+        has_subagents: !parsed.task_calls.is_empty(),
+        message_count: parsed.messages.len() as u32,
+        is_ongoing: None,
+        git_branch: None,
+        metadata_level: None,
+        context_consumption: None,
+        compaction_count: None,
+        phase_breakdown: None,
+    });
+
+    // Build chunks from parsed messages using ChunkBuilder
+    let detail = ChunkBuilder::build_session_detail(
+        session,
+        parsed.messages.clone(),
+        vec![], // subagents populated in Phase 4
+    );
 
     // Cache the result
     let app_state = state.read().await;
@@ -129,8 +133,9 @@ pub async fn get_session_metrics(
     session_id: String,
 ) -> Result<Option<SessionMetrics>, String> {
     let base_path = get_projects_base_path();
+    let project_dir = extract_base_dir(&project_id);
     let session_path = base_path
-        .join(decode_path(&project_id))
+        .join(&project_dir)
         .join(format!("{}.jsonl", session_id));
 
     if !session_path.exists() {

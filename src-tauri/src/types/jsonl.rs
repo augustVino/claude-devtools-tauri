@@ -144,6 +144,8 @@ pub struct UserEntry {
     pub agent_id: Option<String>,
     #[serde(default)]
     pub tool_use_result: Option<serde_json::Value>,
+    #[serde(default, rename = "isCompactSummary")]
+    pub is_compact_summary: Option<bool>,
     #[serde(default)]
     pub source_tool_use_id: Option<String>,
     #[serde(default)]
@@ -366,6 +368,47 @@ mod tests {
                 assert_eq!(a.message.model, "claude-3-opus");
             }
             _ => panic!("Expected AssistantEntry"),
+        }
+    }
+
+    #[test]
+    fn deserialize_user_entry_with_compact_summary() {
+        let json = r#"{
+            "type":"user",
+            "uuid":"u1",
+            "timestamp":"2026-03-25T06:00:00.000Z",
+            "message":{"role":"user","content":"compacted summary"},
+            "isMeta":true,
+            "isCompactSummary":true,
+            "isSidechain":false
+        }"#;
+        let entry: ChatHistoryEntry = serde_json::from_str(json).unwrap();
+        match entry {
+            ChatHistoryEntry::User(u) => {
+                assert_eq!(u.is_compact_summary, Some(true));
+                assert_eq!(u.is_meta, Some(true));
+            }
+            _ => panic!("Expected UserEntry"),
+        }
+    }
+
+    #[test]
+    fn deserialize_meta_user_without_compact_summary() {
+        let json = r#"{
+            "type":"user",
+            "uuid":"u2",
+            "timestamp":"2026-03-25T06:00:00.000Z",
+            "message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"result"}]},
+            "isMeta":true,
+            "isSidechain":false
+        }"#;
+        let entry: ChatHistoryEntry = serde_json::from_str(json).unwrap();
+        match entry {
+            ChatHistoryEntry::User(u) => {
+                assert_eq!(u.is_compact_summary, None);
+                assert_eq!(u.is_meta, Some(true));
+            }
+            _ => panic!("Expected UserEntry"),
         }
     }
 

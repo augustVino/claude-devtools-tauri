@@ -13,7 +13,7 @@
     "withGlobalTauri": false,
     "windows": [
       {
-        "title": "claude-devtools",
+        "title": "",
         "width": 1200,
         "height": 800,
         "minWidth": 800,

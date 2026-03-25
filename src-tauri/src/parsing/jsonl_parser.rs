@@ -188,7 +188,7 @@ fn parse_chat_history_entry(entry: &ChatHistoryEntry) -> Option<ParsedMessage> {
             user.source_tool_use_id.clone(),
             user.source_tool_assistant_uuid.clone(),
             user.tool_use_result.clone(),
-            user.is_meta.unwrap_or(false),
+            user.is_compact_summary.unwrap_or(false),
         ),
         ChatHistoryEntry::Assistant(assistant) => (
             if assistant.cwd.is_empty() { None } else { Some(assistant.cwd.clone()) },
@@ -249,7 +249,7 @@ fn parse_chat_history_entry(entry: &ChatHistoryEntry) -> Option<ParsedMessage> {
         source_tool_use_id,
         source_tool_assistant_uuid,
         tool_use_result,
-        is_compact_summary: None,
+        is_compact_summary: if is_compact_summary { Some(true) } else { None },
         request_id,
     })
 }

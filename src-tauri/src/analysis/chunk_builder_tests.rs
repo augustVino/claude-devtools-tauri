@@ -137,8 +137,8 @@ fn test_get_total_chunk_metrics() {
     let chunks = vec![
         Chunk::User(UserChunk {
             id: "c1".to_string(),
-            start_time: String::new(),
-            end_time: String::new(),
+            start_time: 0,
+            end_time: 0,
             duration_ms: 100,
             metrics: SessionMetrics {
                 duration_ms: 100,
@@ -154,8 +154,8 @@ fn test_get_total_chunk_metrics() {
         }),
         Chunk::Ai(AiChunk {
             id: "c2".to_string(),
-            start_time: String::new(),
-            end_time: String::new(),
+            start_time: 0,
+            end_time: 0,
             duration_ms: 200,
             metrics: SessionMetrics {
                 duration_ms: 200,

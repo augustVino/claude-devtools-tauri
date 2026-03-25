@@ -81,8 +81,8 @@ impl ChunkBuilder {
     fn ai_chunk(buf: &[ParsedMessage], subs: &[Process], chunks: &mut Vec<Chunk>, ctr: &mut u32) {
         if buf.is_empty() { return; }
         *ctr += 1;
-        let start = buf.first().map(|m| m.timestamp.clone()).unwrap_or_default();
-        let end = buf.last().map(|m| m.timestamp.clone()).unwrap_or_default();
+        let start = buf.first().and_then(|m| parse_ts_ms(&m.timestamp)).unwrap_or(0);
+        let end = buf.last().and_then(|m| parse_ts_ms(&m.timestamp)).unwrap_or(0);
         chunks.push(Chunk::Ai(AiChunk {
             id: format!("chunk-{}", ctr), start_time: start, end_time: end,
             duration_ms: Self::duration_ms(buf), metrics: calculate_metrics(buf),
@@ -93,18 +93,18 @@ impl ChunkBuilder {
 
     fn user_chunk(msg: &ParsedMessage, ctr: &mut u32) -> Chunk {
         *ctr += 1;
+        let ts = parse_ts_ms(&msg.timestamp).unwrap_or(0);
         Chunk::User(UserChunk {
-            id: format!("chunk-{}", ctr), start_time: msg.timestamp.clone(),
-            end_time: msg.timestamp.clone(), duration_ms: 0,
+            id: format!("chunk-{}", ctr), start_time: ts, end_time: ts, duration_ms: 0,
             metrics: Self::single_msg_metrics(), user_message: msg.clone(),
         })
     }
 
     fn system_chunk(msg: &ParsedMessage, ctr: &mut u32) -> Chunk {
         *ctr += 1;
+        let ts = parse_ts_ms(&msg.timestamp).unwrap_or(0);
         Chunk::System(SystemChunk {
-            id: format!("chunk-{}", ctr), start_time: msg.timestamp.clone(),
-            end_time: msg.timestamp.clone(), duration_ms: 0,
+            id: format!("chunk-{}", ctr), start_time: ts, end_time: ts, duration_ms: 0,
             metrics: Self::single_msg_metrics(), message: msg.clone(),
             command_output: Self::cmd_output(msg),
         })
@@ -112,9 +112,9 @@ impl ChunkBuilder {
 
     fn compact_chunk(msg: &ParsedMessage, ctr: &mut u32) -> Chunk {
         *ctr += 1;
+        let ts = parse_ts_ms(&msg.timestamp).unwrap_or(0);
         Chunk::Compact(CompactChunk {
-            id: format!("chunk-{}", ctr), start_time: msg.timestamp.clone(),
-            end_time: msg.timestamp.clone(), duration_ms: 0,
+            id: format!("chunk-{}", ctr), start_time: ts, end_time: ts, duration_ms: 0,
             metrics: Self::single_msg_metrics(), message: msg.clone(),
         })
     }
