@@ -18,6 +18,7 @@ import type {
   SearchSessionsResult,
   PaginatedSessionsResult,
   FileChangeEvent,
+  TodoChangeEvent,
 } from '@main/types';
 import type { AppConfig } from '@shared/types/notifications';
 
@@ -306,9 +307,9 @@ export class TauriAPIClient implements ElectronAPI {
     };
   };
 
-  readonly onTodoChange = (callback: (event: FileChangeEvent) => void): (() => void) => {
+  readonly onTodoChange = (callback: (event: TodoChangeEvent) => void): (() => void) => {
     let unlisten: UnlistenFn | null = null;
-    listen<FileChangeEvent>('todo-change', (e) => callback(e.payload))
+    listen<TodoChangeEvent>('todo-change', (e) => callback(e.payload))
       .then((fn) => {
         unlisten = fn;
       })

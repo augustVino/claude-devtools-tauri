@@ -17,6 +17,7 @@ import type { WaterfallData } from './visualization';
 import type {
   ConversationGroup,
   FileChangeEvent,
+  TodoChangeEvent,
   PaginatedSessionsResult,
   Project,
   RepositoryGroup,
@@ -393,7 +394,7 @@ export interface ElectronAPI {
 
   // File change events (real-time updates)
   onFileChange: (callback: (event: FileChangeEvent) => void) => () => void;
-  onTodoChange: (callback: (event: FileChangeEvent) => void) => () => void;
+  onTodoChange: (callback: (event: TodoChangeEvent) => void) => () => void;
 
   // Session refresh (Ctrl+R / Cmd+R intercepted by main process)
   onSessionRefresh: (callback: () => void) => () => void;

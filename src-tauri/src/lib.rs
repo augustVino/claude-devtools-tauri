@@ -23,7 +23,6 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .manage(app_state.clone())
     .setup(move |app| {
-      let app_handle = app.handle().clone();
       let state = app_state.clone();
 
       // Initialize state asynchronously

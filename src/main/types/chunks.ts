@@ -446,6 +446,13 @@ export interface FileChangeEvent {
   isSubagent: boolean;
 }
 
+/**
+ * Todo change event.
+ */
+export interface TodoChangeEvent {
+  sessionId: string;
+}
+
 // =============================================================================
 // Constants
 // =============================================================================
