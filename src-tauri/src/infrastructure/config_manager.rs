@@ -280,6 +280,107 @@ impl ConfigManager {
         self.get_config()
     }
 
+    /// Get all notification triggers.
+    pub fn get_triggers(&self) -> Vec<NotificationTrigger> {
+        let config = self.get_config();
+        config.notifications.triggers.clone()
+    }
+
+    /// Get only enabled triggers.
+    pub fn get_enabled_triggers(&self) -> Vec<NotificationTrigger> {
+        self.get_triggers().into_iter().filter(|t| t.enabled).collect()
+    }
+
+    /// Add a new trigger. Returns error if trigger ID already exists.
+    pub fn add_trigger(
+        &self,
+        trigger: NotificationTrigger,
+    ) -> Result<AppConfig, String> {
+        let mut config = self
+            .config
+            .write()
+            .map_err(|e| format!("failed to acquire write lock: {e}"))?;
+
+        if config.notifications.triggers.iter().any(|t| t.id == trigger.id) {
+            return Err(format!("Trigger with ID '{}' already exists", trigger.id));
+        }
+
+        config.notifications.triggers.push(trigger);
+        drop(config);
+        self.persist()?;
+        Ok(self.get_config())
+    }
+
+    /// Update an existing trigger by ID.
+    pub fn update_trigger(
+        &self,
+        trigger_id: &str,
+        updates: serde_json::Value,
+    ) -> Result<AppConfig, String> {
+        let mut config = self
+            .config
+            .write()
+            .map_err(|e| format!("failed to acquire write lock: {e}"))?;
+
+        let trigger = config.notifications.triggers.iter_mut()
+            .find(|t| t.id == trigger_id)
+            .ok_or_else(|| format!("Trigger '{}' not found", trigger_id))?;
+
+        // Apply updates - use camelCase keys matching the JSON format
+        if let Some(name) = updates.get("name").and_then(|v| v.as_str()) {
+            trigger.name = name.to_string();
+        }
+        if let Some(enabled) = updates.get("enabled").and_then(|v| v.as_bool()) {
+            trigger.enabled = enabled;
+        }
+        if let Some(match_pattern) = updates.get("matchPattern").and_then(|v| v.as_str()) {
+            trigger.match_pattern = Some(match_pattern.to_string());
+        }
+        if let Some(ignore_patterns) = updates.get("ignorePatterns").and_then(|v| v.as_array()) {
+            trigger.ignore_patterns = Some(
+                ignore_patterns.iter().filter_map(|p| p.as_str().map(String::from)).collect()
+            );
+        }
+        if let Some(token_threshold) = updates.get("tokenThreshold").and_then(|v| v.as_u64()) {
+            trigger.token_threshold = Some(token_threshold);
+        }
+        if let Some(color) = updates.get("color").and_then(|v| v.as_str()) {
+            trigger.color = Some(color.to_string());
+        }
+        if let Some(tool_name) = updates.get("toolName").and_then(|v| v.as_str()) {
+            trigger.tool_name = Some(tool_name.to_string());
+        }
+        if let Some(match_field) = updates.get("matchField").and_then(|v| v.as_str()) {
+            trigger.match_field = Some(match_field.to_string());
+        }
+
+        drop(config);
+        self.persist()?;
+        Ok(self.get_config())
+    }
+
+    /// Remove a trigger by ID.
+    pub fn remove_trigger(
+        &self,
+        trigger_id: &str,
+    ) -> Result<AppConfig, String> {
+        let mut config = self
+            .config
+            .write()
+            .map_err(|e| format!("failed to acquire write lock: {e}"))?;
+
+        let len_before = config.notifications.triggers.len();
+        config.notifications.triggers.retain(|t| t.id != trigger_id);
+
+        if config.notifications.triggers.len() == len_before {
+            return Err(format!("Trigger '{}' not found", trigger_id));
+        }
+
+        drop(config);
+        self.persist()?;
+        Ok(self.get_config())
+    }
+
     async fn load_config(&self) -> Result<AppConfig, String> {
         if !self.config_path.exists() {
             info!("No config file found at {:?}, using defaults", self.config_path);
