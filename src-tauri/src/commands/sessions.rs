@@ -2,6 +2,7 @@ use tauri::{command, State};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::discovery::ProjectScanner;
 use crate::infrastructure::{DataCache, ConfigManager};
 use crate::parsing::{parse_session_file, ParsedSession};
 use crate::types::domain::{Session, SessionMetrics, PaginatedSessionsResult};
@@ -183,6 +184,65 @@ pub async fn get_projects() -> Result<Vec<crate::types::domain::Project>, String
     projects.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
     Ok(projects)
+}
+
+// =============================================================================
+// Session Pagination Commands
+// =============================================================================
+
+/// Get paginated sessions for a project.
+#[command]
+pub async fn get_sessions_paginated(
+    project_id: String,
+    cursor: Option<String>,
+    limit: Option<u32>,
+) -> Result<PaginatedSessionsResult, String> {
+    let page_limit = limit.unwrap_or(50).min(100).max(1) as usize;
+
+    let scanner = ProjectScanner::new();
+    let all_sessions = scanner.list_sessions(&project_id);
+
+    let total_count = all_sessions.len() as u32;
+
+    // Find cursor position
+    let start_idx = if let Some(ref c) = cursor {
+        all_sessions.iter().position(|s| &s.id == c).unwrap_or(0)
+    } else {
+        0
+    };
+
+    // Get page slice
+    let end_idx = (start_idx + page_limit).min(all_sessions.len());
+    let sessions = all_sessions[start_idx..end_idx].to_vec();
+
+    let has_more = end_idx < all_sessions.len();
+    let next_cursor = if has_more {
+        sessions.last().map(|s| s.id.clone())
+    } else {
+        None
+    };
+
+    Ok(PaginatedSessionsResult {
+        sessions,
+        next_cursor,
+        has_more,
+        total_count,
+    })
+}
+
+/// Get sessions by their IDs.
+#[command]
+pub async fn get_sessions_by_ids(
+    project_id: String,
+    session_ids: Vec<String>,
+) -> Result<Vec<Session>, String> {
+    let scanner = ProjectScanner::new();
+    let all_sessions = scanner.list_sessions(&project_id);
+
+    Ok(all_sessions
+        .into_iter()
+        .filter(|s| session_ids.contains(&s.id))
+        .collect())
 }
 
 // =============================================================================

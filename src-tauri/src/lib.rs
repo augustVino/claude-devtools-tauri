@@ -46,6 +46,8 @@ pub fn run() {
       commands::sessions::get_sessions,
       commands::sessions::get_session_detail,
       commands::sessions::get_session_metrics,
+      commands::sessions::get_sessions_paginated,
+      commands::sessions::get_sessions_by_ids,
       commands::sessions::get_projects,
       commands::config::get_config,
       commands::config::update_config,
