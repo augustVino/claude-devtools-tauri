@@ -9,7 +9,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 
-import type { ElectronAPI, ConfigAPI } from '@shared/types/api';
+import type { ElectronAPI, ConfigAPI, ClaudeMdFileInfo, AgentConfig } from '@shared/types/api';
 import type {
   Session,
   SessionDetail,
@@ -19,6 +19,8 @@ import type {
   PaginatedSessionsResult,
   FileChangeEvent,
   TodoChangeEvent,
+  RepositoryGroup,
+  SubagentDetail,
 } from '@main/types';
 import type { AppConfig } from '@shared/types/notifications';
 
@@ -232,16 +234,60 @@ export class TauriAPIClient implements ElectronAPI {
   // Stubbed — will be implemented in later phases
   // ===========================================================================
 
-  readonly getWaterfallData = notImplemented;
-  readonly getSubagentDetail = notImplemented;
-  readonly getSessionGroups = notImplemented;
-  readonly getSessionsByIds = notImplemented;
-  readonly getRepositoryGroups = notImplemented;
-  readonly getWorktreeSessions = notImplemented;
-  readonly readClaudeMdFiles = notImplemented;
-  readonly readDirectoryClaudeMd = notImplemented;
-  readonly readMentionedFile = notImplemented;
-  readonly readAgentConfigs = notImplemented;
+  readonly getWaterfallData = notImplemented; // Complex visualization, defer
+  readonly getSessionGroups = notImplemented; // Requires ConversationGroupBuilder
+
+  // ===========================================================================
+  // Repository and Worktree commands
+  // ===========================================================================
+
+  readonly getRepositoryGroups = (): Promise<RepositoryGroup[]> =>
+    invoke('get_repository_groups');
+
+  readonly getWorktreeSessions = (worktreeId: string): Promise<Session[]> =>
+    invoke('get_worktree_sessions', { worktreeId });
+
+  // ===========================================================================
+  // Session commands (additional)
+  // ===========================================================================
+
+  readonly getSubagentDetail = (
+    projectId: string,
+    sessionId: string,
+    subagentId: string
+  ): Promise<SubagentDetail | null> =>
+    invoke('get_subagent_detail', { projectId, sessionId, subagentId });
+
+  readonly getSessionsByIds = (
+    projectId: string,
+    sessionIds: string[]
+  ): Promise<Session[]> =>
+    invoke('get_sessions_by_ids', { projectId, sessionIds });
+
+  // ===========================================================================
+  // CLAUDE.md and Agent Config commands
+  // ===========================================================================
+
+  readonly readClaudeMdFiles = (
+    projectRoot: string
+  ): Promise<Record<string, ClaudeMdFileInfo>> =>
+    invoke('read_claude_md_files', { projectRoot });
+
+  readonly readDirectoryClaudeMd = (
+    directory: string
+  ): Promise<ClaudeMdFileInfo> =>
+    invoke('read_directory_claude_md', { directory });
+
+  readonly readMentionedFile = async (
+    filePath: string,
+    projectRoot: string
+  ): Promise<ClaudeMdFileInfo | null> =>
+    invoke('read_mentioned_file', { filePath, projectRoot });
+
+  readonly readAgentConfigs = (
+    projectRoot: string
+  ): Promise<Record<string, AgentConfig>> =>
+    invoke('read_agent_configs', { projectRoot });
 
   // Nested API objects — partially implemented
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
