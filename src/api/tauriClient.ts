@@ -30,10 +30,10 @@ import type {
 } from "@main/types";
 import type {
   AppConfig,
-  DetectedError,
   NotificationTrigger,
   TriggerTestResult,
   StoredNotification,
+  DetectedError,
   GetNotificationsOptions,
   GetNotificationsResult,
   NotificationCountResult,
@@ -318,8 +318,10 @@ export class TauriAPIClient implements ElectronAPI {
     delete: (id: string): Promise<boolean> =>
       invoke<boolean>("delete_notification", { notificationId: id }),
     clear: (): Promise<boolean> => invoke<boolean>("clear_notifications"),
-    getUnreadCount: (): Promise<NotificationCountResult> =>
-      invoke<NotificationCountResult>("get_notification_count"),
+    getUnreadCount: (): Promise<number> =>
+      invoke<NotificationCountResult>("get_notification_count").then(
+        (r) => r.unreadCount,
+      ),
     getStats: (): Promise<NotificationStats> =>
       invoke<NotificationStats>("get_notification_stats"),
     onNew: (cb: (_event: unknown, error: unknown) => void): (() => void) => {
