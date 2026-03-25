@@ -2,6 +2,7 @@ mod analysis;
 mod commands;
 mod constants;
 mod discovery;
+mod error;
 mod events;
 mod infrastructure;
 mod parsing;
