@@ -3,6 +3,7 @@ pub mod process_linker;
 pub mod semantic_step_extractor;
 pub mod semantic_step_grouper;
 pub mod tool_execution_builder;
+pub mod tool_extraction;
 pub mod waterfall_builder;
 
 pub use chunk_builder::*;
