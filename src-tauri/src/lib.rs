@@ -69,7 +69,7 @@ pub fn run() {
       commands::utility::read_claude_md_files,
       commands::utility::read_directory_claude_md,
       commands::utility::read_mentioned_file,
-      commands::utility::read_agent_configs_command,
+      commands::utility::read_agent_configs,
       commands::projects::get_repository_groups,
       commands::projects::get_worktree_sessions,
       commands::subagents::get_subagent_detail,

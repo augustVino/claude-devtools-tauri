@@ -13,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use crate::parsing::claude_md_reader::{ClaudeMdReader, ClaudeMdFileInfo, ClaudeMdReadResult};
-use crate::parsing::agent_config_reader::read_agent_configs;
 
 /// Open a path in the system file manager.
 #[tauri::command]
@@ -112,8 +111,8 @@ pub struct AgentConfigEntry {
 /// Read agent configurations from .claude/agents/ directory.
 /// Returns array of (name, AgentConfig) pairs from the HashMap.
 #[tauri::command]
-pub fn read_agent_configs_command(project_root: String) -> Vec<AgentConfigEntry> {
-    let configs = read_agent_configs(&project_root);
+pub fn read_agent_configs(project_root: String) -> Vec<AgentConfigEntry> {
+    let configs = crate::parsing::agent_config_reader::read_agent_configs(&project_root);
     configs
         .into_iter()
         .map(|(name, config)| AgentConfigEntry {
