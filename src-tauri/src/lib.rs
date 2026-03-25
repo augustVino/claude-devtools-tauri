@@ -9,12 +9,14 @@ mod parsing;
 mod types;
 mod utils;
 
-use std::sync::Arc;
+use std::path::Path;
+use std::sync::{Arc, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 use tauri::Manager;
 use commands::AppState;
+use error::error_detector::ErrorDetector;
 use infrastructure::{ConfigManager, FileWatcher, NotificationManager};
-use utils::get_projects_base_path;
+use utils::{get_projects_base_path, is_subagent_file};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -45,8 +47,9 @@ pub fn run() {
       app.manage(notification_manager.clone());
 
       // Initialize NotificationManager asynchronously
+      let init_notification_mgr = notification_manager.clone();
       tauri::async_runtime::spawn(async move {
-        notification_manager.write().await.initialize().await;
+        init_notification_mgr.write().await.initialize().await;
         log::info!("NotificationManager initialized");
       });
 
@@ -77,6 +80,81 @@ pub fn run() {
           }
           Err(e) => {
             log::error!("Failed to start FileWatcher: {}", e);
+          }
+        }
+      });
+
+      // Error detection pipeline — second FileWatcher for .jsonl changes
+      let pipeline_handle = app.handle().clone();
+      let pipeline_notification_mgr = notification_manager.clone();
+      tauri::async_runtime::spawn(async move {
+        let pipeline_config = ConfigManager::new();
+        if let Err(e) = pipeline_config.initialize().await {
+          log::error!("Failed to initialize error detection config: {}", e);
+        }
+        let detector = ErrorDetector::new(Arc::new(StdRwLock::new(pipeline_config)));
+
+        let mut pipeline_watcher = FileWatcher::new();
+        let projects_path = get_projects_base_path();
+
+        if !projects_path.exists() {
+          // Directory may not exist yet; skip silently (main watcher handles creation)
+          return;
+        }
+
+        match pipeline_watcher.watch(&projects_path).await {
+          Ok(()) => {
+            log::info!("Error detection pipeline: watcher started");
+            let mut receiver = pipeline_watcher.receiver();
+
+            while let Ok(event) = receiver.recv().await {
+              let path = Path::new(&event.path);
+
+              // Only process .jsonl files, skip subagent files (handled by parent session)
+              if path.extension().map(|e| e != "jsonl").unwrap_or(true) {
+                continue;
+              }
+              if is_subagent_file(&event.path) {
+                continue;
+              }
+
+              let session_id = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+              let project_id = event
+                .project_id
+                .clone()
+                .unwrap_or_default();
+
+              // Parse session file and run error detection
+              let messages =
+                crate::parsing::jsonl_parser::parse_jsonl_file(path).await;
+
+              if messages.is_empty() {
+                continue;
+              }
+
+              let errors = detector
+                .detect_errors(
+                  &messages,
+                  &session_id,
+                  &project_id,
+                  &event.path,
+                )
+                .await;
+
+              // Feed detected errors to NotificationManager
+              let mgr = pipeline_notification_mgr.read().await;
+              for detected_error in errors {
+                events::emit_error_detected(&pipeline_handle, &detected_error);
+                // add_error internally emits notification:new and notification:updated
+                let _ = mgr.add_error(detected_error).await;
+              }
+            }
+          }
+          Err(e) => {
+            log::error!("Error detection pipeline: failed to start watcher: {}", e);
           }
         }
       });
