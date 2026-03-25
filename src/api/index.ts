@@ -2,6 +2,7 @@
  * Unified API adapter.
  *
  * When running inside Electron, the preload script exposes `window.electronAPI`.
+ * When running inside Tauri, `window.__TAURI_INTERNALS__` is injected.
  * When running in a browser (e.g. via the HTTP server), we fall back to an
  * HTTP+SSE client that implements the same interface.
  *
@@ -13,6 +14,7 @@
  */
 
 import { HttpAPIClient } from './httpClient';
+import { TauriAPIClient } from './tauriClient';
 
 import type { ElectronAPI } from '@shared/types/api';
 
@@ -33,9 +35,20 @@ function getHttpBaseUrl(): string {
 }
 
 let httpClient: HttpAPIClient | null = null;
+let tauriClient: TauriAPIClient | null = null;
+
+function isTauriEnvironment(): boolean {
+  return !!(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+}
 
 function getImpl(): ElectronAPI {
   if (window.electronAPI) return window.electronAPI;
+  if (isTauriEnvironment()) {
+    if (!tauriClient) {
+      tauriClient = new TauriAPIClient();
+    }
+    return tauriClient;
+  }
   // Lazily create the HTTP client only when actually needed (browser mode).
   // Caching avoids creating multiple EventSource connections.
   if (!httpClient) {
@@ -47,6 +60,7 @@ function getImpl(): ElectronAPI {
 /**
  * Proxy that lazily resolves the underlying ElectronAPI on first property access.
  * In Electron: delegates to `window.electronAPI` (set by preload).
+ * In Tauri: delegates to `TauriAPIClient` (uses @tauri-apps/api invoke).
  * In browser: delegates to `HttpAPIClient` (created on first use).
  * In tests: delegates to whatever mock is installed on `window.electronAPI`.
  */
@@ -54,7 +68,8 @@ function getImpl(): ElectronAPI {
  * Whether the app is running inside Electron (true) or in a browser via HTTP server (false).
  * Use this to hide Electron-only UI (settings, traffic lights, etc.) in browser mode.
  */
-export const isElectronMode = (): boolean => !!window.electronAPI;
+export const isElectronMode = (): boolean =>
+  !!window.electronAPI || isTauriEnvironment();
 
 export const api: ElectronAPI = new Proxy({} as ElectronAPI, {
   get(_target, prop, receiver) {
