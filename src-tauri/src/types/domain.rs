@@ -270,10 +270,19 @@ pub struct SessionsByIdsOptions {
 // File Change Event
 // =============================================================================
 
+/// File change event type.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum FileChangeType {
+    Add,
+    Change,
+    Unlink,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FileChangeEvent {
     #[serde(rename = "type")]
-    pub event_type: String,
+    pub event_type: FileChangeType,
     pub path: String,
     #[serde(rename = "projectId", skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,

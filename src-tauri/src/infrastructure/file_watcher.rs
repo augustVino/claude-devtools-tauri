@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent};
 
-use crate::types::domain::FileChangeEvent;
+use crate::types::domain::{FileChangeEvent, FileChangeType};
 
 /// Debounce interval in milliseconds (matches Electron implementation)
 const DEBOUNCE_MS: u64 = 100;
@@ -135,14 +135,14 @@ impl FileWatcher {
         let event_type = if event.path.exists() {
             // File exists: could be add or change
             // We'll report "change" for simplicity
-            "change"
+            FileChangeType::Change
         } else {
             // File doesn't exist: it was removed
-            "unlink"
+            FileChangeType::Unlink
         };
 
         Some(FileChangeEvent {
-            event_type: event_type.to_string(),
+            event_type,
             path: event.path.to_string_lossy().to_string(),
             project_id: None,
             session_id: None,
