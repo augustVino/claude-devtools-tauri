@@ -1,73 +1,48 @@
-# React + TypeScript + Vite
+# claude-devtools-tauri
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Tauri v2 desktop app for visualizing Claude Code session execution — explore conversations, track context usage, and analyze tool calls.
 
-Currently, two official plugins are available:
+A [Tauri v2](https://tauri.app/) port of [claude-devtools](https://github.com/matt1398/claude-devtools) (Electron), rewritten with a pure Rust backend for significantly reduced binary size and memory usage.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Features
 
-## React Compiler
+- Visualize Claude Code session timelines
+- Track context window usage across 6 categories
+- Analyze tool calls and subagent orchestration
+- Search across sessions
+- Real-time file watching with incremental updates
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Getting Started
 
-## Expanding the ESLint configuration
+### Prerequisites
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- [Rust](https://rustup.rs/) 1.77.2+
+- [Node.js](https://nodejs.org/) 18+
+- [pnpm](https://pnpm.io/) 8+
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### Install & Run
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+pnpm install
+pnpm tauri dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### Build
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+pnpm tauri build
 ```
+
+## Tech Stack
+
+- **Backend:** Rust + Tauri v2
+- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Zustand
+- **Key crates:** tokio, serde, notify, moka
+
+## License
+
+[MIT](./LICENSE) — see [NOTICE](./NOTICE) for attribution details.
+
+## Acknowledgments
+
+This project is derived from [claude-devtools](https://github.com/matt1398/claude-devtools) by matt1398 and contributors, licensed under the MIT License.
