@@ -6,6 +6,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { listen, UnlistenFn } from '@tauri-apps/api/event';
 
 import type { ElectronAPI, ConfigAPI } from '@shared/types/api';
 import type {
@@ -89,6 +90,22 @@ interface MentionsValidationResult {
 
 interface ZoomFactorResult {
   factor: number;
+}
+
+// =============================================================================
+// Event types (match Rust structs)
+// =============================================================================
+
+interface FileChangeEvent {
+  type: string;
+  path: string;
+  projectId?: string;
+  sessionId?: string;
+  isSubagent: boolean;
+}
+
+interface TodoChangeEvent {
+  sessionId: string;
 }
 
 export class TauriAPIClient implements ElectronAPI {
@@ -288,8 +305,34 @@ export class TauriAPIClient implements ElectronAPI {
     unhideSessions: notImplemented,
   };
 
-  // Event listeners — return no-op unlisten
-  readonly onFileChange = (): (() => void) => () => {};
-  readonly onTodoChange = (): (() => void) => () => {};
+  // Event listeners — wired to Tauri events
+  readonly onFileChange = (callback: (event: FileChangeEvent) => void): (() => void) => {
+    let unlisten: UnlistenFn | null = null;
+    listen<FileChangeEvent>('file-change', (e) => callback(e.payload))
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch((err) => {
+        console.error('Failed to listen to file-change event:', err);
+      });
+    return () => {
+      if (unlisten) unlisten();
+    };
+  };
+
+  readonly onTodoChange = (callback: (event: TodoChangeEvent) => void): (() => void) => {
+    let unlisten: UnlistenFn | null = null;
+    listen<TodoChangeEvent>('todo-change', (e) => callback(e.payload))
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch((err) => {
+        console.error('Failed to listen to todo-change event:', err);
+      });
+    return () => {
+      if (unlisten) unlisten();
+    };
+  };
+
   readonly onSessionRefresh = (): (() => void) => () => {};
 }
