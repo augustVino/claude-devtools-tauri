@@ -11,6 +11,7 @@ pub struct ParsedSession {
     pub by_type: MessagesByType,
     pub sidechain_messages: Vec<ParsedMessage>,
     pub main_messages: Vec<ParsedMessage>,
+    pub is_ongoing: bool,
 }
 
 /// Messages categorized by type.
@@ -105,6 +106,7 @@ pub fn process_messages(messages: &[ParsedMessage]) -> ParsedSession {
 
     let metrics = calculate_metrics(messages);
     let task_calls = get_task_calls(messages);
+    let is_ongoing = crate::utils::session_state_detection::check_messages_ongoing(messages);
 
     ParsedSession {
         messages: messages.to_vec(),
@@ -113,6 +115,7 @@ pub fn process_messages(messages: &[ParsedMessage]) -> ParsedSession {
         by_type,
         sidechain_messages,
         main_messages,
+        is_ongoing,
     }
 }
 
