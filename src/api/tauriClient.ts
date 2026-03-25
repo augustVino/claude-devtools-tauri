@@ -24,12 +24,52 @@ function notImplemented(): Promise<never> {
   return Promise.reject(NOT_IMPLEMENTED);
 }
 
-function stub(): Record<string, unknown> {
+/**
+ * Creates a stub object that returns safe no-op values for event listeners.
+ * Event listener methods (onXxx) return a no-op cleanup function.
+ * Other methods return a rejected Promise.
+ *
+ * This allows frontend code to safely check `if (!api.ssh?.onStatus)` and
+ * use event listeners without breaking useEffect cleanup patterns.
+ */
+function stubEventAPI(): Record<string, unknown> {
   return new Proxy({} as Record<string, unknown>, {
-    get() {
+    get(_target, prop) {
+      // Event listener methods return a no-op cleanup function
+      if (typeof prop === 'string' && prop.startsWith('on')) {
+        return () => () => {};
+      }
+      // Other methods return rejected Promise
       return notImplemented;
     },
   });
+}
+
+/**
+ * Context API stub for V1 - returns local-only context.
+ * SSH context switching is V2 scope, so we return safe defaults.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function createContextAPI(): any {
+  return {
+    getActive: () => Promise.resolve('local'),
+    list: () => Promise.resolve([{ id: 'local', type: 'local' }]),
+    switch: notImplemented,
+    onChanged: () => () => {},
+  };
+}
+
+/**
+ * HTTP Server API stub for V1 - HTTP server is V2 scope.
+ * Returns safe defaults to prevent startup errors.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function createHttpServerAPI(): any {
+  return {
+    getStatus: () => Promise.resolve({ running: false, port: 3456 }),
+    start: notImplemented,
+    stop: notImplemented,
+  };
 }
 
 // =============================================================================
@@ -201,12 +241,12 @@ export class TauriAPIClient implements ElectronAPI {
 
   // Nested API objects — partially implemented
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly notifications = stub() as any;
-  readonly session = stub() as any;
-  readonly updater = stub() as any;
-  readonly ssh = stub() as any;
-  readonly context = stub() as any;
-  readonly httpServer = stub() as any;
+  readonly notifications = stubEventAPI() as any;
+  readonly session = stubEventAPI() as any;
+  readonly updater = stubEventAPI() as any;
+  readonly ssh = stubEventAPI() as any;
+  readonly context = createContextAPI();
+  readonly httpServer = createHttpServerAPI();
 
   // Config API — implemented
   readonly config: ConfigAPI = {
@@ -228,8 +268,13 @@ export class TauriAPIClient implements ElectronAPI {
     testTrigger: notImplemented,
     selectFolders: notImplemented,
     selectClaudeRootFolder: notImplemented,
-    getClaudeRootInfo: notImplemented,
-    findWslClaudeRoots: notImplemented,
+    getClaudeRootInfo: () =>
+      Promise.resolve({
+        defaultPath: '',
+        resolvedPath: '',
+        customPath: null,
+      }),
+    findWslClaudeRoots: () => Promise.resolve([]),
     openInEditor: notImplemented,
     pinSession: (projectId: string, sessionId: string): Promise<void> =>
       invoke('pin_session', { projectId, sessionId }),
