@@ -2,6 +2,7 @@ mod analysis;
 mod commands;
 mod constants;
 mod discovery;
+mod events;
 mod infrastructure;
 mod parsing;
 mod types;
@@ -10,6 +11,8 @@ mod utils;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use commands::AppState;
+use infrastructure::FileWatcher;
+use utils::get_projects_base_path;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -20,11 +23,44 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .manage(app_state.clone())
     .setup(move |app| {
-      // Initialize state asynchronously
+      let app_handle = app.handle().clone();
       let state = app_state.clone();
+
+      // Initialize state asynchronously
       tauri::async_runtime::spawn(async move {
         if let Err(e) = state.read().await.initialize().await {
           log::error!("Failed to initialize app state: {}", e);
+        }
+      });
+
+      // Start FileWatcher and connect to events
+      let watcher_app_handle = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+        let mut watcher = FileWatcher::new();
+        let projects_path = get_projects_base_path();
+
+        // Create directory if it doesn't exist
+        if !projects_path.exists() {
+          if let Err(e) = tokio::fs::create_dir_all(&projects_path).await {
+            log::error!("Failed to create projects directory: {}", e);
+            return;
+          }
+        }
+
+        // Start watching
+        match watcher.watch(&projects_path).await {
+          Ok(()) => {
+            log::info!("FileWatcher started successfully");
+            let mut receiver = watcher.receiver();
+
+            // Process file change events
+            while let Ok(event) = receiver.recv().await {
+              events::emit_file_change(&watcher_app_handle, event);
+            }
+          }
+          Err(e) => {
+            log::error!("Failed to start FileWatcher: {}", e);
+          }
         }
       });
 
