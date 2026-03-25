@@ -6,7 +6,8 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 
 import type { ElectronAPI, ConfigAPI } from '@shared/types/api';
 import type {
@@ -16,6 +17,7 @@ import type {
   Project,
   SearchSessionsResult,
   PaginatedSessionsResult,
+  FileChangeEvent,
 } from '@main/types';
 import type { AppConfig } from '@shared/types/notifications';
 
@@ -90,22 +92,6 @@ interface MentionsValidationResult {
 
 interface ZoomFactorResult {
   factor: number;
-}
-
-// =============================================================================
-// Event types (match Rust structs)
-// =============================================================================
-
-interface FileChangeEvent {
-  type: string;
-  path: string;
-  projectId?: string;
-  sessionId?: string;
-  isSubagent: boolean;
-}
-
-interface TodoChangeEvent {
-  sessionId: string;
 }
 
 export class TauriAPIClient implements ElectronAPI {
@@ -320,9 +306,9 @@ export class TauriAPIClient implements ElectronAPI {
     };
   };
 
-  readonly onTodoChange = (callback: (event: TodoChangeEvent) => void): (() => void) => {
+  readonly onTodoChange = (callback: (event: FileChangeEvent) => void): (() => void) => {
     let unlisten: UnlistenFn | null = null;
-    listen<TodoChangeEvent>('todo-change', (e) => callback(e.payload))
+    listen<FileChangeEvent>('todo-change', (e) => callback(e.payload))
       .then((fn) => {
         unlisten = fn;
       })
