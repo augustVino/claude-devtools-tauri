@@ -407,6 +407,26 @@ export interface SessionDetail {
  * Detailed subagent information for drill-down modal.
  * Contains parsed execution data for a specific subagent.
  */
+/**
+ * Raw subagent detail from IPC (matches Rust SubagentDetail).
+ * Used for API responses, then transformed to SubagentDetail for visualization.
+ */
+export interface RawSubagentDetail {
+  id: string;
+  filePath: string;
+  startTimeMs: number;
+  endTimeMs: number;
+  durationMs: number;
+  isParallel: boolean;
+  isOngoing: boolean;
+  metrics: SessionMetrics;
+  messages: ParsedMessage[];
+  taskId?: string;
+}
+
+/**
+ * Subagent detail for visualization (frontend-specific).
+ */
 export interface SubagentDetail {
   /** Agent ID */
   id: string;

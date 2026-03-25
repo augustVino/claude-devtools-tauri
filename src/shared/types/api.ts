@@ -27,7 +27,7 @@ import type {
   SessionMetrics,
   SessionsByIdsOptions,
   SessionsPaginationOptions,
-  SubagentDetail,
+  RawSubagentDetail,
 } from '@main/types';
 
 // =============================================================================
@@ -353,7 +353,7 @@ export interface ElectronAPI {
     projectId: string,
     sessionId: string,
     subagentId: string
-  ) => Promise<SubagentDetail | null>;
+  ) => Promise<RawSubagentDetail | null>;
   getSessionGroups: (projectId: string, sessionId: string) => Promise<ConversationGroup[]>;
   getSessionsByIds: (
     projectId: string,

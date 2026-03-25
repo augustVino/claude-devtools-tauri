@@ -20,7 +20,7 @@ import type {
   FileChangeEvent,
   TodoChangeEvent,
   RepositoryGroup,
-  SubagentDetail,
+  RawSubagentDetail,
 } from '@main/types';
 import type { AppConfig } from '@shared/types/notifications';
 
@@ -255,12 +255,13 @@ export class TauriAPIClient implements ElectronAPI {
     projectId: string,
     sessionId: string,
     subagentId: string
-  ): Promise<SubagentDetail | null> =>
+  ): Promise<RawSubagentDetail | null> =>
     invoke('get_subagent_detail', { projectId, sessionId, subagentId });
 
   readonly getSessionsByIds = (
     projectId: string,
-    sessionIds: string[]
+    sessionIds: string[],
+    _options?: unknown
   ): Promise<Session[]> =>
     invoke('get_sessions_by_ids', { projectId, sessionIds });
 
@@ -280,7 +281,8 @@ export class TauriAPIClient implements ElectronAPI {
 
   readonly readMentionedFile = async (
     filePath: string,
-    projectRoot: string
+    projectRoot: string,
+    _maxTokens?: number
   ): Promise<string | null> =>
     invoke('read_mentioned_file', { filePath, projectRoot });
 
