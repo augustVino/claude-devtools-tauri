@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use tauri::{command, State};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -236,12 +238,18 @@ pub async fn get_sessions_by_ids(
     project_id: String,
     session_ids: Vec<String>,
 ) -> Result<Vec<Session>, String> {
+    let id_set: HashSet<String> = session_ids.into_iter().collect();
+
+    if id_set.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let scanner = ProjectScanner::new();
     let all_sessions = scanner.list_sessions(&project_id);
 
     Ok(all_sessions
         .into_iter()
-        .filter(|s| session_ids.contains(&s.id))
+        .filter(|s| id_set.contains(&s.id))
         .collect())
 }
 
