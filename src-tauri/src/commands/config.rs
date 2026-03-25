@@ -113,3 +113,54 @@ pub async fn clear_snooze(
     let app_state = state.read().await;
     Ok(app_state.config_manager.clear_snooze())
 }
+
+// =============================================================================
+// Notification Triggers
+// =============================================================================
+
+#[command]
+pub async fn add_trigger(
+    state: State<'_, Arc<RwLock<AppState>>>,
+    trigger: crate::types::config::NotificationTrigger,
+) -> Result<AppConfig, String> {
+    let app_state = state.read().await;
+    app_state.config_manager.add_trigger(trigger)
+}
+
+#[command]
+pub async fn update_trigger(
+    state: State<'_, Arc<RwLock<AppState>>>,
+    trigger_id: String,
+    updates: serde_json::Value,
+) -> Result<AppConfig, String> {
+    let app_state = state.read().await;
+    app_state.config_manager.update_trigger(&trigger_id, updates)
+}
+
+#[command]
+pub async fn remove_trigger(
+    state: State<'_, Arc<RwLock<AppState>>>,
+    trigger_id: String,
+) -> Result<AppConfig, String> {
+    let app_state = state.read().await;
+    app_state.config_manager.remove_trigger(&trigger_id)
+}
+
+#[command]
+pub async fn get_triggers(
+    state: State<'_, Arc<RwLock<AppState>>>,
+) -> Result<Vec<crate::types::config::NotificationTrigger>, String> {
+    let app_state = state.read().await;
+    Ok(app_state.config_manager.get_triggers())
+}
+
+#[command]
+pub async fn test_trigger(
+    trigger: crate::types::config::NotificationTrigger,
+) -> Result<crate::types::config::TriggerTestResult, String> {
+    use crate::discovery::project_scanner::ProjectScanner;
+    use crate::error::error_trigger_tester;
+
+    let scanner = ProjectScanner::new();
+    Ok(error_trigger_tester::test_trigger(&trigger, &scanner, None).await)
+}
