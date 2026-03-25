@@ -79,16 +79,12 @@ pub struct DetectedError {
     pub source: String,
     pub message: String,
     pub timestamp: u64,
-    #[serde(rename = "createdAt")]
-    pub created_at: u64,
     #[serde(rename = "lineNumber", skip_serializing_if = "Option::is_none")]
-    pub line_number: Option<u32>,
+    pub line_number: Option<u64>,
     #[serde(rename = "toolUseId", skip_serializing_if = "Option::is_none")]
     pub tool_use_id: Option<String>,
     #[serde(rename = "subagentId", skip_serializing_if = "Option::is_none")]
     pub subagent_id: Option<String>,
-    #[serde(rename = "isRead")]
-    pub is_read: bool,
     #[serde(rename = "triggerColor", skip_serializing_if = "Option::is_none")]
     pub trigger_color: Option<String>,
     #[serde(rename = "triggerId", skip_serializing_if = "Option::is_none")]
@@ -134,7 +130,7 @@ pub struct TriggerTestError {
     #[serde(rename = "subagentId", skip_serializing_if = "Option::is_none")]
     pub subagent_id: Option<String>,
     #[serde(rename = "lineNumber", skip_serializing_if = "Option::is_none")]
-    pub line_number: Option<u32>,
+    pub line_number: Option<u64>,
     pub context: ErrorContext,
 }
 
@@ -266,20 +262,63 @@ pub struct HttpServerConfig {
 // Stored Notification
 // =============================================================================
 
+/// Stored notification — extends DetectedError with read state and creation time.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StoredNotification {
-    pub id: String,
-    #[serde(rename = "sessionId")]
-    pub session_id: String,
-    #[serde(rename = "projectId")]
-    pub project_id: String,
-    pub message: String,
-    pub timestamp: u64,
+    #[serde(flatten)]
+    pub error: DetectedError,
     #[serde(rename = "isRead")]
     pub is_read: bool,
-    #[serde(rename = "triggerId", skip_serializing_if = "Option::is_none")]
-    pub trigger_id: Option<String>,
-    #[serde(rename = "triggerName", skip_serializing_if = "Option::is_none")]
-    pub trigger_name: Option<String>,
-    pub color: Option<String>,
+    #[serde(rename = "createdAt")]
+    pub created_at: u64,
+}
+
+// =============================================================================
+// Notification Query Types
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GetNotificationsOptions {
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GetNotificationsResult {
+    pub notifications: Vec<StoredNotification>,
+    pub total: usize,
+    #[serde(rename = "totalCount")]
+    pub total_count: usize,
+    #[serde(rename = "unreadCount")]
+    pub unread_count: usize,
+    #[serde(rename = "hasMore")]
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationCountResult {
+    pub total: usize,
+    #[serde(rename = "unreadCount")]
+    pub unread_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationStats {
+    pub total: usize,
+    pub unread: usize,
+    #[serde(rename = "byProject")]
+    pub by_project: HashMap<String, usize>,
+    #[serde(rename = "bySource")]
+    pub by_source: HashMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerValidationResult {
+    pub valid: bool,
+    pub errors: Vec<String>,
 }
