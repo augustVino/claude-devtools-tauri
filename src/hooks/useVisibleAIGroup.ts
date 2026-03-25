@@ -4,7 +4,7 @@ interface UseVisibleAIGroupOptions {
   onVisibleChange: (aiGroupId: string) => void;
   threshold?: number; // Default 0.5
   /** Optional scroll container to observe against (important for nested scroll areas). */
-  rootRef?: RefObject<HTMLElement>;
+  rootRef?: RefObject<HTMLElement | null>;
 }
 
 interface UseVisibleAIGroupReturn {

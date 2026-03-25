@@ -40,7 +40,7 @@ interface UseAutoScrollBottomOptions {
    * ref instead of creating its own. Useful when the ref needs to be shared
    * with other hooks (e.g., navigation coordinator).
    */
-  externalRef?: React.RefObject<HTMLDivElement>;
+  externalRef?: React.RefObject<HTMLDivElement | null>;
 
   /**
    * When this value changes, reset isAtBottom state to true.
@@ -56,7 +56,7 @@ interface UseAutoScrollBottomReturn {
   /**
    * Ref to attach to the scroll container element.
    */
-  scrollContainerRef: React.RefObject<HTMLDivElement>;
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
 
   /**
    * Get whether the user is currently at the bottom of the scroll container.

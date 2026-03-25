@@ -14,56 +14,42 @@
  * ```
  */
 
-enum LogLevel {
-  DEBUG = 0,
-  INFO = 1,
-  WARN = 2,
-  ERROR = 3,
-  NONE = 4,
+const LogLevel = {
+  DEBUG: 0,
+  INFO: 1,
+  WARN: 2,
+  ERROR: 3,
+  NONE: 4,
+} as const;
+
+type LogLevelType = (typeof LogLevel)[keyof typeof LogLevel];
+
+let globalLevel: LogLevelType = import.meta.env.PROD ? LogLevel.ERROR : LogLevel.WARN;
+
+function createLogger(namespace: string) {
+  return {
+    debug: (...args: unknown[]): void => {
+      if (globalLevel <= LogLevel.DEBUG) {
+        console.debug(`[${namespace}]`, ...args);
+      }
+    },
+    info: (...args: unknown[]): void => {
+      if (globalLevel <= LogLevel.INFO) {
+        console.log(`[${namespace}]`, ...args);
+      }
+    },
+    warn: (...args: unknown[]): void => {
+      if (globalLevel <= LogLevel.WARN) {
+        console.warn(`[${namespace}]`, ...args);
+      }
+    },
+    error: (...args: unknown[]): void => {
+      if (globalLevel <= LogLevel.ERROR) {
+        console.error(`[${namespace}]`, ...args);
+      }
+    },
+  };
 }
 
-class Logger {
-  private static level: LogLevel =
-    process.env.NODE_ENV === 'production' ? LogLevel.ERROR : LogLevel.WARN;
-
-  constructor(private namespace: string) {}
-
-  debug(...args: unknown[]): void {
-    if (Logger.level <= LogLevel.DEBUG) {
-      console.debug(`[${this.namespace}]`, ...args);
-    }
-  }
-
-  info(...args: unknown[]): void {
-    if (Logger.level <= LogLevel.INFO) {
-      console.log(`[${this.namespace}]`, ...args);
-    }
-  }
-
-  warn(...args: unknown[]): void {
-    if (Logger.level <= LogLevel.WARN) {
-      console.warn(`[${this.namespace}]`, ...args);
-    }
-  }
-
-  error(...args: unknown[]): void {
-    if (Logger.level <= LogLevel.ERROR) {
-      console.error(`[${this.namespace}]`, ...args);
-    }
-  }
-
-  /** Allow runtime level changes (for testing/debugging) */
-  static setLevel(level: LogLevel): void {
-    Logger.level = level;
-  }
-
-  static getLevel(): LogLevel {
-    return Logger.level;
-  }
-}
-
-export function createLogger(namespace: string): Logger {
-  return new Logger(namespace);
-}
-
-export type { Logger };
+export { createLogger, LogLevel, globalLevel };
+export type { LogLevelType };

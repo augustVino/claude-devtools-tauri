@@ -2,7 +2,9 @@
  * Loading skeleton for ChatHistory while conversation is loading.
  * Industrial shimmer with organic line widths — no generic pulse.
  */
-export const ChatHistoryLoadingState = (): JSX.Element => {
+import React from 'react';
+
+export const ChatHistoryLoadingState = (): React.ReactElement => {
   const rows = [
     { user: ['85%', '60%'], ai: ['92%', '70%', '82%', '45%'] },
     { user: ['75%', '92%', '40%'], ai: ['88%', '65%', '78%'] },

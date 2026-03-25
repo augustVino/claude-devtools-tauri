@@ -57,7 +57,7 @@ const ChatHistoryItemInner = ({
   registerChatItemRef,
   registerAIGroupRef,
   registerToolRef,
-}: ChatHistoryItemProps): JSX.Element | null => {
+}: ChatHistoryItemProps): React.ReactElement | null => {
   switch (item.type) {
     case 'user': {
       const isHighlighted = highlightedGroupId === item.group.id;

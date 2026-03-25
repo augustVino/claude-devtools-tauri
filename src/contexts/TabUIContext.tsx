@@ -17,7 +17,7 @@
  * ```
  */
 
-import { createContext, type ReactNode } from 'react';
+import React, { createContext, type ReactNode } from 'react';
 
 // =============================================================================
 // Context Definition
@@ -46,6 +46,6 @@ interface TabUIProviderProps {
  * Provides the tab ID to all descendant components.
  * Wrap each tab's content with this provider.
  */
-export const TabUIProvider = ({ tabId, children }: TabUIProviderProps): JSX.Element => {
+export const TabUIProvider = ({ tabId, children }: TabUIProviderProps): React.ReactElement => {
   return <TabUIContext.Provider value={{ tabId }}>{children}</TabUIContext.Provider>;
 };

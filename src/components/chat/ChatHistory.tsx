@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { isNearBottom, useAutoScrollBottom } from '@renderer/hooks/useAutoScrollBottom';
 import { useTabNavigationController } from '@renderer/hooks/useTabNavigationController';
@@ -36,7 +36,7 @@ interface ChatHistoryProps {
   tabId?: string;
 }
 
-export const ChatHistory = ({ tabId }: ChatHistoryProps): JSX.Element => {
+export const ChatHistory = ({ tabId }: ChatHistoryProps): React.ReactElement => {
   const VIRTUALIZATION_THRESHOLD = 120;
   const ESTIMATED_CHAT_ITEM_HEIGHT = 260;
 

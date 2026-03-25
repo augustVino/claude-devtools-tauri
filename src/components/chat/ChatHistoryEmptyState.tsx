@@ -1,7 +1,9 @@
 /**
  * Empty state for ChatHistory when no conversation exists.
  */
-export const ChatHistoryEmptyState = (): JSX.Element => {
+import React from 'react';
+
+export const ChatHistoryEmptyState = (): React.ReactElement => {
   return (
     <div className="flex flex-1 items-center justify-center overflow-hidden bg-surface">
       <div className="space-y-2 text-center text-text-muted">
