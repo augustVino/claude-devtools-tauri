@@ -1,5 +1,7 @@
 mod analysis;
 mod commands;
+mod constants;
+mod discovery;
 mod infrastructure;
 mod parsing;
 mod types;
@@ -40,6 +42,13 @@ pub fn run() {
       commands::config::unhide_session,
       commands::config::snooze,
       commands::config::clear_snooze,
+      commands::search::search_sessions,
+      commands::search::search_all_projects,
+      commands::validation::validate_path,
+      commands::validation::validate_mentions,
+      commands::utility::open_path,
+      commands::utility::open_external,
+      commands::utility::get_zoom_factor,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
