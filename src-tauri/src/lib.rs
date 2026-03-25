@@ -1,5 +1,9 @@
+mod analysis;
 mod commands;
+mod infrastructure;
+mod parsing;
 mod types;
+mod utils;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -22,6 +26,20 @@ pub fn run() {
       commands::window::close,
       commands::window::is_maximized,
       commands::version::get_app_version,
+      commands::sessions::get_sessions,
+      commands::sessions::get_session_detail,
+      commands::sessions::get_session_metrics,
+      commands::sessions::get_projects,
+      commands::config::get_config,
+      commands::config::update_config,
+      commands::config::add_ignore_regex,
+      commands::config::remove_ignore_regex,
+      commands::config::pin_session,
+      commands::config::unpin_session,
+      commands::config::hide_session,
+      commands::config::unhide_session,
+      commands::config::snooze,
+      commands::config::clear_snooze,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

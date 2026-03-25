@@ -159,8 +159,8 @@ pub struct NotificationConfig {
     pub enabled: bool,
     #[serde(rename = "soundEnabled")]
     pub sound_enabled: bool,
-    #[serde(rename = "ignoredRegex")]
-    pub ignored_regex: String,
+    #[serde(rename = "ignoredRegex", default)]
+    pub ignored_regex: Vec<String>,
     #[serde(rename = "ignoredRepositories")]
     pub ignored_repositories: Vec<String>,
     #[serde(rename = "snoozedUntil", skip_serializing_if = "Option::is_none")]
