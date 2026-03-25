@@ -51,7 +51,7 @@ pub struct NotificationManager {
     /// Tauri app handle for emitting events and showing native notifications.
     app_handle: Option<tauri::AppHandle>,
     /// Reference to the config manager for reading notification settings.
-    config_manager: Arc<RwLock<ConfigManager>>,
+    config_manager: Arc<ConfigManager>,
     /// In-memory notification store (newest first).
     notifications: Arc<RwLock<Vec<StoredNotification>>>,
     /// Throttle map: `${projectId}:${message}` -> last-seen timestamp.
@@ -73,7 +73,7 @@ impl NotificationManager {
     /// notifications from disk.
     pub fn new(
         app_handle: tauri::AppHandle,
-        config_manager: Arc<RwLock<ConfigManager>>,
+        config_manager: Arc<ConfigManager>,
     ) -> Self {
         let persistence_path = dirs::home_dir()
             .expect("home directory must exist")
@@ -92,7 +92,7 @@ impl NotificationManager {
 
     /// Creates a NotificationManager without a Tauri app handle (for testing).
     #[cfg(test)]
-    pub fn new_for_test(config_manager: Arc<RwLock<ConfigManager>>) -> Self {
+    pub fn new_for_test(config_manager: Arc<ConfigManager>) -> Self {
         let persistence_path = std::env::temp_dir()
             .join(format!(
                 "claude-devtools-test-notifications-{}.json",
@@ -251,25 +251,27 @@ impl NotificationManager {
     ///
     /// Returns `true` if the notification was found.
     pub async fn mark_read(&self, id: &str) -> bool {
-        let mut notifications = match self.notifications.write() {
-            Ok(n) => n,
-            Err(e) => {
-                error!("Failed to acquire write lock: {e}");
-                return false;
-            }
-        };
+        let found = {
+            let mut notifications = match self.notifications.write() {
+                Ok(n) => n,
+                Err(e) => {
+                    error!("Failed to acquire write lock: {e}");
+                    return false;
+                }
+            };
 
-        let found = notifications.iter_mut().any(|n| {
-            if n.error.id == id && !n.is_read {
-                n.is_read = true;
-                true
-            } else {
-                n.error.id == id
-            }
-        });
+            notifications.iter_mut().any(|n| {
+                if n.error.id == id && !n.is_read {
+                    n.is_read = true;
+                    true
+                } else {
+                    n.error.id == id
+                }
+            })
+        };
+        // Guard is dropped here (end of block scope)
 
         if found {
-            drop(notifications);
             self.save_notifications().await;
             self.emit_notification_updated();
         }
@@ -281,24 +283,27 @@ impl NotificationManager {
     ///
     /// Returns `true` on success.
     pub async fn mark_all_read(&self) -> bool {
-        let mut notifications = match self.notifications.write() {
-            Ok(n) => n,
-            Err(e) => {
-                error!("Failed to acquire write lock: {e}");
-                return false;
-            }
-        };
+        let changed = {
+            let mut notifications = match self.notifications.write() {
+                Ok(n) => n,
+                Err(e) => {
+                    error!("Failed to acquire write lock: {e}");
+                    return false;
+                }
+            };
 
-        let mut changed = false;
-        for notification in notifications.iter_mut() {
-            if !notification.is_read {
-                notification.is_read = true;
-                changed = true;
+            let mut changed = false;
+            for notification in notifications.iter_mut() {
+                if !notification.is_read {
+                    notification.is_read = true;
+                    changed = true;
+                }
             }
-        }
+            changed
+        };
+        // Guard is dropped here (end of block scope)
 
         if changed {
-            drop(notifications);
             self.save_notifications().await;
             self.emit_notification_updated();
         }
@@ -310,16 +315,19 @@ impl NotificationManager {
     ///
     /// Returns `true` on success.
     pub async fn clear_all(&self) -> bool {
-        let mut notifications = match self.notifications.write() {
-            Ok(n) => n,
-            Err(e) => {
-                error!("Failed to acquire write lock: {e}");
-                return false;
-            }
-        };
+        {
+            let mut notifications = match self.notifications.write() {
+                Ok(n) => n,
+                Err(e) => {
+                    error!("Failed to acquire write lock: {e}");
+                    return false;
+                }
+            };
 
-        notifications.clear();
-        drop(notifications);
+            notifications.clear();
+        }
+        // Guard is dropped here (end of block scope)
+
         self.save_notifications().await;
         self.emit_notification_updated();
         true
@@ -329,25 +337,28 @@ impl NotificationManager {
     ///
     /// Returns `true` if found and deleted.
     pub async fn delete_notification(&self, id: &str) -> bool {
-        let mut notifications = match self.notifications.write() {
-            Ok(n) => n,
-            Err(e) => {
-                error!("Failed to acquire write lock: {e}");
-                return false;
-            }
+        let found = {
+            let mut notifications = match self.notifications.write() {
+                Ok(n) => n,
+                Err(e) => {
+                    error!("Failed to acquire write lock: {e}");
+                    return false;
+                }
+            };
+
+            let len_before = notifications.len();
+            notifications.retain(|n| n.error.id != id);
+            notifications.len() != len_before
         };
+        // Guard is dropped here (end of block scope)
 
-        let len_before = notifications.len();
-        notifications.retain(|n| n.error.id != id);
-
-        if notifications.len() == len_before {
-            return false;
+        if found {
+            self.save_notifications().await;
+            self.emit_notification_updated();
+            true
+        } else {
+            false
         }
-
-        drop(notifications);
-        self.save_notifications().await;
-        self.emit_notification_updated();
-        true
     }
 
     /// Returns the count of unread notifications.
@@ -505,16 +516,7 @@ impl NotificationManager {
 
     /// Checks if an error message matches any configured ignored regex patterns.
     fn matches_ignored_regex(&self, error: &DetectedError) -> bool {
-        let config = self
-            .config_manager
-            .read()
-            .map(|cm| cm.get_config())
-            .ok();
-
-        let config = match config {
-            Some(c) => c,
-            None => return false,
-        };
+        let config = self.config_manager.get_config();
 
         if config.notifications.ignored_regex.is_empty() {
             return false;
@@ -535,16 +537,7 @@ impl NotificationManager {
 
     /// Checks whether notifications are currently enabled (not snoozed, not disabled).
     fn are_notifications_enabled(&self) -> bool {
-        let config = self
-            .config_manager
-            .read()
-            .map(|cm| cm.get_config())
-            .ok();
-
-        let config = match config {
-            Some(c) => c,
-            None => return false,
-        };
+        let config = self.config_manager.get_config();
 
         if !config.notifications.enabled {
             return false;
@@ -556,10 +549,7 @@ impl NotificationManager {
                 return false;
             }
             // Snooze has expired — clear it
-            drop(config);
-            if let Ok(cm) = self.config_manager.read() {
-                cm.clear_snooze();
-            }
+            self.config_manager.clear_snooze();
             return true;
         }
 
@@ -595,12 +585,7 @@ impl NotificationManager {
             return;
         };
 
-        let sound_enabled = self
-            .config_manager
-            .read()
-            .ok()
-            .map(|cm| cm.get_config().notifications.sound_enabled)
-            .unwrap_or(true);
+        let sound_enabled = self.config_manager.get_config().notifications.sound_enabled;
 
         let body = truncate_str(&error.message, 200);
 
@@ -784,12 +769,12 @@ mod tests {
 
     /// Creates a test NotificationManager.
     async fn make_manager() -> NotificationManager {
-        let cm = Arc::new(RwLock::new(ConfigManager::with_path(
+        let cm = Arc::new(ConfigManager::with_path(
             std::env::temp_dir().join(format!(
                 "claude-devtools-test-config-{}.json",
                 uuid::Uuid::new_v4()
             )),
-        )));
+        ));
         NotificationManager::new_for_test(cm)
     }
 
@@ -1201,16 +1186,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_ignored_regex_filtering() {
-        let cm = Arc::new(RwLock::new(ConfigManager::with_path(
+        let cm = Arc::new(ConfigManager::with_path(
             std::env::temp_dir().join(format!(
                 "claude-devtools-test-config-{}.json",
                 uuid::Uuid::new_v4()
             )),
-        )));
-        {
-            let cm_guard = cm.read().unwrap();
-            cm_guard.add_ignore_regex("permission denied".to_string()).unwrap();
-        }
+        ));
+        cm.add_ignore_regex("permission denied".to_string()).unwrap();
 
         let mut mgr = NotificationManager::new_for_test(cm);
         mgr.initialize().await;

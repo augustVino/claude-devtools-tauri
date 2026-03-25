@@ -18,14 +18,14 @@ use crate::analysis::ChunkBuilder;
 /// Application state shared across commands
 pub struct AppState {
     pub cache: DataCache,
-    pub config_manager: ConfigManager,
+    pub config_manager: Arc<ConfigManager>,
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    pub fn new(config_manager: Arc<ConfigManager>) -> Self {
         Self {
             cache: DataCache::new(),
-            config_manager: ConfigManager::new(),
+            config_manager,
         }
     }
 

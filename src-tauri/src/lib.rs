@@ -11,13 +11,15 @@ mod utils;
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tauri::Manager;
 use commands::AppState;
-use infrastructure::FileWatcher;
+use infrastructure::{ConfigManager, FileWatcher, NotificationManager};
 use utils::get_projects_base_path;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  let app_state = Arc::new(RwLock::new(AppState::new()));
+  let config_manager = Arc::new(ConfigManager::new());
+  let app_state = Arc::new(RwLock::new(AppState::new(config_manager.clone())));
 
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
@@ -32,6 +34,20 @@ pub fn run() {
         if let Err(e) = state.read().await.initialize().await {
           log::error!("Failed to initialize app state: {}", e);
         }
+      });
+
+      // Create and register NotificationManager
+      let notification_manager = NotificationManager::new(
+        app.handle().clone(),
+        config_manager.clone(),
+      );
+      let notification_manager = Arc::new(RwLock::new(notification_manager));
+      app.manage(notification_manager.clone());
+
+      // Initialize NotificationManager asynchronously
+      tauri::async_runtime::spawn(async move {
+        notification_manager.write().await.initialize().await;
+        log::info!("NotificationManager initialized");
       });
 
       // Start FileWatcher and connect to events
@@ -110,6 +126,13 @@ pub fn run() {
       commands::projects::get_repository_groups,
       commands::projects::get_worktree_sessions,
       commands::subagents::get_subagent_detail,
+      commands::notifications::get_notifications,
+      commands::notifications::mark_notification_read,
+      commands::notifications::mark_all_notifications_read,
+      commands::notifications::delete_notification,
+      commands::notifications::clear_notifications,
+      commands::notifications::get_notification_count,
+      commands::notifications::get_notification_stats,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
