@@ -1,42 +1,51 @@
+use crate::analysis::process_linker::link_processes_to_chunk;
+use crate::analysis::semantic_step_extractor::extract_semantic_steps;
+use crate::analysis::semantic_step_grouper::build_semantic_step_groups;
+use crate::analysis::tool_execution_builder::build_tool_executions;
 use crate::parsing::{calculate_metrics, classify_message};
 use crate::types::chunks::{
-    AiChunk, Chunk, CompactChunk, Process, SessionDetail, SystemChunk, ToolExecution, UserChunk,
+    AiChunk, Chunk, CompactChunk, Process, SessionDetail, SystemChunk, UserChunk,
 };
 use crate::types::domain::{MessageCategory, Session, SessionMetrics};
 use crate::types::messages::ParsedMessage;
+use crate::utils::context_accumulator::calculate_step_context;
+use crate::utils::timeline_gap_filling::{fill_timeline_gaps, GapFillingInput};
 
 /// ChunkBuilder service - Builds visualization chunks from parsed session data.
 pub struct ChunkBuilder;
 
 impl ChunkBuilder {
     /// Build chunks from messages using 4-category classification.
+    ///
+    /// Produces stable `{type}-{uuid}` IDs instead of positional `chunk-{N}` IDs.
+    /// Collects sidechain messages within each AI chunk's time range.
+    /// Runs the full semantic step pipeline (extract, gap-fill, context, group).
     pub fn build_chunks(messages: &[ParsedMessage], subagents: &[Process]) -> Vec<Chunk> {
         let mut chunks: Vec<Chunk> = Vec::new();
         let main_messages: Vec<&ParsedMessage> = messages.iter().filter(|m| !m.is_sidechain).collect();
         let mut ai_buffer: Vec<ParsedMessage> = Vec::new();
-        let mut counter = 0u32;
 
         for message in main_messages {
             match classify_message(message) {
                 MessageCategory::HardNoise => {}
                 MessageCategory::Compact => {
-                    Self::flush_ai(&mut ai_buffer, &mut chunks, subagents, &mut counter);
-                    chunks.push(Self::compact_chunk(message, &mut counter));
+                    Self::flush_ai(&mut ai_buffer, &mut chunks, subagents, messages);
+                    chunks.push(Self::compact_chunk(message));
                 }
                 MessageCategory::User => {
-                    Self::flush_ai(&mut ai_buffer, &mut chunks, subagents, &mut counter);
-                    chunks.push(Self::user_chunk(message, &mut counter));
+                    Self::flush_ai(&mut ai_buffer, &mut chunks, subagents, messages);
+                    chunks.push(Self::user_chunk(message));
                 }
                 MessageCategory::System => {
-                    Self::flush_ai(&mut ai_buffer, &mut chunks, subagents, &mut counter);
-                    chunks.push(Self::system_chunk(message, &mut counter));
+                    Self::flush_ai(&mut ai_buffer, &mut chunks, subagents, messages);
+                    chunks.push(Self::system_chunk(message));
                 }
                 MessageCategory::Ai => ai_buffer.push(message.clone()),
             }
         }
 
         if !ai_buffer.is_empty() {
-            Self::ai_chunk(&ai_buffer, subagents, &mut chunks, &mut counter);
+            Self::flush_ai(&mut ai_buffer, &mut chunks, subagents, messages);
         }
         chunks
     }
@@ -74,50 +83,150 @@ impl ChunkBuilder {
         }
     }
 
-    fn flush_ai(buf: &mut Vec<ParsedMessage>, chunks: &mut Vec<Chunk>, subs: &[Process], ctr: &mut u32) {
-        if !buf.is_empty() { Self::ai_chunk(buf, subs, chunks, ctr); buf.clear(); }
+    fn flush_ai(
+        buf: &mut Vec<ParsedMessage>,
+        chunks: &mut Vec<Chunk>,
+        subs: &[Process],
+        all_messages: &[ParsedMessage],
+    ) {
+        if !buf.is_empty() {
+            Self::build_ai_chunk(buf, subs, all_messages, chunks);
+            buf.clear();
+        }
     }
 
-    fn ai_chunk(buf: &[ParsedMessage], subs: &[Process], chunks: &mut Vec<Chunk>, ctr: &mut u32) {
+    fn build_ai_chunk(
+        buf: &[ParsedMessage],
+        subs: &[Process],
+        all_messages: &[ParsedMessage],
+        chunks: &mut Vec<Chunk>,
+    ) {
         if buf.is_empty() { return; }
-        *ctr += 1;
+
+        let id = format!("ai-{}", buf.first().map(|m| m.uuid.as_str()).unwrap_or("empty"));
         let start = buf.first().and_then(|m| parse_ts_ms(&m.timestamp)).unwrap_or(0);
         let end = buf.last().and_then(|m| parse_ts_ms(&m.timestamp)).unwrap_or(0);
-        chunks.push(Chunk::Ai(AiChunk {
-            id: format!("chunk-{}", ctr), start_time: start, end_time: end,
-            duration_ms: Self::duration_ms(buf), metrics: calculate_metrics(buf),
-            responses: buf.to_vec(), processes: Self::link_subs(buf, subs),
-            sidechain_messages: vec![], tool_executions: Self::tool_execs(buf),
-            semantic_steps: vec![], semantic_step_groups: vec![],
-        }));
+
+        let mut ai = AiChunk {
+            id,
+            start_time: start,
+            end_time: end,
+            duration_ms: Self::duration_ms(buf),
+            metrics: calculate_metrics(buf),
+            responses: buf.to_vec(),
+            processes: vec![],
+            sidechain_messages: Self::collect_sidechains(all_messages, start, end),
+            tool_executions: build_tool_executions(buf),
+            semantic_steps: vec![],
+            semantic_step_groups: vec![],
+        };
+
+        // Two-tier process linking
+        link_processes_to_chunk(&mut ai, subs);
+
+        // Semantic step pipeline
+        let mut steps = extract_semantic_steps(&ai);
+        fill_timeline_gaps(GapFillingInput {
+            steps: &mut steps,
+            chunk_start_time_ms: start,
+            chunk_end_time_ms: end,
+        });
+        calculate_step_context(&mut steps, buf);
+        ai.semantic_steps = steps;
+        ai.semantic_step_groups = build_semantic_step_groups(&ai.semantic_steps);
+
+        chunks.push(Chunk::Ai(ai));
     }
 
-    fn user_chunk(msg: &ParsedMessage, ctr: &mut u32) -> Chunk {
-        *ctr += 1;
+    fn user_chunk(msg: &ParsedMessage) -> Chunk {
         let ts = parse_ts_ms(&msg.timestamp).unwrap_or(0);
         Chunk::User(UserChunk {
-            id: format!("chunk-{}", ctr), start_time: ts, end_time: ts, duration_ms: 0,
-            metrics: Self::single_msg_metrics(), user_message: msg.clone(),
+            id: format!("user-{}", msg.uuid),
+            start_time: ts,
+            end_time: ts,
+            duration_ms: 0,
+            metrics: Self::single_msg_metrics(),
+            user_message: msg.clone(),
         })
     }
 
-    fn system_chunk(msg: &ParsedMessage, ctr: &mut u32) -> Chunk {
-        *ctr += 1;
+    fn system_chunk(msg: &ParsedMessage) -> Chunk {
         let ts = parse_ts_ms(&msg.timestamp).unwrap_or(0);
         Chunk::System(SystemChunk {
-            id: format!("chunk-{}", ctr), start_time: ts, end_time: ts, duration_ms: 0,
-            metrics: Self::single_msg_metrics(), message: msg.clone(),
-            command_output: Self::cmd_output(msg),
+            id: format!("system-{}", msg.uuid),
+            start_time: ts,
+            end_time: ts,
+            duration_ms: 0,
+            metrics: Self::single_msg_metrics(),
+            message: msg.clone(),
+            command_output: Self::extract_command_output(msg),
         })
     }
 
-    fn compact_chunk(msg: &ParsedMessage, ctr: &mut u32) -> Chunk {
-        *ctr += 1;
+    fn compact_chunk(msg: &ParsedMessage) -> Chunk {
         let ts = parse_ts_ms(&msg.timestamp).unwrap_or(0);
         Chunk::Compact(CompactChunk {
-            id: format!("chunk-{}", ctr), start_time: ts, end_time: ts, duration_ms: 0,
-            metrics: Self::single_msg_metrics(), message: msg.clone(),
+            id: format!("compact-{}", msg.uuid),
+            start_time: ts,
+            end_time: ts,
+            duration_ms: 0,
+            metrics: Self::single_msg_metrics(),
+            message: msg.clone(),
         })
+    }
+
+    /// Collect sidechain messages whose timestamps fall within the chunk's time range.
+    fn collect_sidechains(
+        messages: &[ParsedMessage],
+        chunk_start: u64,
+        chunk_end: u64,
+    ) -> Vec<ParsedMessage> {
+        messages
+            .iter()
+            .filter(|m| {
+                if !m.is_sidechain { return false; }
+                let ts = parse_ts_ms(&m.timestamp).unwrap_or(0);
+                ts >= chunk_start && ts <= chunk_end
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Extract command output from system messages using regex.
+    ///
+    /// Looks for `<local-command-stdout>` and `<local-command-stderr>` tags.
+    /// Falls back to the raw content string if no tags are found.
+    fn extract_command_output(msg: &ParsedMessage) -> String {
+        let content = match &msg.content {
+            serde_json::Value::String(s) => s.as_str(),
+            _ => return String::new(),
+        };
+
+        let stdout_re = regex::Regex::new(
+            r"<local-command-stdout>([\s\S]*?)</local-command-stdout>",
+        )
+        .unwrap();
+        if let Some(caps) = stdout_re.captures(content) {
+            return caps
+                .get(1)
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
+        }
+
+        let stderr_re = regex::Regex::new(
+            r"<local-command-stderr>([\s\S]*?)</local-command-stderr>",
+        )
+        .unwrap();
+        if let Some(caps) = stderr_re.captures(content) {
+            return caps
+                .get(1)
+                .map(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
+        }
+
+        content.to_string()
     }
 
     fn chunk_metrics(chunk: &Chunk) -> &SessionMetrics {
@@ -140,30 +249,6 @@ impl ChunkBuilder {
         let first = msgs.first().and_then(|m| parse_ts_ms(&m.timestamp));
         let last = msgs.last().and_then(|m| parse_ts_ms(&m.timestamp));
         match (first, last) { (Some(f), Some(l)) => l.saturating_sub(f), _ => 0 }
-    }
-
-    fn cmd_output(msg: &ParsedMessage) -> String {
-        match &msg.content { serde_json::Value::String(s) => s.clone(), _ => String::new() }
-    }
-
-    fn link_subs(buf: &[ParsedMessage], subs: &[Process]) -> Vec<Process> {
-        let task_ids: Vec<_> = buf.iter().flat_map(|m| m.tool_calls.iter())
-            .filter(|tc| tc.is_task).map(|tc| tc.id.clone()).collect();
-        subs.iter().filter(|p| p.parent_task_id.as_ref()
-            .map_or(false, |tid| task_ids.contains(tid))).cloned().collect()
-    }
-
-    fn tool_execs(buf: &[ParsedMessage]) -> Vec<ToolExecution> {
-        let mut execs = Vec::new();
-        for msg in buf {
-            for tc in &msg.tool_calls {
-                let result = buf.iter().flat_map(|m| m.tool_results.iter())
-                    .find(|tr| tr.tool_use_id == tc.id).cloned();
-                execs.push(ToolExecution { tool_call: tc.clone(), result,
-                    start_time: msg.timestamp.clone(), end_time: None, duration_ms: None });
-            }
-        }
-        execs
     }
 }
 

@@ -98,6 +98,11 @@ fn test_build_chunks_mixed_messages() {
     assert!(matches!(&chunks[0], Chunk::User(_)));
     assert!(matches!(&chunks[1], Chunk::Ai(_)));
     assert!(matches!(&chunks[2], Chunk::User(_)));
+
+    // Verify stable {type}-{uuid} IDs
+    if let Chunk::User(c) = &chunks[0] { assert_eq!(c.id, "user-u1"); }
+    if let Chunk::Ai(c) = &chunks[1] { assert_eq!(c.id, "ai-a1"); }
+    if let Chunk::User(c) = &chunks[2] { assert_eq!(c.id, "user-u2"); }
 }
 
 #[test]
@@ -130,6 +135,90 @@ fn test_hard_noise_filtering() {
 
     assert_eq!(chunks.len(), 1);
     assert!(matches!(&chunks[0], Chunk::User(_)));
+}
+
+#[test]
+fn test_sidechain_collection() {
+    use crate::types::domain::MessageType;
+
+    let messages = vec![
+        make_assistant_msg("a1", "2026-01-01T00:00:00Z"),
+        make_assistant_msg("a2", "2026-01-01T00:00:03Z"),
+        ParsedMessage {
+            uuid: "sc1".to_string(),
+            parent_uuid: None,
+            message_type: MessageType::System,
+            timestamp: "2026-01-01T00:00:01.500Z".to_string(),
+            role: None,
+            content: serde_json::Value::String("sidechain output".to_string()),
+            usage: None,
+            model: None,
+            cwd: None,
+            git_branch: None,
+            agent_id: None,
+            is_sidechain: true,
+            is_meta: true,
+            user_type: None,
+            tool_calls: vec![],
+            tool_results: vec![],
+            source_tool_use_id: None,
+            source_tool_assistant_uuid: None,
+            tool_use_result: None,
+            is_compact_summary: None,
+            request_id: None,
+        },
+        make_user_msg("u1", "2026-01-01T00:00:05Z"),
+    ];
+
+    let chunks = ChunkBuilder::build_chunks(&messages, &[]);
+
+    assert_eq!(chunks.len(), 2);
+    if let Chunk::Ai(ai_chunk) = &chunks[0] {
+        assert_eq!(ai_chunk.sidechain_messages.len(), 1);
+        assert_eq!(ai_chunk.sidechain_messages[0].uuid, "sc1");
+    } else {
+        panic!("Expected AI chunk");
+    }
+}
+
+#[test]
+fn test_command_output_extraction() {
+    // System chunks come from User messages with <local-command-*> content,
+    // not from MessageType::System (which is classified as HardNoise).
+    let messages = vec![ParsedMessage {
+        uuid: "s1".to_string(),
+        parent_uuid: None,
+        message_type: MessageType::User,
+        timestamp: "2026-01-01T00:00:00Z".to_string(),
+        role: Some("user".to_string()),
+        content: serde_json::Value::String(
+            "<local-command-stdout>build success</local-command-stdout>".to_string(),
+        ),
+        usage: None,
+        model: None,
+        cwd: None,
+        git_branch: None,
+        agent_id: None,
+        is_sidechain: false,
+        is_meta: true,
+        user_type: None,
+        tool_calls: vec![],
+        tool_results: vec![],
+        source_tool_use_id: None,
+        source_tool_assistant_uuid: None,
+        tool_use_result: None,
+        is_compact_summary: None,
+        request_id: None,
+    }];
+
+    let chunks = ChunkBuilder::build_chunks(&messages, &[]);
+
+    assert_eq!(chunks.len(), 1);
+    if let Chunk::System(sys_chunk) = &chunks[0] {
+        assert_eq!(sys_chunk.command_output, "build success");
+    } else {
+        panic!("Expected System chunk");
+    }
 }
 
 #[test]

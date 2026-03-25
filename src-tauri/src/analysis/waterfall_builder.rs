@@ -91,12 +91,8 @@ pub fn build_waterfall_data(chunks: &[Chunk], processes: &[Process]) -> Waterfal
                     .end_time
                     .as_deref()
                     .and_then(parse_ts_ms)
-                    .unwrap_or_else(|| tool_exec.start_time.as_deref().and_then(parse_ts_ms).unwrap_or(0));
-                let start_time = tool_exec
-                    .start_time
-                    .as_deref()
-                    .and_then(parse_ts_ms)
-                    .unwrap_or(0);
+                    .unwrap_or_else(|| parse_ts_ms(&tool_exec.start_time).unwrap_or(0));
+                let start_time = parse_ts_ms(&tool_exec.start_time).unwrap_or(0);
                 let duration_ms = tool_exec
                     .duration_ms
                     .unwrap_or_else(|| end_time.saturating_sub(start_time));
