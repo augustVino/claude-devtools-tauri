@@ -1,111 +1,549 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Theme CSS Custom Properties */
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+  /* Dark theme (default) - Soft Charcoal palette */
+  --color-surface: #141416; /* Main Chat Area Background (Soft Matte Charcoal) */
+  --color-surface-raised: #27272a; /* Active/Selected items (Zinc-800) */
+  --color-surface-overlay: #27272a; /* Overlay surfaces */
+  --color-surface-sidebar: #0f0f11; /* Sidebar Background (slightly darker) */
+  --color-border: rgba(255, 255, 255, 0.05); /* Borders/Dividers (5% white) */
+  --color-border-subtle: rgba(255, 255, 255, 0.05); /* Subtle borders (5% white) */
+  --color-border-emphasis: rgba(255, 255, 255, 0.1); /* Emphasis borders (10% white) */
+  --color-text: #fafafa;
+  --color-text-secondary: #a1a1aa;
+  --color-text-muted: #71717a;
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  /* Scrollbar colors */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.15);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
+  --scrollbar-thumb-active: rgba(255, 255, 255, 0.35);
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  /* Search highlights */
+  --highlight-bg: rgba(202, 138, 4, 0.7);
+  --highlight-bg-inactive: rgba(113, 63, 18, 0.5);
+  --highlight-text: #fef9c3;
+  --highlight-text-inactive: #fef08a;
+  --highlight-ring: #facc15;
 
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
+  /* User chat bubble - Soft Charcoal theme (softer text for visual hierarchy) */
+  --chat-user-bg: #27272a;
+  --chat-user-text: #a1a1aa;
+  --chat-user-border: rgba(255, 255, 255, 0.08);
+  --chat-user-shadow: 0 1px 0 0 rgba(255, 255, 255, 0.03);
+
+  /* User bubble inline tags - Linear-style neutral */
+  --chat-user-tag-bg: rgba(255, 255, 255, 0.08);
+  --chat-user-tag-text: #e4e4e7;
+  --chat-user-tag-border: rgba(255, 255, 255, 0.12);
+
+  /* Tool items */
+  --tool-item-name: #e4e4e7;
+  --tool-item-summary: #a1a1aa;
+  --tool-item-muted: #71717a;
+  --tool-item-hover-bg: rgba(39, 39, 42, 0.5);
+
+  /* System chat bubble */
+  --chat-system-bg: rgba(39, 39, 42, 0.5);
+  --chat-system-text: #d4d4d8;
+
+  /* AI message styling */
+  --chat-ai-border: rgba(255, 255, 255, 0.05);
+  --chat-ai-icon: #71717a;
+
+  /* Code blocks - Soft Charcoal theme */
+  --code-bg: #1c1c1e;
+  --code-header-bg: #1c1c1e;
+  --code-border: rgba(255, 255, 255, 0.1);
+  --code-line-number: #52525b;
+  --code-filename: #60a5fa;
+
+  /* Syntax highlighting - Dark theme */
+  --syntax-string: #4ade80;
+  --syntax-comment: #71717a;
+  --syntax-number: #fb923c;
+  --syntax-keyword: #c084fc;
+  --syntax-type: #facc15;
+  --syntax-operator: #a1a1aa;
+  --syntax-function: #60a5fa;
+
+  /* Inline code - Linear-style neutral */
+  --inline-code-bg: rgba(255, 255, 255, 0.08);
+  --inline-code-text: #e4e4e7;
+
+  /* Diff viewer */
+  --diff-added-bg: rgba(34, 197, 94, 0.15);
+  --diff-added-text: #4ade80;
+  --diff-added-border: #22c55e;
+  --diff-removed-bg: rgba(239, 68, 68, 0.15);
+  --diff-removed-text: #f87171;
+  --diff-removed-border: #ef4444;
+
+  /* Markdown prose - Brighter body text for AI responses (visual hierarchy) */
+  --prose-heading: #ffffff;
+  --prose-body: #f4f4f5;
+  --prose-muted: #a1a1aa;
+  --prose-link: #60a5fa;
+  --prose-code-bg: rgba(255, 255, 255, 0.08);
+  --prose-code-text: #e4e4e7;
+  --prose-pre-bg: #1c1c1e;
+  --prose-pre-border: rgba(255, 255, 255, 0.1);
+  --prose-blockquote-border: rgba(255, 255, 255, 0.1);
+  --prose-table-border: rgba(255, 255, 255, 0.05);
+  --prose-table-header-bg: #27272a;
+
+  /* Thinking blocks */
+  --thinking-bg: rgba(88, 28, 135, 0.2);
+  --thinking-border: rgba(107, 33, 168, 0.4);
+  --thinking-text: #d8b4fe;
+  --thinking-text-muted: #e9d5ff;
+  --thinking-content-border: rgba(107, 33, 168, 0.3);
+  --thinking-content-text: #f3e8ff;
+
+  /* Tool call blocks */
+  --tool-call-bg: rgba(120, 53, 15, 0.2);
+  --tool-call-border: rgba(146, 64, 14, 0.4);
+  --tool-call-text: #fcd34d;
+  --tool-call-code-bg: rgba(69, 26, 3, 0.5);
+  --tool-call-content-border: rgba(146, 64, 14, 0.3);
+
+  /* Tool result blocks */
+  --tool-result-success-bg: rgba(20, 83, 45, 0.2);
+  --tool-result-success-border: rgba(22, 101, 52, 0.4);
+  --tool-result-success-text: #86efac;
+  --tool-result-error-bg: rgba(127, 29, 29, 0.2);
+  --tool-result-error-border: rgba(153, 27, 27, 0.4);
+  --tool-result-error-text: #fca5a5;
+
+  /* Output blocks */
+  --output-bg: rgba(31, 41, 55, 0.3);
+  --output-border: #374151;
+  --output-text: #e5e7eb;
+  --output-content-border: rgba(55, 65, 81, 0.5);
+
+  /* Badges */
+  --badge-error-bg: #dc2626;
+  --badge-error-text: #ffffff;
+  --badge-warning-bg: #ca8a04;
+  --badge-warning-text: #ffffff;
+  --badge-success-bg: #16a34a;
+  --badge-success-text: #ffffff;
+  --badge-info-bg: #2563eb;
+  --badge-info-text: #ffffff;
+  --badge-neutral-bg: #3f3f46;
+  --badge-neutral-text: #e4e4e7;
+
+  /* Language/tag badges */
+  --tag-bg: #27272a;
+  --tag-text: #a1a1aa;
+  --tag-border: rgba(255, 255, 255, 0.05);
+
+  /* Highlighted text (skills, paths) - Linear-style neutral (same as inline code) */
+  --skill-highlight-bg: rgba(255, 255, 255, 0.08);
+  --skill-highlight-text: #e4e4e7;
+  --path-highlight-bg: rgba(255, 255, 255, 0.08);
+  --path-highlight-text: #e4e4e7;
+
+  /* Interruption badge */
+  --interruption-bg: rgba(127, 29, 29, 0.3);
+  --interruption-border: #b91c1c;
+  --interruption-text: #fca5a5;
+
+  /* Warning/Amber colors (for interruption banner) */
+  --warning-bg: rgba(245, 158, 11, 0.15);
+  --warning-border: rgba(245, 158, 11, 0.4);
+  --warning-text: #fbbf24;
+
+  /* Plan exit/Green colors (for ExitPlanMode) */
+  --plan-exit-bg: rgba(34, 197, 94, 0.05);
+  --plan-exit-header-bg: rgba(34, 197, 94, 0.1);
+  --plan-exit-border: rgba(34, 197, 94, 0.25);
+  --plan-exit-text: #4ade80;
+
+  /* Error highlight (pulsing) */
+  --error-highlight-ring: #ef4444;
+  --error-highlight-bg: rgba(239, 68, 68, 0.2);
+
+  /* Keyboard hints */
+  --kbd-bg: #27272a;
+  --kbd-border: rgba(255, 255, 255, 0.1);
+  --kbd-text: #d4d4d8;
+
+  /* Subagent/Card styling */
+  --card-bg: #121212;
+  --card-border: #27272a;
+  --card-header-bg: #18181b;
+  --card-header-hover: #1f1f23;
+  --card-icon-muted: #52525b;
+  --card-text-light: #d4d4d8;
+  --card-text-lighter: #e4e4e7;
+  --card-separator: #3f3f46;
+
+  /* Sticky Context button - transparent glass */
+  --context-btn-bg: rgba(255, 255, 255, 0.08);
+  --context-btn-bg-hover: rgba(255, 255, 255, 0.14);
+  --context-btn-active-bg: rgba(99, 102, 241, 0.45);
+  --context-btn-active-text: #e0e7ff;
+
+  /* Skeleton — tinted deep charcoal (2% cool shift) */
+  --skeleton-base: #24262c;
+  --skeleton-base-light: #2c2e35;
+  --skeleton-base-dim: rgba(36, 38, 44, 0.6);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
+/* Light theme overrides - Warm neutral palette for eye comfort */
+:root.light {
+  --color-surface: #f9f9f7; /* Warm off-white (not pure white) */
+  --color-surface-raised: #f0efed; /* Warm raised surface, clearly distinct */
+  --color-surface-overlay: #e8e7e4; /* Warm overlay */
+  --color-surface-sidebar: #f1f0ee; /* Warm sidebar, distinct from main */
+  --color-border: #d5d3cf; /* Warm neutral border */
+  --color-border-subtle: #e3e1dd; /* Warm subtle border */
+  --color-border-emphasis: #a8a5a0; /* Warm emphasis border */
+  --color-text: #1c1b19; /* Warm near-black text */
+  --color-text-secondary: #4d4b46; /* Warm secondary text */
+  --color-text-muted: #6d6b65; /* Warm muted text */
 
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
+  /* Scrollbar colors for light mode */
+  --scrollbar-thumb: rgba(0, 0, 0, 0.15);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.28);
+  --scrollbar-thumb-active: rgba(0, 0, 0, 0.4);
+
+  /* Search highlights - High saturation yellow */
+  --highlight-bg: #facc15;
+  --highlight-bg-inactive: #fef08a;
+  --highlight-text: #1c1917;
+  --highlight-text-inactive: #422006;
+  --highlight-ring: #ca8a04;
+
+  /* User chat bubble - Warm neutral, clearly visible */
+  --chat-user-bg: #eae9e6;
+  --chat-user-text: #5a5955;
+  --chat-user-border: #d5d3cf;
+  --chat-user-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+
+  /* User bubble inline tags - Warm neutral */
+  --chat-user-tag-bg: rgba(0, 0, 0, 0.05);
+  --chat-user-tag-text: #3a3935;
+  --chat-user-tag-border: rgba(0, 0, 0, 0.08);
+
+  /* Tool items - Warm high contrast */
+  --tool-item-name: #1c1b19;
+  --tool-item-summary: #4d4b46;
+  --tool-item-muted: #6d6b65;
+  --tool-item-hover-bg: #eae9e6;
+
+  /* System chat bubble */
+  --chat-system-bg: #eae9e6;
+  --chat-system-text: #3a3935;
+
+  /* AI message styling */
+  --chat-ai-border: #d5d3cf;
+  --chat-ai-icon: #6d6b65;
+
+  /* Code blocks - Warm light theme */
+  --code-bg: #f0efed;
+  --code-header-bg: #eae9e6;
+  --code-border: #d5d3cf;
+  --code-line-number: #a8a5a0;
+  --code-filename: #2563eb;
+
+  /* Syntax highlighting - GitHub Light inspired */
+  --syntax-string: #0a3069;
+  --syntax-comment: #6e7781;
+  --syntax-number: #0550ae;
+  --syntax-keyword: #cf222e;
+  --syntax-type: #8250df;
+  --syntax-operator: #24292f;
+  --syntax-function: #8250df;
+
+  /* Inline code - Warm neutral */
+  --inline-code-bg: rgba(0, 0, 0, 0.05);
+  --inline-code-text: #3a3935;
+
+  /* Diff viewer - Light mode */
+  --diff-added-bg: rgba(34, 197, 94, 0.1);
+  --diff-added-text: #166534;
+  --diff-added-border: #22c55e;
+  --diff-removed-bg: rgba(239, 68, 68, 0.1);
+  --diff-removed-text: #991b1b;
+  --diff-removed-border: #ef4444;
+
+  /* Markdown prose - Warm tones */
+  --prose-heading: #1c1b19;
+  --prose-body: #2a2925;
+  --prose-muted: #6d6b65;
+  --prose-link: #2563eb;
+  --prose-code-bg: rgba(0, 0, 0, 0.05);
+  --prose-code-text: #3a3935;
+  --prose-pre-bg: #f0efed;
+  --prose-pre-border: #d5d3cf;
+  --prose-blockquote-border: #d5d3cf;
+  --prose-table-border: #e3e1dd;
+  --prose-table-header-bg: #eae9e6;
+
+  /* Thinking blocks - Warm purple */
+  --thinking-bg: #f9f5fe;
+  --thinking-border: #d8b4fe;
+  --thinking-text: #6b21a8;
+  --thinking-text-muted: #7c3aed;
+  --thinking-content-border: #e9d5ff;
+  --thinking-content-text: #581c87;
+
+  /* Tool call blocks - Warm amber */
+  --tool-call-bg: #fefbf0;
+  --tool-call-border: #f0d070;
+  --tool-call-text: #92400e;
+  --tool-call-code-bg: #fdf3d0;
+  --tool-call-content-border: #f0d888;
+
+  /* Tool result blocks */
+  --tool-result-success-bg: #f0fdf4;
+  --tool-result-success-border: #86efac;
+  --tool-result-success-text: #166534;
+  --tool-result-error-bg: #fef2f2;
+  --tool-result-error-border: #fca5a5;
+  --tool-result-error-text: #991b1b;
+
+  /* Output blocks */
+  --output-bg: #f0efed;
+  --output-border: #d5d3cf;
+  --output-text: #2a2925;
+  --output-content-border: #d5d3cf;
+
+  /* Badges - High contrast */
+  --badge-error-bg: #dc2626;
+  --badge-error-text: #ffffff;
+  --badge-warning-bg: #d97706;
+  --badge-warning-text: #ffffff;
+  --badge-success-bg: #16a34a;
+  --badge-success-text: #ffffff;
+  --badge-info-bg: #2563eb;
+  --badge-info-text: #ffffff;
+  --badge-neutral-bg: #e3e1dd;
+  --badge-neutral-text: #3a3935;
+
+  /* Language/tag badges - Warm neutral */
+  --tag-bg: #eae9e6;
+  --tag-text: #4d4b46;
+  --tag-border: #d5d3cf;
+
+  /* Highlighted text (skills, paths) - Warm neutral */
+  --skill-highlight-bg: rgba(0, 0, 0, 0.05);
+  --skill-highlight-text: #3a3935;
+  --path-highlight-bg: rgba(0, 0, 0, 0.05);
+  --path-highlight-text: #3a3935;
+
+  /* Interruption badge */
+  --interruption-bg: #fef2f2;
+  --interruption-border: #f87171;
+  --interruption-text: #b91c1c;
+
+  /* Warning/Amber colors (for interruption banner) */
+  --warning-bg: #fef3c7;
+  --warning-border: #f59e0b;
+  --warning-text: #b45309;
+
+  /* Plan exit/Green colors (for ExitPlanMode) */
+  --plan-exit-bg: #f0fdf4;
+  --plan-exit-header-bg: #dcfce7;
+  --plan-exit-border: #86efac;
+  --plan-exit-text: #15803d;
+
+  /* Error highlight (pulsing) */
+  --error-highlight-ring: #dc2626;
+  --error-highlight-bg: rgba(220, 38, 38, 0.15);
+
+  /* Keyboard hints */
+  --kbd-bg: #eae9e6;
+  --kbd-border: #a8a5a0;
+  --kbd-text: #3a3935;
+
+  /* Subagent/Card styling - Warm light mode */
+  --card-bg: #f9f9f7;
+  --card-border: #d5d3cf;
+  --card-header-bg: #f0efed;
+  --card-header-hover: #eae9e6;
+  --card-icon-muted: #a8a5a0;
+  --card-text-light: #3a3935;
+  --card-text-lighter: #2a2925;
+  --card-separator: #d5d3cf;
+
+  /* Sticky Context button - transparent glass */
+  --context-btn-bg: rgba(0, 0, 0, 0.06);
+  --context-btn-bg-hover: rgba(0, 0, 0, 0.1);
+  --context-btn-active-bg: rgba(99, 102, 241, 0.35);
+  --context-btn-active-text: #3730a3;
+
+  /* Skeleton — tinted cool gray */
+  --skeleton-base: #d6d8de;
+  --skeleton-base-light: #cdd0d7;
+  --skeleton-base-dim: rgba(205, 208, 215, 0.6);
 }
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
+* {
+  margin: 0;
+  padding: 0;
   box-sizing: border-box;
 }
 
 body {
-  margin: 0;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell',
+    'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
 }
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
+#root {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
 }
 
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
-}
-p {
-  margin: 0;
+/* macOS window integration */
+.sidebar-header {
+  -webkit-app-region: drag;
+  -webkit-user-select: none;
 }
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
+.sidebar-header button,
+.sidebar-header input,
+.sidebar-header .no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Hide horizontal scrollbar in tab bar */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* Custom scrollbar styling for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
   border-radius: 4px;
-  color: var(--text-h);
+  transition: background 0.2s ease;
 }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: var(--scrollbar-thumb-active);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+/* Dashboard skeleton shimmer animation */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes skeleton-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.skeleton-card {
+  animation: skeleton-fade-in 0.4s ease-out both;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.06) 40%,
+    rgba(255, 255, 255, 0.1) 50%,
+    rgba(255, 255, 255, 0.06) 60%,
+    transparent 100%
+  );
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+:root.light .skeleton-card::after {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.04) 40%,
+    rgba(0, 0, 0, 0.07) 50%,
+    rgba(0, 0, 0, 0.04) 60%,
+    transparent 100%
+  );
+}
+
+/* Per-element shimmer — fast, high-contrast sweep */
+.skeleton-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.06) 40%,
+    rgba(255, 255, 255, 0.1) 50%,
+    rgba(255, 255, 255, 0.06) 60%,
+    transparent 100%
+  );
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+:root.light .skeleton-shimmer::after {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0.04) 40%,
+    rgba(0, 0, 0, 0.07) 50%,
+    rgba(0, 0, 0, 0.04) 60%,
+    transparent 100%
+  );
 }

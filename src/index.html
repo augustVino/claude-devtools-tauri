@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" href="./favicon.png" />
+  <title>claude-devtools</title>
+  <style>
+    /* Splash: spotlight gradient + noise overlay */
+    #splash {
+      position: fixed; inset: 0; z-index: 9999;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: radial-gradient(ellipse 60% 50% at 50% 45%, #1c1c20 0%, #0e0e10 100%);
+      transition: opacity 0.3s ease-out;
+    }
+    #splash-noise {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      opacity: 0.03; pointer-events: none;
+    }
+    #splash-logo { margin-bottom: 18px; }
+    #splash-text {
+      font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+      font-size: 15px; font-weight: 500; letter-spacing: 0.05em;
+      color: #a1a1aa;
+    }
+
+    /* Logo quadrant breathing — clockwise: TL → TR → BR → BL */
+    @keyframes splash-q {
+      0%, 100% { opacity: 0.12; }
+      10%, 25% { opacity: 0.95; }
+      40% { opacity: 0.12; }
+    }
+    .splash-q {
+      animation: splash-q 3.2s cubic-bezier(0.4, 0, 0.2, 1) infinite both;
+    }
+
+    /* Light theme splash overrides */
+    :root.light #splash {
+      background: radial-gradient(ellipse 60% 50% at 50% 45%, #fafafa 0%, #e4e4e7 100%);
+    }
+    :root.light #splash-text { color: #52525b; }
+    :root.light #splash-noise { opacity: 0.02; }
+    :root.light .splash-logo-bg { fill: #e4e4e7; }
+    :root.light .splash-logo-shape { fill: #52525b; }
+  </style>
+  <script>
+    // Flash prevention: Apply cached theme before React loads
+    (function() {
+      try {
+        var theme = localStorage.getItem('claude-devtools-theme-cache');
+        if (theme === 'light') {
+          document.documentElement.classList.add('light');
+        }
+      } catch(e) {}
+    })();
+  </script>
+</head>
+<body>
+  <div id="splash">
+    <!-- SVG noise texture — matte paper grain -->
+    <svg id="splash-noise" xmlns="http://www.w3.org/2000/svg">
+      <filter id="noiseFilter">
+        <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/>
+      </filter>
+      <rect width="100%" height="100%" filter="url(#noiseFilter)"/>
+    </svg>
+    <!-- Logo with animated quadrants -->
+    <svg id="splash-logo" viewBox="0 0 56 56" width="56" height="56" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect class="splash-logo-bg" width="56" height="56" rx="14" fill="#1c1c20"/>
+      <!-- TL: small circle -->
+      <circle class="splash-q splash-logo-shape" style="animation-delay:0s" cx="19" cy="19" r="5" fill="#d4d4d8"/>
+      <!-- TR: right-facing semicircle -->
+      <path class="splash-q splash-logo-shape" style="animation-delay:0.8s" d="M34,12 A7,7 0 0,1 34,26 Z" fill="#d4d4d8"/>
+      <!-- BR: large circle -->
+      <circle class="splash-q splash-logo-shape" style="animation-delay:1.6s" cx="37" cy="37" r="6.5" fill="#d4d4d8"/>
+      <!-- BL: down-facing semicircle -->
+      <path class="splash-q splash-logo-shape" style="animation-delay:2.4s" d="M12,34 A7,7 0 0,0 26,34 Z" fill="#d4d4d8"/>
+    </svg>
+    <div id="splash-text">claude-devtools</div>
+  </div>
+  <div id="root"></div>
+  <script type="module" src="./main.tsx"></script>
+</body>
+</html>

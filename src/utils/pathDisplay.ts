@@ -1,0 +1,94 @@
+/**
+ * Path display utilities for shortening file paths in tight UI spaces.
+ *
+ * Strategy:
+ * 1. Strip project root to make relative
+ * 2. Replace home directory with ~
+ * 3. Middle-truncate if still too long, preserving first and last segments
+ *
+ * Also provides resolveAbsolutePath() for clipboard copy (~ → real home, relative → absolute).
+ */
+
+/**
+ * Shorten a file path for display in compact UI elements.
+ * Full path should still be available via tooltip (title attribute).
+ *
+ * Examples:
+ * - `/Users/name/.claude/projects/-Users-name-project/memory/MEMORY.md` → `~/.claude/…/memory/MEMORY.md`
+ * - `/Users/name/project/.claude/rules/tailwind.md` (with projectRoot) → `.claude/rules/tailwind.md`
+ * - `~/.claude/CLAUDE.md` → `~/.claude/CLAUDE.md` (already short)
+ */
+export function shortenDisplayPath(fullPath: string, projectRoot?: string, maxLength = 40): string {
+  let p = fullPath;
+
+  // 1. Make relative to project root
+  if (projectRoot) {
+    const root = projectRoot.replace(/[/\\]$/, '');
+    if (p.startsWith(root + '/') || p.startsWith(root + '\\')) {
+      p = p.slice(root.length + 1);
+    }
+  }
+
+  // 2. Replace home directory with ~
+  p = p
+    .replace(/^\/Users\/[^/]+/, '~')
+    .replace(/^\/home\/[^/]+/, '~')
+    .replace(/^[A-Z]:\\Users\\[^\\]+/, '~');
+
+  // 3. If short enough, return as-is
+  if (p.length <= maxLength) return p;
+
+  // 4. Middle-truncate: keep first meaningful segments + … + last 2 segments
+  const sep = p.includes('\\') ? '\\' : '/';
+  const segments = p.split(sep);
+
+  // Determine where content starts (skip leading empty segment from absolute paths or ~)
+  let startIdx = 0;
+  if (segments[0] === '' || segments[0] === '~') startIdx = 1;
+
+  // Need at least 4 content segments to truncate the middle
+  if (segments.length - startIdx <= 3) return p;
+
+  const head = segments.slice(0, startIdx + 1).join(sep);
+  const tail = segments.slice(-2).join(sep);
+
+  return `${head}${sep}\u2026${sep}${tail}`;
+}
+
+/**
+ * Infer the user's home directory from a known absolute project path.
+ * Works for macOS (/Users/x), Linux (/home/x), and Windows (C:\Users\x).
+ */
+function inferHomeDir(projectRoot: string): string | null {
+  const match =
+    /^(\/Users\/[^/]+)/.exec(projectRoot) ??
+    /^(\/home\/[^/]+)/.exec(projectRoot) ??
+    /^([A-Z]:\\Users\\[^\\]+)/.exec(projectRoot);
+  return match?.[1] ?? null;
+}
+
+/**
+ * Resolve a possibly-shortened path to its full absolute form for clipboard copy.
+ *
+ * - `~/...` → `/Users/username/...` (home dir inferred from projectRoot)
+ * - `src/foo/bar` → `{projectRoot}/src/foo/bar`
+ * - Already absolute → returned as-is
+ */
+export function resolveAbsolutePath(filePath: string, projectRoot?: string): string {
+  let p = filePath;
+
+  // Resolve ~ using home dir inferred from projectRoot
+  if (p.startsWith('~/') && projectRoot) {
+    const homeDir = inferHomeDir(projectRoot);
+    if (homeDir) {
+      p = homeDir + p.slice(1);
+    }
+  }
+
+  // Make relative paths absolute by prepending projectRoot
+  if (projectRoot && !p.startsWith('/') && !p.startsWith('~') && !/^[A-Z]:[/\\]/.test(p)) {
+    p = projectRoot.replace(/[/\\]$/, '') + '/' + p;
+  }
+
+  return p;
+}
