@@ -2,7 +2,7 @@
 
 **Goal:** Add a system tray/menu bar icon that appears when the Dock icon is hidden, ensuring the app remains accessible. Left-click toggles the main window; right-click shows a context menu with window control, recent sessions, and quit.
 
-**Scope:** macOS only. No changes to Electron version. No new Cargo dependencies (`tray-icon` and `muda` are already transitive dependencies of Tauri v2).
+**Scope:** macOS only. No changes to Electron version. No new crate dependencies (`tray-icon` and `muda` are already transitive dependencies of Tauri v2). Requires enabling the `tray-icon` feature on the `tauri` crate in `Cargo.toml` (currently only `macos-private-api` is enabled).
 
 ---
 
@@ -57,6 +57,7 @@ No frontend changes required. All tray logic lives in Rust.
 pub struct TrayIconManager {
     icon: Option<tauri::tray::TrayIcon>,
     app_handle: tauri::AppHandle,
+    dock_visible: bool,
 }
 ```
 
@@ -68,7 +69,7 @@ pub struct TrayIconManager {
 | `create()` | Build `TrayIcon` with icon, tooltip, event handlers, and context menu |
 | `destroy()` | Remove tray icon if present |
 | `set_visible(visible: bool)` | Orchestration entry: `visible=false` → create tray then hide dock; `visible=true` → show dock then destroy tray |
-| `toggle_window()` | Show window if hidden (activate + show), hide if visible |
+| `toggle_window()` | Show window if hidden (`set_focus()` + `show()` + `app.activate()` to bring to foreground on macOS), hide if visible |
 | `build_menu() -> Menu` | Build right-click context menu with window toggle, recent sessions submenu, quit |
 
 ### Tray Icon Configuration
@@ -117,10 +118,10 @@ pub struct TrayIconManager {
 Built with `muda::Menu` (already available as Tauri transitive dependency):
 
 - **"显示/隐藏窗口"** — calls `toggle_window()`
-- **"最近会话"** submenu — queries `AppState` for recent sessions, limited to 5. Each entry opens that session in the app window
+- **"最近会话"** submenu — calls `ProjectScanner` to get projects sorted by `most_recent_session`, then takes the first 5 projects and uses their latest session as entries. Each entry opens that session's project in the app window (shows window + navigates to the session). If no sessions exist, shows a disabled "无最近会话" item
 - **"退出"** — calls `app.exit(0)`
 
-**Refresh strategy:** Menu is rebuilt on every right-click (no polling). Recent sessions are queried from `AppState` at menu-build time, ensuring data is always current with zero overhead.
+**Refresh strategy:** The context menu is set via `TrayIconBuilder::menu()` at creation time. To keep recent sessions current, `TrayIconManager::create()` rebuilds the full menu from scratch. When the user right-clicks, the menu content is already up-to-date from the last creation. For scenarios where sessions change while the app is running (e.g., new Claude session detected), `TrayIconManager` exposes a `refresh_menu()` method that can be called from the file watcher callback to rebuild the menu in-place.
 
 ---
 
@@ -166,13 +167,16 @@ if !config.general.showDockIcon {
 .on_window_event(|window, event| {
     if let WindowEvent::CloseRequested { api, .. } = event {
         // When dock is hidden, close button hides to tray instead
-        if !is_dock_visible() {
+        let tray = window.app_handle().state::<TrayIconManager>();
+        if !tray.is_dock_visible() {
             window.hide().unwrap();
             api.prevent_close();
         }
     }
 })
 ```
+
+The `is_dock_visible()` method on `TrayIconManager` returns the `dock_visible` field, which is kept in sync by `set_visible()`.
 
 ---
 
