@@ -12,8 +12,10 @@ mod utils;
 use std::path::Path;
 use std::sync::{Arc, RwLock as StdRwLock};
 use tokio::sync::RwLock;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+use tauri_plugin_updater::UpdaterExt;
 use commands::AppState;
+use commands::updater::UpdaterStatus;
 use error::error_detector::ErrorDetector;
 use infrastructure::{ConfigManager, FileWatcher, NotificationManager};
 use utils::{get_projects_base_path, is_subagent_file};
@@ -29,6 +31,7 @@ pub fn run() {
     .plugin(tauri_plugin_notification::init())
     .plugin(tauri_plugin_process::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
+    .manage(commands::PendingUpdate(std::sync::Mutex::new(None)))
     .manage(app_state.clone())
     .setup(move |app| {
       let state = app_state.clone();
@@ -201,6 +204,32 @@ pub fn run() {
         }
       });
 
+      // Auto-check for updates after 3s (matching Electron behavior)
+      let auto_update_handle = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        let updater = match auto_update_handle.updater() {
+          Ok(u) => u,
+          Err(_) => return, // Silently ignore — no endpoints configured
+        };
+        match updater.check().await {
+          Ok(Some(update)) => {
+            let version = update.version.clone();
+            let _ = auto_update_handle.emit(
+              "updater:status",
+              &UpdaterStatus::Available { version },
+            );
+          }
+          Ok(None) => {
+            let _ =
+              auto_update_handle.emit("updater:status", &UpdaterStatus::UpToDate);
+          }
+          Err(_) => {
+            // Silently ignore auto-check errors — don't alarm the user
+          }
+        }
+      });
+
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
@@ -267,6 +296,9 @@ pub fn run() {
       commands::notifications::clear_notifications,
       commands::notifications::get_notification_count,
       commands::notifications::get_notification_stats,
+      commands::updater::check_for_updates,
+      commands::updater::download_and_install_update,
+      commands::updater::install_update,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
