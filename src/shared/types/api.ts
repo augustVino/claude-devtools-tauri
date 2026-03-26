@@ -472,6 +472,11 @@ export interface ElectronAPI {
     isEnabled: () => Promise<boolean>;
   };
 
+  // Platform-specific API (macOS dock, etc.)
+  platform: {
+    setDockVisible: (visible: boolean) => Promise<void>;
+  };
+
   // Updater API
   updater: UpdaterAPI;
 

@@ -154,6 +154,11 @@ export class TauriAPIClient implements ElectronAPI {
       invoke<boolean>("plugin:autostart|is_enabled"),
   };
 
+  readonly platform = {
+    setDockVisible: (visible: boolean): Promise<void> =>
+      invoke("set_dock_visible", { visible }),
+  };
+
   readonly getZoomFactor = async (): Promise<number> => {
     const result = await invoke<ZoomFactorResult>("get_zoom_factor");
     return result.factor;

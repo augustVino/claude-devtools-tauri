@@ -306,7 +306,10 @@ export const GeneralSection = ({
             >
               <SettingsToggle
                 enabled={safeConfig.general.showDockIcon}
-                onChange={(v) => onGeneralToggle("showDockIcon", v)}
+                onChange={(v) => {
+                  onGeneralToggle("showDockIcon", v);
+                  void api.platform.setDockVisible(v);
+                }}
                 disabled={saving}
               />
             </SettingRow>

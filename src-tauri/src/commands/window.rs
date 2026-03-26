@@ -1,4 +1,8 @@
+use std::sync::Arc;
 use tauri::{command, AppHandle, Manager};
+use tokio::sync::RwLock;
+
+use super::sessions::AppState;
 
 #[command]
 pub async fn minimize(app: AppHandle) -> Result<(), String> {
@@ -40,4 +44,42 @@ pub async fn is_maximized(app: AppHandle) -> Result<bool, String> {
 pub async fn relaunch(app: tauri::AppHandle) -> Result<(), String> {
     app.request_restart();
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[command]
+pub async fn set_dock_visible(
+    state: tauri::State<'_, Arc<RwLock<AppState>>>,
+    visible: bool,
+) -> Result<(), String> {
+    use cocoa::appkit::{NSApplication, NSApplicationActivationPolicy};
+    use cocoa::base::nil;
+    unsafe {
+        let app = NSApplication::sharedApplication(nil);
+        if visible {
+            app.setActivationPolicy_(
+                NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
+            );
+        } else {
+            app.setActivationPolicy_(
+                NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
+            );
+        }
+    }
+    // Persist to config using existing pattern
+    let app_state = state.read().await;
+    app_state
+        .config_manager
+        .update_config(
+            "general",
+            serde_json::json!({ "showDockIcon": visible }),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[command]
+pub async fn set_dock_visible(_visible: bool) -> Result<(), String> {
+    Err("Dock hiding is only supported on macOS".to_string())
 }

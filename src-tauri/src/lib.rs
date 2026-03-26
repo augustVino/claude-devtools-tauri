@@ -47,6 +47,25 @@ pub fn run() {
         }
       }
 
+      // macOS: Hide Dock icon if config says so
+      #[cfg(target_os = "macos")]
+      {
+        let hide_dock = {
+          let state_guard = state.blocking_read();
+          !state_guard.config_manager.get_config().general.show_dock_icon
+        };
+        if hide_dock {
+          use cocoa::appkit::{NSApplication, NSApplicationActivationPolicy};
+          use cocoa::base::nil;
+          unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            app.setActivationPolicy_(
+              NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
+            );
+          }
+        }
+      }
+
       // Initialize state asynchronously
       tauri::async_runtime::spawn(async move {
         if let Err(e) = state.read().await.initialize().await {
@@ -256,6 +275,7 @@ pub fn run() {
       commands::window::close,
       commands::window::is_maximized,
       commands::window::relaunch,
+      commands::window::set_dock_visible,
       commands::version::get_app_version,
       commands::sessions::get_sessions,
       commands::sessions::get_session_detail,

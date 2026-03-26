@@ -617,6 +617,18 @@ export class HttpAPIClient implements ElectronAPI {
   };
 
   // ---------------------------------------------------------------------------
+  // Platform-specific (browser no-ops)
+  // ---------------------------------------------------------------------------
+
+  platform = {
+    setDockVisible: async (_visible: boolean): Promise<void> => {
+      console.warn(
+        "[HttpAPIClient] platform.setDockVisible not available in browser mode",
+      );
+    },
+  };
+
+  // ---------------------------------------------------------------------------
   // Updater (browser no-ops)
   // ---------------------------------------------------------------------------
 
