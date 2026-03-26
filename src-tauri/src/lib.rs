@@ -27,6 +27,7 @@ pub fn run() {
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_notification::init())
+    .plugin(tauri_plugin_process::init())
     .manage(app_state.clone())
     .setup(move |app| {
       let state = app_state.clone();
@@ -173,6 +174,7 @@ pub fn run() {
       commands::window::maximize,
       commands::window::close,
       commands::window::is_maximized,
+      commands::window::relaunch,
       commands::version::get_app_version,
       commands::sessions::get_sessions,
       commands::sessions::get_session_detail,
@@ -195,10 +197,13 @@ pub fn run() {
       commands::config::remove_trigger,
       commands::config::get_triggers,
       commands::config::test_trigger,
+      commands::config::open_in_editor,
+      commands::config::get_claude_root_info,
       commands::search::search_sessions,
       commands::search::search_all_projects,
       commands::validation::validate_path,
       commands::validation::validate_mentions,
+      commands::validation::scroll_to_line,
       commands::utility::open_path,
       commands::utility::open_external,
       commands::utility::get_zoom_factor,

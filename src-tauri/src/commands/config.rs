@@ -4,6 +4,7 @@ use tokio::sync::RwLock;
 
 use crate::commands::AppState;
 use crate::types::config::AppConfig;
+use tauri_plugin_opener::OpenerExt;
 
 // =============================================================================
 // Config Commands
@@ -209,4 +210,76 @@ pub async fn unhide_sessions(
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
     Ok(app_state.config_manager.unhide_sessions(project_id, session_ids))
+}
+
+// =============================================================================
+// Editor & Claude Root
+// =============================================================================
+
+#[command]
+pub async fn open_in_editor(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<RwLock<AppState>>>,
+) -> Result<(), String> {
+    let app_state = state.read().await;
+    let config_path = app_state.config_manager.get_config_path();
+    drop(app_state);
+
+    let config_path_str = config_path.to_string_lossy().to_string();
+
+    // Try $VISUAL
+    if let Ok(editor) = std::env::var("VISUAL") {
+        if try_spawn_editor(&editor, &config_path_str).await {
+            return Ok(());
+        }
+    }
+
+    // Try $EDITOR
+    if let Ok(editor) = std::env::var("EDITOR") {
+        if try_spawn_editor(&editor, &config_path_str).await {
+            return Ok(());
+        }
+    }
+
+    // Try common editors
+    for editor in &["cursor", "code", "zed", "subl"] {
+        if try_spawn_editor(editor, &config_path_str).await {
+            return Ok(());
+        }
+    }
+
+    // Fallback: system default
+    app.opener()
+        .open_path(&config_path_str, None::<&str>)
+        .map_err(|e| format!("Failed to open config file: {}", e))
+}
+
+#[command]
+pub async fn get_claude_root_info(
+    state: State<'_, Arc<RwLock<AppState>>>,
+) -> Result<crate::types::config::ClaudeRootInfo, String> {
+    let app_state = state.read().await;
+    let config = app_state.config_manager.get_config();
+    drop(app_state);
+
+    let custom_path = config.general.claude_root_path.clone();
+    let default_path = dirs::home_dir()
+        .map(|h| h.join(".claude").to_string_lossy().to_string())
+        .unwrap_or_default();
+    let resolved_path = custom_path.clone().unwrap_or_else(|| default_path.clone());
+
+    Ok(crate::types::config::ClaudeRootInfo {
+        default_path,
+        resolved_path,
+        custom_path,
+    })
+}
+
+/// Try to spawn an editor process. Returns true if successful.
+async fn try_spawn_editor(editor: &str, file_path: &str) -> bool {
+    tokio::process::Command::new(editor)
+        .arg(file_path)
+        .spawn()
+        .map(|_| true)
+        .unwrap_or(false)
 }

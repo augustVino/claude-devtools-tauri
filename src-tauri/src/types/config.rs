@@ -322,3 +322,18 @@ pub struct TriggerValidationResult {
     pub valid: bool,
     pub errors: Vec<String>,
 }
+
+// =============================================================================
+// Claude Root Info
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeRootInfo {
+    #[serde(rename = "defaultPath")]
+    pub default_path: String,
+    #[serde(rename = "resolvedPath")]
+    pub resolved_path: String,
+    #[serde(rename = "customPath", skip_serializing_if = "Option::is_none")]
+    pub custom_path: Option<String>,
+}
