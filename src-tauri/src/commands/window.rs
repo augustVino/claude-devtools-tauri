@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tauri::{command, AppHandle, Manager};
 use tokio::sync::RwLock;
 
-use super::sessions::AppState;
+use super::{sessions::AppState, tray::TrayIconManager};
 
 #[command]
 pub async fn minimize(app: AppHandle) -> Result<(), String> {
@@ -49,6 +49,7 @@ pub async fn relaunch(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 #[command]
 pub async fn set_dock_visible(
+    tray: tauri::State<'_, std::sync::Mutex<TrayIconManager>>,
     state: tauri::State<'_, Arc<RwLock<AppState>>>,
     visible: bool,
 ) -> Result<(), String> {
@@ -63,8 +64,7 @@ pub async fn set_dock_visible(
             app.setActivationPolicy_(
                 NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
             );
-            // macOS does not restore the app icon when switching back from Accessory.
-            // Re-set it via NSBundle + NSImage using objc messaging.
+            // Restore app icon (macOS quirk: icon lost after Accessory → Regular)
             let bundle: *mut Object = msg_send![class!(NSBundle), mainBundle];
             let icon_key = NSString::alloc(nil).init_str("CFBundleIconFile");
             let icon_name: *mut Object = msg_send![bundle, objectForInfoDictionaryKey: icon_key];
@@ -85,7 +85,12 @@ pub async fn set_dock_visible(
                     let _: () = msg_send![app, setApplicationIconImage: image];
                 }
             }
+            // Remove tray (no longer needed)
+            tray.lock().map_err(|e| e.to_string())?.destroy();
         } else {
+            // Create tray FIRST (ensures user always has an entry point)
+            tray.lock().map_err(|e| e.to_string())?.create()?;
+            // Then hide dock
             app.setActivationPolicy_(
                 NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
             );
