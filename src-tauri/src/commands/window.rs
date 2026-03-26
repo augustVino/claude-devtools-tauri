@@ -3,7 +3,6 @@ use tauri::{command, AppHandle, Manager};
 use tokio::sync::RwLock;
 
 use super::{sessions::AppState, tray::TrayIconManager};
-use crate::commands::tray::restore_dock_icon;
 
 #[command]
 pub async fn minimize(app: AppHandle) -> Result<(), String> {
@@ -65,11 +64,17 @@ pub async fn set_dock_visible(
             app.setActivationPolicy_(
                 NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
             );
-            // Explicitly restore app icon (known macOS bug: icon not restored after Accessory → Regular)
-            restore_dock_icon();
-            // Remove tray (no longer needed)
-            tray.lock().map_err(|e| e.to_string())?.destroy();
+            // Restore the saved dock icon, then remove tray
+            let mut tray_guard = tray.lock().map_err(|e| e.to_string())?;
+            tray_guard.restore_dock_icon();
+            tray_guard.destroy();
         } else {
+            // Save dock icon BEFORE switching to Accessory (known macOS bug:
+            // icon is lost when switching back to Regular)
+            {
+                let tray_guard = tray.lock().map_err(|e| e.to_string())?;
+                tray_guard.save_dock_icon();
+            }
             // Create tray FIRST (ensures user always has an entry point)
             tray.lock().map_err(|e| e.to_string())?.create()?;
             // Then hide dock
@@ -77,8 +82,6 @@ pub async fn set_dock_visible(
                 NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
             );
             // Re-activate the app after switching to Accessory policy
-            // macOS deactivates the app when switching to Accessory mode,
-            // causing the window to lose focus and the first menu click to fail
             let _: () = msg_send![app, activateIgnoringOtherApps: true];
         }
     }

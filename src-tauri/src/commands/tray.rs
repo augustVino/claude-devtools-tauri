@@ -19,6 +19,10 @@ pub struct TrayIconManager {
     icon: Option<tauri::tray::TrayIcon>,
     app_handle: AppHandle,
     dock_visible: bool,
+    /// Saved pointer to the dock icon NSImage (retained) before switching
+    /// to Accessory mode. Used to restore the icon when switching back.
+    #[cfg(target_os = "macos")]
+    saved_dock_icon: std::sync::Mutex<Option<objc::runtime::Object>>,
 }
 
 impl TrayIconManager {
@@ -28,12 +32,57 @@ impl TrayIconManager {
             icon: None,
             app_handle,
             dock_visible: true,
+            #[cfg(target_os = "macos")]
+            saved_dock_icon: std::sync::Mutex::new(None),
         }
     }
 
     /// Check if the dock icon is currently visible.
     pub fn is_dock_visible(&self) -> bool {
         self.dock_visible
+    }
+
+    /// Save the current dock icon before switching to Accessory mode.
+    /// Must be called BEFORE setActivationPolicy(Accessory).
+    #[cfg(target_os = "macos")]
+    pub fn save_dock_icon(&self) {
+        use cocoa::appkit::NSApplication;
+        use cocoa::base::nil;
+        use objc::runtime::Object;
+        use objc::*;
+
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let current_icon: *mut Object = msg_send![app, applicationIconImage];
+            if !current_icon.is_null() {
+                let _: () = msg_send![current_icon, retain];
+                // SAFETY: objc::runtime::Object is Send, and we've retained the object
+                let owned: Object = std::ptr::read(current_icon);
+                *self.saved_dock_icon.lock().unwrap() = Some(owned);
+                log::info!("Saved dock icon reference");
+            }
+        }
+    }
+
+    /// Restore the saved dock icon. Must be called AFTER setActivationPolicy(Regular).
+    #[cfg(target_os = "macos")]
+    pub fn restore_dock_icon(&self) {
+        use cocoa::appkit::NSApplication;
+        use cocoa::base::nil;
+        use objc::runtime::Object;
+        use objc::*;
+
+        let mut guard = self.saved_dock_icon.lock().unwrap();
+        if let Some(icon) = guard.take() {
+            unsafe {
+                let app = NSApplication::sharedApplication(nil);
+                let _: () = msg_send![app, setApplicationIconImage: &icon as *const Object as *mut Object];
+                let _: () = msg_send![&icon as *const Object as *mut Object, release];
+                log::info!("Dock icon restored from saved reference");
+            }
+        } else {
+            log::warn!("No saved dock icon to restore");
+        }
     }
 
     /// Create tray icon with context menu.
@@ -203,38 +252,4 @@ impl TrayIconManager {
 struct OpenSessionPayload {
     project_id: String,
     session_id: String,
-}
-
-/// Restore the dock icon after switching from Accessory to Regular activation policy.
-///
-/// This is a known macOS bug: when an app transitions from Accessory to Regular
-/// activation policy at runtime, the Dock doesn't properly restore the app icon.
-/// We work around this by explicitly loading the icon from embedded bytes and
-/// setting it via NSApplication.setApplicationIconImage.
-///
-/// Works in both dev mode (no .app bundle) and production mode.
-#[cfg(target_os = "macos")]
-pub fn restore_dock_icon() {
-    use cocoa::appkit::NSApplication;
-    use cocoa::base::nil;
-    use cocoa::foundation::NSData;
-    use objc::runtime::Object;
-    use objc::*;
-
-    let icon_bytes = include_bytes!("../../icons/icon.icns");
-    unsafe {
-        let ns_data = NSData::dataWithBytes_length_(
-            nil,
-            icon_bytes.as_ptr() as *const std::ffi::c_void,
-            icon_bytes.len() as u64,
-        );
-        let ns_image: *mut Object = msg_send![class!(NSImage), initWithData: ns_data];
-        if !ns_image.is_null() {
-            let app = NSApplication::sharedApplication(nil);
-            let _: () = msg_send![app, setApplicationIconImage: ns_image];
-            log::info!("Dock icon restored from embedded icon.icns");
-        } else {
-            log::warn!("Failed to create NSImage from embedded icon.icns");
-        }
-    }
 }
