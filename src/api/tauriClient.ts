@@ -2,7 +2,7 @@
  * Tauri API client — implements ElectronAPI via @tauri-apps/api invoke/listen.
  *
  * Window controls, version, sessions, config, search, validation, notifications,
- * and trigger commands are implemented. Session, updater, and SSH features are stubbed.
+ * updater, and trigger commands are implemented. Session and SSH features are stubbed.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -112,6 +112,18 @@ interface MentionsValidationResult {
 interface ZoomFactorResult {
   factor: number;
 }
+
+/**
+ * Updater status events emitted on the `updater:status` channel.
+ * Matches the Rust UpdaterStatus enum (serde tag = "status", rename_all = "camelCase").
+ */
+type UpdaterStatus =
+  | { status: "checking" }
+  | { status: "available"; version: string }
+  | { status: "downloading"; progress: number; contentLength: number | null }
+  | { status: "downloaded" }
+  | { status: "upToDate" }
+  | { status: "error"; message: string };
 
 export class TauriAPIClient implements ElectronAPI {
   // ===========================================================================
@@ -373,7 +385,24 @@ export class TauriAPIClient implements ElectronAPI {
     },
   };
   readonly session = stubEventAPI() as any;
-  readonly updater = stubEventAPI() as any;
+  readonly updater = {
+    check: () => invoke("check_for_updates"),
+    download: () => invoke("download_and_install_update"),
+    install: () => invoke("install_update"),
+    onStatus: (cb: (status: UpdaterStatus) => void): (() => void) => {
+      let unlisten: UnlistenFn | null = null;
+      listen<UpdaterStatus>("updater:status", (e) => cb(e.payload))
+        .then((fn) => {
+          unlisten = fn;
+        })
+        .catch((err) => {
+          console.error("Failed to listen to updater:status event:", err);
+        });
+      return () => {
+        if (unlisten) unlisten();
+      };
+    },
+  };
   readonly ssh = stubEventAPI() as any;
   readonly context = createContextAPI();
   readonly httpServer = createHttpServerAPI();
