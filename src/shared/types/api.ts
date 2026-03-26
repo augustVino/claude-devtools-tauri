@@ -12,8 +12,8 @@ import type {
   DetectedError,
   NotificationTrigger,
   TriggerTestResult,
-} from './notifications';
-import type { WaterfallData } from './visualization';
+} from "./notifications";
+import type { WaterfallData } from "./visualization";
 import type {
   ConversationGroup,
   FileChangeEvent,
@@ -28,7 +28,7 @@ import type {
   SessionsByIdsOptions,
   SessionsPaginationOptions,
   RawSubagentDetail,
-} from '@main/types';
+} from "@main/types";
 
 // =============================================================================
 // Agent Config
@@ -68,7 +68,10 @@ interface NotificationsResult {
  * Consumers should cast to DetectedError or NotificationClickData as appropriate.
  */
 export interface NotificationsAPI {
-  get: (options?: { limit?: number; offset?: number }) => Promise<NotificationsResult>;
+  get: (options?: {
+    limit?: number;
+    offset?: number;
+  }) => Promise<NotificationsResult>;
   markRead: (id: string) => Promise<boolean>;
   markAllRead: () => Promise<boolean>;
   delete: (id: string) => Promise<boolean>;
@@ -76,7 +79,10 @@ export interface NotificationsAPI {
   getUnreadCount: () => Promise<number>;
   onNew: (callback: (event: unknown, error: unknown) => void) => () => void;
   onUpdated: (
-    callback: (event: unknown, payload: { total: number; unreadCount: number }) => void
+    callback: (
+      event: unknown,
+      payload: { total: number; unreadCount: number },
+    ) => void,
   ) => () => void;
   onClicked: (callback: (event: unknown, data: unknown) => void) => () => void;
 }
@@ -98,8 +104,13 @@ export interface ConfigAPI {
   snooze: (minutes: number) => Promise<AppConfig>;
   clearSnooze: () => Promise<AppConfig>;
   // Trigger management methods
-  addTrigger: (trigger: Omit<NotificationTrigger, 'isBuiltin'>) => Promise<AppConfig>;
-  updateTrigger: (triggerId: string, updates: Partial<NotificationTrigger>) => Promise<AppConfig>;
+  addTrigger: (
+    trigger: Omit<NotificationTrigger, "isBuiltin">,
+  ) => Promise<AppConfig>;
+  updateTrigger: (
+    triggerId: string,
+    updates: Partial<NotificationTrigger>,
+  ) => Promise<AppConfig>;
   removeTrigger: (triggerId: string) => Promise<AppConfig>;
   getTriggers: () => Promise<NotificationTrigger[]>;
   testTrigger: (trigger: NotificationTrigger) => Promise<TriggerTestResult>;
@@ -187,7 +198,13 @@ export interface ClaudeMdFileInfo {
  * Status payload sent from the main process updater to the renderer.
  */
 export interface UpdaterStatus {
-  type: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+  type:
+    | "checking"
+    | "available"
+    | "not-available"
+    | "downloading"
+    | "downloaded"
+    | "error";
   version?: string;
   releaseNotes?: string;
   progress?: { percent: number; transferred: number; total: number };
@@ -213,7 +230,7 @@ export interface UpdaterAPI {
  */
 export interface ContextInfo {
   id: string;
-  type: 'local' | 'ssh';
+  type: "local" | "ssh";
 }
 
 // =============================================================================
@@ -223,12 +240,16 @@ export interface ContextInfo {
 /**
  * SSH connection state.
  */
-export type SshConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type SshConnectionState =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "error";
 
 /**
  * SSH authentication method.
  */
-export type SshAuthMethod = 'password' | 'privateKey' | 'agent' | 'auto';
+export type SshAuthMethod = "password" | "privateKey" | "agent" | "auto";
 
 /**
  * SSH config host entry resolved from ~/.ssh/config.
@@ -294,12 +315,16 @@ export interface SshAPI {
   connect: (config: SshConnectionConfig) => Promise<SshConnectionStatus>;
   disconnect: () => Promise<SshConnectionStatus>;
   getState: () => Promise<SshConnectionStatus>;
-  test: (config: SshConnectionConfig) => Promise<{ success: boolean; error?: string }>;
+  test: (
+    config: SshConnectionConfig,
+  ) => Promise<{ success: boolean; error?: string }>;
   getConfigHosts: () => Promise<SshConfigHostEntry[]>;
   resolveHost: (alias: string) => Promise<SshConfigHostEntry | null>;
   saveLastConnection: (config: SshLastConnection) => Promise<void>;
   getLastConnection: () => Promise<SshLastConnection | null>;
-  onStatus: (callback: (event: unknown, status: SshConnectionStatus) => void) => () => void;
+  onStatus: (
+    callback: (event: unknown, status: SshConnectionStatus) => void,
+  ) => () => void;
 }
 
 // =============================================================================
@@ -338,27 +363,42 @@ export interface ElectronAPI {
     projectId: string,
     cursor: string | null,
     limit?: number,
-    options?: SessionsPaginationOptions
+    options?: SessionsPaginationOptions,
   ) => Promise<PaginatedSessionsResult>;
   searchSessions: (
     projectId: string,
     query: string,
-    maxResults?: number
+    maxResults?: number,
   ) => Promise<SearchSessionsResult>;
-  searchAllProjects: (query: string, maxResults?: number) => Promise<SearchSessionsResult>;
-  getSessionDetail: (projectId: string, sessionId: string) => Promise<SessionDetail | null>;
-  getSessionMetrics: (projectId: string, sessionId: string) => Promise<SessionMetrics | null>;
-  getWaterfallData: (projectId: string, sessionId: string) => Promise<WaterfallData | null>;
+  searchAllProjects: (
+    query: string,
+    maxResults?: number,
+  ) => Promise<SearchSessionsResult>;
+  getSessionDetail: (
+    projectId: string,
+    sessionId: string,
+  ) => Promise<SessionDetail | null>;
+  getSessionMetrics: (
+    projectId: string,
+    sessionId: string,
+  ) => Promise<SessionMetrics | null>;
+  getWaterfallData: (
+    projectId: string,
+    sessionId: string,
+  ) => Promise<WaterfallData | null>;
   getSubagentDetail: (
     projectId: string,
     sessionId: string,
-    subagentId: string
+    subagentId: string,
   ) => Promise<RawSubagentDetail | null>;
-  getSessionGroups: (projectId: string, sessionId: string) => Promise<ConversationGroup[]>;
+  getSessionGroups: (
+    projectId: string,
+    sessionId: string,
+  ) => Promise<ConversationGroup[]>;
   getSessionsByIds: (
     projectId: string,
     sessionIds: string[],
-    options?: SessionsByIdsOptions
+    options?: SessionsByIdsOptions,
   ) => Promise<Session[]>;
 
   // Repository grouping (worktree support)
@@ -368,20 +408,22 @@ export interface ElectronAPI {
   // Validation methods
   validatePath: (
     relativePath: string,
-    projectPath: string
+    projectPath: string,
   ) => Promise<{ exists: boolean; isDirectory?: boolean }>;
   validateMentions: (
-    mentions: { type: 'path'; value: string }[],
-    projectPath: string
+    mentions: { type: "path"; value: string }[],
+    projectPath: string,
   ) => Promise<Record<string, boolean>>;
 
   // CLAUDE.md reading methods
-  readClaudeMdFiles: (projectRoot: string) => Promise<Record<string, ClaudeMdFileInfo>>;
+  readClaudeMdFiles: (
+    projectRoot: string,
+  ) => Promise<Record<string, ClaudeMdFileInfo>>;
   readDirectoryClaudeMd: (dirPath: string) => Promise<ClaudeMdFileInfo>;
   readMentionedFile: (
     absolutePath: string,
     projectRoot: string,
-    maxTokens?: number
+    maxTokens?: number,
   ) => Promise<string | null>;
 
   // Agent config reading
@@ -410,7 +452,7 @@ export interface ElectronAPI {
   // Shell operations
   openPath: (
     targetPath: string,
-    projectRoot?: string
+    projectRoot?: string,
   ) => Promise<{ success: boolean; error?: string }>;
   openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
 
@@ -421,6 +463,13 @@ export interface ElectronAPI {
     close: () => Promise<void>;
     isMaximized: () => Promise<boolean>;
     relaunch: () => Promise<void>;
+  };
+
+  // Auto-start API (launch at login)
+  autoStart: {
+    enable: () => Promise<void>;
+    disable: () => Promise<void>;
+    isEnabled: () => Promise<boolean>;
   };
 
   // Updater API
@@ -434,7 +483,9 @@ export interface ElectronAPI {
     list: () => Promise<ContextInfo[]>;
     getActive: () => Promise<string>;
     switch: (contextId: string) => Promise<{ contextId: string }>;
-    onChanged: (callback: (event: unknown, data: ContextInfo) => void) => () => void;
+    onChanged: (
+      callback: (event: unknown, data: ContextInfo) => void,
+    ) => () => void;
   };
 
   // HTTP Server API

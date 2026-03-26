@@ -40,8 +40,8 @@ import type {
   UpdaterAPI,
   WaterfallData,
   WslClaudeRootCandidate,
-} from '@shared/types';
-import type { AgentConfig } from '@shared/types/api';
+} from "@shared/types";
+import type { AgentConfig } from "@shared/types/api";
 
 export class HttpAPIClient implements ElectronAPI {
   private baseUrl: string;
@@ -60,15 +60,19 @@ export class HttpAPIClient implements ElectronAPI {
 
   private initEventSource(): void {
     this.eventSource = new EventSource(`${this.baseUrl}/api/events`);
-    this.eventSource.onopen = () => console.log('[HttpAPIClient] SSE connected');
+    this.eventSource.onopen = () =>
+      console.log("[HttpAPIClient] SSE connected");
     this.eventSource.onerror = () => {
       // Auto-reconnect is built into EventSource
-      console.warn('[HttpAPIClient] SSE connection error, will reconnect...');
+      console.warn("[HttpAPIClient] SSE connection error, will reconnect...");
     };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- event callbacks have varying signatures
-  private addEventListener(channel: string, callback: (...args: any[]) => void): () => void {
+  private addEventListener(
+    channel: string,
+    callback: (...args: any[]) => void,
+  ): () => void {
     if (!this.eventListeners.has(channel)) {
       this.eventListeners.set(channel, new Set());
       // Register SSE listener for this channel once
@@ -96,10 +100,11 @@ export class HttpAPIClient implements ElectronAPI {
    * `.getTime()` and other Date methods work in the renderer.
    */
   // eslint-disable-next-line security/detect-unsafe-regex -- anchored pattern with bounded quantifier; no backtracking risk
-  private static readonly ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z?$/;
+  private static readonly ISO_DATE_RE =
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z?$/;
 
   private static reviveDates(_key: string, value: unknown): unknown {
-    if (typeof value === 'string' && HttpAPIClient.ISO_DATE_RE.test(value)) {
+    if (typeof value === "string" && HttpAPIClient.ISO_DATE_RE.test(value)) {
       const d = new Date(value);
       if (!isNaN(d.getTime())) return d;
     }
@@ -112,14 +117,18 @@ export class HttpAPIClient implements ElectronAPI {
       const parsed = JSON.parse(text) as { error?: string };
       throw new Error(parsed.error ?? `HTTP ${res.status}`);
     }
-    return JSON.parse(text, (key, value) => HttpAPIClient.reviveDates(key, value)) as T;
+    return JSON.parse(text, (key, value) =>
+      HttpAPIClient.reviveDates(key, value),
+    ) as T;
   }
 
   private async get<T>(path: string): Promise<T> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
-      const res = await fetch(`${this.baseUrl}${path}`, { signal: controller.signal });
+      const res = await fetch(`${this.baseUrl}${path}`, {
+        signal: controller.signal,
+      });
       return this.parseJson<T>(res);
     } finally {
       clearTimeout(timeout);
@@ -131,8 +140,8 @@ export class HttpAPIClient implements ElectronAPI {
     const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
       const res = await fetch(`${this.baseUrl}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       });
@@ -147,8 +156,8 @@ export class HttpAPIClient implements ElectronAPI {
     const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
       const res = await fetch(`${this.baseUrl}${path}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       });
@@ -163,8 +172,8 @@ export class HttpAPIClient implements ElectronAPI {
     const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
       const res = await fetch(`${this.baseUrl}${path}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       });
@@ -178,25 +187,29 @@ export class HttpAPIClient implements ElectronAPI {
   // Core session/project APIs
   // ---------------------------------------------------------------------------
 
-  getAppVersion = (): Promise<string> => this.get<string>('/api/version');
+  getAppVersion = (): Promise<string> => this.get<string>("/api/version");
 
-  getProjects = (): Promise<Project[]> => this.get<Project[]>('/api/projects');
+  getProjects = (): Promise<Project[]> => this.get<Project[]>("/api/projects");
 
   getSessions = (projectId: string): Promise<Session[]> =>
-    this.get<Session[]>(`/api/projects/${encodeURIComponent(projectId)}/sessions`);
+    this.get<Session[]>(
+      `/api/projects/${encodeURIComponent(projectId)}/sessions`,
+    );
 
   getSessionsPaginated = (
     projectId: string,
     cursor: string | null,
     limit?: number,
-    options?: SessionsPaginationOptions
+    options?: SessionsPaginationOptions,
   ): Promise<PaginatedSessionsResult> => {
     const params = new URLSearchParams();
-    if (cursor) params.set('cursor', cursor);
-    if (limit) params.set('limit', String(limit));
-    if (options?.includeTotalCount === false) params.set('includeTotalCount', 'false');
-    if (options?.prefilterAll === false) params.set('prefilterAll', 'false');
-    if (options?.metadataLevel) params.set('metadataLevel', options.metadataLevel);
+    if (cursor) params.set("cursor", cursor);
+    if (limit) params.set("limit", String(limit));
+    if (options?.includeTotalCount === false)
+      params.set("includeTotalCount", "false");
+    if (options?.prefilterAll === false) params.set("prefilterAll", "false");
+    if (options?.metadataLevel)
+      params.set("metadataLevel", options.metadataLevel);
     const qs = params.toString();
     const encodedId = encodeURIComponent(projectId);
     const path = `/api/projects/${encodedId}/sessions-paginated`;
@@ -206,69 +219,89 @@ export class HttpAPIClient implements ElectronAPI {
   searchSessions = (
     projectId: string,
     query: string,
-    maxResults?: number
+    maxResults?: number,
   ): Promise<SearchSessionsResult> => {
     const params = new URLSearchParams({ q: query });
-    if (maxResults) params.set('maxResults', String(maxResults));
+    if (maxResults) params.set("maxResults", String(maxResults));
     return this.get<SearchSessionsResult>(
-      `/api/projects/${encodeURIComponent(projectId)}/search?${params}`
+      `/api/projects/${encodeURIComponent(projectId)}/search?${params}`,
     );
   };
 
-  searchAllProjects = (query: string, maxResults?: number): Promise<SearchSessionsResult> => {
+  searchAllProjects = (
+    query: string,
+    maxResults?: number,
+  ): Promise<SearchSessionsResult> => {
     const params = new URLSearchParams({ q: query });
-    if (maxResults) params.set('maxResults', String(maxResults));
+    if (maxResults) params.set("maxResults", String(maxResults));
     return this.get<SearchSessionsResult>(`/api/search?${params}`);
   };
 
-  getSessionDetail = (projectId: string, sessionId: string): Promise<SessionDetail | null> =>
+  getSessionDetail = (
+    projectId: string,
+    sessionId: string,
+  ): Promise<SessionDetail | null> =>
     this.get<SessionDetail | null>(
-      `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}`
+      `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}`,
     );
 
-  getSessionMetrics = (projectId: string, sessionId: string): Promise<SessionMetrics | null> =>
+  getSessionMetrics = (
+    projectId: string,
+    sessionId: string,
+  ): Promise<SessionMetrics | null> =>
     this.get<SessionMetrics | null>(
-      `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/metrics`
+      `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/metrics`,
     );
 
-  getWaterfallData = (projectId: string, sessionId: string): Promise<WaterfallData | null> =>
+  getWaterfallData = (
+    projectId: string,
+    sessionId: string,
+  ): Promise<WaterfallData | null> =>
     this.get<WaterfallData | null>(
-      `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/waterfall`
+      `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/waterfall`,
     );
 
   getSubagentDetail = (
     projectId: string,
     sessionId: string,
-    subagentId: string
+    subagentId: string,
   ): Promise<SubagentDetail | null> =>
     this.get<SubagentDetail | null>(
-      `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/subagents/${encodeURIComponent(subagentId)}`
+      `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/subagents/${encodeURIComponent(subagentId)}`,
     );
 
-  getSessionGroups = (projectId: string, sessionId: string): Promise<ConversationGroup[]> =>
+  getSessionGroups = (
+    projectId: string,
+    sessionId: string,
+  ): Promise<ConversationGroup[]> =>
     this.get<ConversationGroup[]>(
-      `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/groups`
+      `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/groups`,
     );
 
   getSessionsByIds = (
     projectId: string,
     sessionIds: string[],
-    options?: SessionsByIdsOptions
+    options?: SessionsByIdsOptions,
   ): Promise<Session[]> =>
-    this.post<Session[]>(`/api/projects/${encodeURIComponent(projectId)}/sessions-by-ids`, {
-      sessionIds,
-      metadataLevel: options?.metadataLevel,
-    });
+    this.post<Session[]>(
+      `/api/projects/${encodeURIComponent(projectId)}/sessions-by-ids`,
+      {
+        sessionIds,
+        metadataLevel: options?.metadataLevel,
+      },
+    );
 
   // ---------------------------------------------------------------------------
   // Repository grouping
   // ---------------------------------------------------------------------------
 
   getRepositoryGroups = (): Promise<RepositoryGroup[]> =>
-    this.get<RepositoryGroup[]>('/api/repository-groups');
+    this.get<RepositoryGroup[]>("/api/repository-groups");
 
   getWorktreeSessions = (worktreeId: string): Promise<Session[]> =>
-    this.get<Session[]>(`/api/worktrees/${encodeURIComponent(worktreeId)}/sessions`);
+    this.get<Session[]>(
+      `/api/worktrees/${encodeURIComponent(worktreeId)}/sessions`,
+    );
 
   // ---------------------------------------------------------------------------
   // Validation
@@ -276,35 +309,45 @@ export class HttpAPIClient implements ElectronAPI {
 
   validatePath = (
     relativePath: string,
-    projectPath: string
+    projectPath: string,
   ): Promise<{ exists: boolean; isDirectory?: boolean }> =>
-    this.post<{ exists: boolean; isDirectory?: boolean }>('/api/validate/path', {
-      relativePath,
-      projectPath,
-    });
+    this.post<{ exists: boolean; isDirectory?: boolean }>(
+      "/api/validate/path",
+      {
+        relativePath,
+        projectPath,
+      },
+    );
 
   validateMentions = (
-    mentions: { type: 'path'; value: string }[],
-    projectPath: string
+    mentions: { type: "path"; value: string }[],
+    projectPath: string,
   ): Promise<Record<string, boolean>> =>
-    this.post<Record<string, boolean>>('/api/validate/mentions', { mentions, projectPath });
+    this.post<Record<string, boolean>>("/api/validate/mentions", {
+      mentions,
+      projectPath,
+    });
 
   // ---------------------------------------------------------------------------
   // CLAUDE.md reading
   // ---------------------------------------------------------------------------
 
-  readClaudeMdFiles = (projectRoot: string): Promise<Record<string, ClaudeMdFileInfo>> =>
-    this.post<Record<string, ClaudeMdFileInfo>>('/api/read-claude-md', { projectRoot });
+  readClaudeMdFiles = (
+    projectRoot: string,
+  ): Promise<Record<string, ClaudeMdFileInfo>> =>
+    this.post<Record<string, ClaudeMdFileInfo>>("/api/read-claude-md", {
+      projectRoot,
+    });
 
   readDirectoryClaudeMd = (dirPath: string): Promise<ClaudeMdFileInfo> =>
-    this.post<ClaudeMdFileInfo>('/api/read-directory-claude-md', { dirPath });
+    this.post<ClaudeMdFileInfo>("/api/read-directory-claude-md", { dirPath });
 
   readMentionedFile = (
     absolutePath: string,
     projectRoot: string,
-    maxTokens?: number
+    maxTokens?: number,
   ): Promise<ClaudeMdFileInfo | null> =>
-    this.post<ClaudeMdFileInfo | null>('/api/read-mentioned-file', {
+    this.post<ClaudeMdFileInfo | null>("/api/read-mentioned-file", {
       absolutePath,
       projectRoot,
       maxTokens,
@@ -314,8 +357,12 @@ export class HttpAPIClient implements ElectronAPI {
   // Agent config reading
   // ---------------------------------------------------------------------------
 
-  readAgentConfigs = (projectRoot: string): Promise<Record<string, AgentConfig>> =>
-    this.post<Record<string, AgentConfig>>('/api/read-agent-configs', { projectRoot });
+  readAgentConfigs = (
+    projectRoot: string,
+  ): Promise<Record<string, AgentConfig>> =>
+    this.post<Record<string, AgentConfig>>("/api/read-agent-configs", {
+      projectRoot,
+    });
 
   // ---------------------------------------------------------------------------
   // Notifications (nested API)
@@ -330,25 +377,30 @@ export class HttpAPIClient implements ElectronAPI {
                 limit: String(options.limit ?? 20),
                 offset: String(options.offset ?? 0),
               }
-            : {}
-        )}`
+            : {},
+        )}`,
       ),
-    markRead: (id) => this.post(`/api/notifications/${encodeURIComponent(id)}/read`),
-    markAllRead: () => this.post('/api/notifications/read-all'),
+    markRead: (id) =>
+      this.post(`/api/notifications/${encodeURIComponent(id)}/read`),
+    markAllRead: () => this.post("/api/notifications/read-all"),
     delete: (id) => this.del(`/api/notifications/${encodeURIComponent(id)}`),
-    clear: () => this.del('/api/notifications'),
-    getUnreadCount: () => this.get('/api/notifications/unread-count'),
+    clear: () => this.del("/api/notifications"),
+    getUnreadCount: () => this.get("/api/notifications/unread-count"),
     // IPC signature: (event: unknown, error: unknown) => void
     onNew: (callback) =>
-      this.addEventListener('notification:new', (data: unknown) => callback(null, data)),
+      this.addEventListener("notification:new", (data: unknown) =>
+        callback(null, data),
+      ),
     // IPC signature: (event: unknown, payload: { total; unreadCount }) => void
     onUpdated: (callback) =>
-      this.addEventListener('notification:updated', (data: unknown) =>
-        callback(null, data as { total: number; unreadCount: number })
+      this.addEventListener("notification:updated", (data: unknown) =>
+        callback(null, data as { total: number; unreadCount: number }),
       ),
     // IPC signature: (event: unknown, data: unknown) => void
     onClicked: (callback) =>
-      this.addEventListener('notification:clicked', (data: unknown) => callback(null, data)),
+      this.addEventListener("notification:clicked", (data: unknown) =>
+        callback(null, data),
+      ),
   };
 
   // ---------------------------------------------------------------------------
@@ -357,50 +409,60 @@ export class HttpAPIClient implements ElectronAPI {
 
   config: ConfigAPI = {
     get: async (): Promise<AppConfig> => {
-      const result = await this.get<{ success: boolean; data?: AppConfig; error?: string }>(
-        '/api/config'
-      );
-      if (!result.success) throw new Error(result.error ?? 'Failed to get config');
+      const result = await this.get<{
+        success: boolean;
+        data?: AppConfig;
+        error?: string;
+      }>("/api/config");
+      if (!result.success)
+        throw new Error(result.error ?? "Failed to get config");
       return result.data!;
     },
     update: async (section: string, data: object): Promise<AppConfig> => {
-      const result = await this.post<{ success: boolean; data?: AppConfig; error?: string }>(
-        '/api/config/update',
-        { section, data }
-      );
-      if (!result.success) throw new Error(result.error ?? 'Failed to update config');
+      const result = await this.post<{
+        success: boolean;
+        data?: AppConfig;
+        error?: string;
+      }>("/api/config/update", { section, data });
+      if (!result.success)
+        throw new Error(result.error ?? "Failed to update config");
       return result.data!;
     },
     addIgnoreRegex: async (pattern: string): Promise<AppConfig> => {
-      await this.post('/api/config/ignore-regex', { pattern });
+      await this.post("/api/config/ignore-regex", { pattern });
       return this.config.get();
     },
     removeIgnoreRegex: async (pattern: string): Promise<AppConfig> => {
-      await this.del('/api/config/ignore-regex', { pattern });
+      await this.del("/api/config/ignore-regex", { pattern });
       return this.config.get();
     },
     addIgnoreRepository: async (repositoryId: string): Promise<AppConfig> => {
-      await this.post('/api/config/ignore-repository', { repositoryId });
+      await this.post("/api/config/ignore-repository", { repositoryId });
       return this.config.get();
     },
-    removeIgnoreRepository: async (repositoryId: string): Promise<AppConfig> => {
-      await this.del('/api/config/ignore-repository', { repositoryId });
+    removeIgnoreRepository: async (
+      repositoryId: string,
+    ): Promise<AppConfig> => {
+      await this.del("/api/config/ignore-repository", { repositoryId });
       return this.config.get();
     },
     snooze: async (minutes: number): Promise<AppConfig> => {
-      await this.post('/api/config/snooze', { minutes });
+      await this.post("/api/config/snooze", { minutes });
       return this.config.get();
     },
     clearSnooze: async (): Promise<AppConfig> => {
-      await this.post('/api/config/clear-snooze');
+      await this.post("/api/config/clear-snooze");
       return this.config.get();
     },
     addTrigger: async (trigger): Promise<AppConfig> => {
-      await this.post('/api/config/triggers', trigger);
+      await this.post("/api/config/triggers", trigger);
       return this.config.get();
     },
     updateTrigger: async (triggerId: string, updates): Promise<AppConfig> => {
-      await this.put(`/api/config/triggers/${encodeURIComponent(triggerId)}`, updates);
+      await this.put(
+        `/api/config/triggers/${encodeURIComponent(triggerId)}`,
+        updates,
+      );
       return this.config.get();
     },
     removeTrigger: async (triggerId: string): Promise<AppConfig> => {
@@ -408,31 +470,43 @@ export class HttpAPIClient implements ElectronAPI {
       return this.config.get();
     },
     getTriggers: async (): Promise<NotificationTrigger[]> => {
-      const result = await this.get<{ success: boolean; data?: NotificationTrigger[] }>(
-        '/api/config/triggers'
-      );
+      const result = await this.get<{
+        success: boolean;
+        data?: NotificationTrigger[];
+      }>("/api/config/triggers");
       return result.data ?? [];
     },
-    testTrigger: async (trigger: NotificationTrigger): Promise<TriggerTestResult> => {
+    testTrigger: async (
+      trigger: NotificationTrigger,
+    ): Promise<TriggerTestResult> => {
       const result = await this.post<{
         success: boolean;
         data?: TriggerTestResult;
         error?: string;
-      }>(`/api/config/triggers/${encodeURIComponent(trigger.id)}/test`, trigger);
-      if (!result.success) throw new Error(result.error ?? 'Failed to test trigger');
+      }>(
+        `/api/config/triggers/${encodeURIComponent(trigger.id)}/test`,
+        trigger,
+      );
+      if (!result.success)
+        throw new Error(result.error ?? "Failed to test trigger");
       return result.data!;
     },
     selectFolders: async (): Promise<string[]> => {
-      console.warn('[HttpAPIClient] selectFolders is not available in browser mode');
+      console.warn(
+        "[HttpAPIClient] selectFolders is not available in browser mode",
+      );
       return [];
     },
-    selectClaudeRootFolder: async (): Promise<ClaudeRootFolderSelection | null> => {
-      console.warn('[HttpAPIClient] selectClaudeRootFolder is not available in browser mode');
-      return null;
-    },
+    selectClaudeRootFolder:
+      async (): Promise<ClaudeRootFolderSelection | null> => {
+        console.warn(
+          "[HttpAPIClient] selectClaudeRootFolder is not available in browser mode",
+        );
+        return null;
+      },
     getClaudeRootInfo: async (): Promise<ClaudeRootInfo> => {
       const config = await this.config.get();
-      const fallbackPath = config.general.claudeRootPath ?? '~/.claude';
+      const fallbackPath = config.general.claudeRootPath ?? "~/.claude";
       return {
         defaultPath: fallbackPath,
         resolvedPath: fallbackPath,
@@ -440,24 +514,28 @@ export class HttpAPIClient implements ElectronAPI {
       };
     },
     findWslClaudeRoots: async (): Promise<WslClaudeRootCandidate[]> => {
-      console.warn('[HttpAPIClient] findWslClaudeRoots is not available in browser mode');
+      console.warn(
+        "[HttpAPIClient] findWslClaudeRoots is not available in browser mode",
+      );
       return [];
     },
     openInEditor: async (): Promise<void> => {
-      console.warn('[HttpAPIClient] openInEditor is not available in browser mode');
+      console.warn(
+        "[HttpAPIClient] openInEditor is not available in browser mode",
+      );
     },
     pinSession: (projectId: string, sessionId: string): Promise<void> =>
-      this.post('/api/config/pin-session', { projectId, sessionId }),
+      this.post("/api/config/pin-session", { projectId, sessionId }),
     unpinSession: (projectId: string, sessionId: string): Promise<void> =>
-      this.post('/api/config/unpin-session', { projectId, sessionId }),
+      this.post("/api/config/unpin-session", { projectId, sessionId }),
     hideSession: (projectId: string, sessionId: string): Promise<void> =>
-      this.post('/api/config/hide-session', { projectId, sessionId }),
+      this.post("/api/config/hide-session", { projectId, sessionId }),
     unhideSession: (projectId: string, sessionId: string): Promise<void> =>
-      this.post('/api/config/unhide-session', { projectId, sessionId }),
+      this.post("/api/config/unhide-session", { projectId, sessionId }),
     hideSessions: (projectId: string, sessionIds: string[]): Promise<void> =>
-      this.post('/api/config/hide-sessions', { projectId, sessionIds }),
+      this.post("/api/config/hide-sessions", { projectId, sessionIds }),
     unhideSessions: (projectId: string, sessionIds: string[]): Promise<void> =>
-      this.post('/api/config/unhide-sessions', { projectId, sessionIds }),
+      this.post("/api/config/unhide-sessions", { projectId, sessionIds }),
   };
 
   // ---------------------------------------------------------------------------
@@ -466,7 +544,7 @@ export class HttpAPIClient implements ElectronAPI {
 
   session: SessionAPI = {
     scrollToLine: (sessionId: string, lineNumber: number): Promise<void> =>
-      this.post('/api/session/scroll-to-line', { sessionId, lineNumber }),
+      this.post("/api/session/scroll-to-line", { sessionId, lineNumber }),
   };
 
   // ---------------------------------------------------------------------------
@@ -475,7 +553,9 @@ export class HttpAPIClient implements ElectronAPI {
 
   getZoomFactor = async (): Promise<number> => 1.0;
 
-  onZoomFactorChanged = (_callback: (zoomFactor: number) => void): (() => void) => {
+  onZoomFactorChanged = (
+    _callback: (zoomFactor: number) => void,
+  ): (() => void) => {
     // No-op in browser mode — zoom is managed by the browser itself
     return () => {};
   };
@@ -485,10 +565,10 @@ export class HttpAPIClient implements ElectronAPI {
   // ---------------------------------------------------------------------------
 
   onFileChange = (callback: (event: FileChangeEvent) => void): (() => void) =>
-    this.addEventListener('file-change', callback);
+    this.addEventListener("file-change", callback);
 
   onTodoChange = (callback: (event: FileChangeEvent) => void): (() => void) =>
-    this.addEventListener('todo-change', callback);
+    this.addEventListener("todo-change", callback);
 
   // No-op in browser mode — Ctrl+R refresh is Electron-only
   onSessionRefresh = (_callback: () => void): (() => void) => {
@@ -501,14 +581,16 @@ export class HttpAPIClient implements ElectronAPI {
 
   openPath = async (
     _targetPath: string,
-    _projectRoot?: string
+    _projectRoot?: string,
   ): Promise<{ success: boolean; error?: string }> => {
-    console.warn('[HttpAPIClient] openPath is not available in browser mode');
-    return { success: false, error: 'Not available in browser mode' };
+    console.warn("[HttpAPIClient] openPath is not available in browser mode");
+    return { success: false, error: "Not available in browser mode" };
   };
 
-  openExternal = async (url: string): Promise<{ success: boolean; error?: string }> => {
-    window.open(url, '_blank');
+  openExternal = async (
+    url: string,
+  ): Promise<{ success: boolean; error?: string }> => {
+    window.open(url, "_blank");
     return { success: true };
   };
 
@@ -521,18 +603,32 @@ export class HttpAPIClient implements ElectronAPI {
   };
 
   // ---------------------------------------------------------------------------
+  // Auto-start (browser no-op)
+  // ---------------------------------------------------------------------------
+
+  autoStart = {
+    enable: async (): Promise<void> => {
+      console.warn("[HttpAPIClient] autoStart not available in browser mode");
+    },
+    disable: async (): Promise<void> => {
+      console.warn("[HttpAPIClient] autoStart not available in browser mode");
+    },
+    isEnabled: async (): Promise<boolean> => false,
+  };
+
+  // ---------------------------------------------------------------------------
   // Updater (browser no-ops)
   // ---------------------------------------------------------------------------
 
   updater: UpdaterAPI = {
     check: async (): Promise<void> => {
-      console.warn('[HttpAPIClient] updater not available in browser mode');
+      console.warn("[HttpAPIClient] updater not available in browser mode");
     },
     download: async (): Promise<void> => {
-      console.warn('[HttpAPIClient] updater not available in browser mode');
+      console.warn("[HttpAPIClient] updater not available in browser mode");
     },
     install: async (): Promise<void> => {
-      console.warn('[HttpAPIClient] updater not available in browser mode');
+      console.warn("[HttpAPIClient] updater not available in browser mode");
     },
     onStatus: (_callback): (() => void) => {
       return () => {};
@@ -545,36 +641,41 @@ export class HttpAPIClient implements ElectronAPI {
 
   ssh: SshAPI = {
     connect: (config: SshConnectionConfig): Promise<SshConnectionStatus> =>
-      this.post('/api/ssh/connect', config),
-    disconnect: (): Promise<SshConnectionStatus> => this.post('/api/ssh/disconnect'),
-    getState: (): Promise<SshConnectionStatus> => this.get('/api/ssh/state'),
-    test: (config: SshConnectionConfig): Promise<{ success: boolean; error?: string }> =>
-      this.post('/api/ssh/test', config),
+      this.post("/api/ssh/connect", config),
+    disconnect: (): Promise<SshConnectionStatus> =>
+      this.post("/api/ssh/disconnect"),
+    getState: (): Promise<SshConnectionStatus> => this.get("/api/ssh/state"),
+    test: (
+      config: SshConnectionConfig,
+    ): Promise<{ success: boolean; error?: string }> =>
+      this.post("/api/ssh/test", config),
     getConfigHosts: async (): Promise<SshConfigHostEntry[]> => {
-      const result = await this.get<{ success: boolean; data?: SshConfigHostEntry[] }>(
-        '/api/ssh/config-hosts'
-      );
+      const result = await this.get<{
+        success: boolean;
+        data?: SshConfigHostEntry[];
+      }>("/api/ssh/config-hosts");
       return result.data ?? [];
     },
     resolveHost: async (alias: string): Promise<SshConfigHostEntry | null> => {
       const result = await this.post<{
         success: boolean;
         data?: SshConfigHostEntry | null;
-      }>('/api/ssh/resolve-host', { alias });
+      }>("/api/ssh/resolve-host", { alias });
       return result.data ?? null;
     },
     saveLastConnection: (config: SshLastConnection): Promise<void> =>
-      this.post('/api/ssh/save-last-connection', config),
+      this.post("/api/ssh/save-last-connection", config),
     getLastConnection: async (): Promise<SshLastConnection | null> => {
-      const result = await this.get<{ success: boolean; data?: SshLastConnection | null }>(
-        '/api/ssh/last-connection'
-      );
+      const result = await this.get<{
+        success: boolean;
+        data?: SshLastConnection | null;
+      }>("/api/ssh/last-connection");
       return result.data ?? null;
     },
     // IPC signature: (event: unknown, status: SshConnectionStatus) => void
     onStatus: (callback): (() => void) =>
-      this.addEventListener('ssh:status', (data: unknown) =>
-        callback(null, data as SshConnectionStatus)
+      this.addEventListener("ssh:status", (data: unknown) =>
+        callback(null, data as SshConnectionStatus),
       ),
   };
 
@@ -583,25 +684,37 @@ export class HttpAPIClient implements ElectronAPI {
   // ---------------------------------------------------------------------------
 
   context = {
-    list: (): Promise<ContextInfo[]> => this.get<ContextInfo[]>('/api/contexts'),
-    getActive: (): Promise<string> => this.get<string>('/api/contexts/active'),
+    list: (): Promise<ContextInfo[]> =>
+      this.get<ContextInfo[]>("/api/contexts"),
+    getActive: (): Promise<string> => this.get<string>("/api/contexts/active"),
     switch: (contextId: string): Promise<{ contextId: string }> =>
-      this.post<{ contextId: string }>('/api/contexts/switch', { contextId }),
-    onChanged: (callback: (event: unknown, data: ContextInfo) => void): (() => void) =>
-      this.addEventListener('context:changed', (data: unknown) =>
-        callback(null, data as ContextInfo)
+      this.post<{ contextId: string }>("/api/contexts/switch", { contextId }),
+    onChanged: (
+      callback: (event: unknown, data: ContextInfo) => void,
+    ): (() => void) =>
+      this.addEventListener("context:changed", (data: unknown) =>
+        callback(null, data as ContextInfo),
       ),
   };
 
   // HTTP Server API — in browser mode, server is already running (we're using it)
   httpServer: HttpServerAPI = {
     start: (): Promise<HttpServerStatus> =>
-      Promise.resolve({ running: true, port: parseInt(new URL(this.baseUrl).port, 10) }),
+      Promise.resolve({
+        running: true,
+        port: parseInt(new URL(this.baseUrl).port, 10),
+      }),
     stop: (): Promise<HttpServerStatus> => {
-      console.warn('[HttpAPIClient] Cannot stop HTTP server from browser mode');
-      return Promise.resolve({ running: true, port: parseInt(new URL(this.baseUrl).port, 10) });
+      console.warn("[HttpAPIClient] Cannot stop HTTP server from browser mode");
+      return Promise.resolve({
+        running: true,
+        port: parseInt(new URL(this.baseUrl).port, 10),
+      });
     },
     getStatus: (): Promise<HttpServerStatus> =>
-      Promise.resolve({ running: true, port: parseInt(new URL(this.baseUrl).port, 10) }),
+      Promise.resolve({
+        running: true,
+        port: parseInt(new URL(this.baseUrl).port, 10),
+      }),
   };
 }
