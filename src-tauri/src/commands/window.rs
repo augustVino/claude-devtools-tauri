@@ -55,6 +55,8 @@ pub async fn set_dock_visible(
 ) -> Result<(), String> {
     use cocoa::appkit::{NSApplication, NSApplicationActivationPolicy};
     use cocoa::base::nil;
+    use cocoa::foundation::NSString;
+    use objc::runtime::Object;
     use objc::*;
 
     unsafe {
@@ -64,9 +66,12 @@ pub async fn set_dock_visible(
             app.setActivationPolicy_(
                 NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
             );
-            // Reset to default bundle icon by setting nil
-            // macOS will automatically use the CFBundleIconFile from Info.plist
-            let _: () = msg_send![app, setApplicationIconImage: nil];
+            // Explicitly restore app icon (known macOS bug: icon not restored after Accessory -> Regular)
+            let icon_name = NSString::alloc(nil).init_str("AppIcon");
+            let app_icon: *mut Object = msg_send![class!(NSImage), imageNamed: icon_name];
+            if !app_icon.is_null() {
+                let _: () = msg_send![app, setApplicationIconImage: app_icon];
+            }
             // Remove tray (no longer needed)
             tray.lock().map_err(|e| e.to_string())?.destroy();
         } else {
