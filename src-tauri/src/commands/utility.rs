@@ -77,12 +77,25 @@ pub fn read_directory_claude_md(directory: String) -> ClaudeMdFileInfo {
     reader.read_directory_claude_md(&directory)
 }
 
+/// Mentioned file info for context injection (matches Electron MentionedFileInfo).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MentionedFileInfo {
+    pub path: String,
+    pub exists: bool,
+    pub char_count: usize,
+    pub estimated_tokens: usize,
+}
+
 /// Read a mentioned file for context injection.
+/// Returns MentionedFileInfo with token count (matches Electron HTTP API behavior).
 #[tauri::command]
 pub async fn read_mentioned_file(
     file_path: String,
     _project_root: String,
-) -> Result<Option<String>, String> {
+    max_tokens: Option<usize>,
+) -> Result<Option<MentionedFileInfo>, String> {
+    let max_tokens_limit = max_tokens.unwrap_or(25000);
     let path = Path::new(&file_path);
 
     // Skip non-existent paths and directories
@@ -93,32 +106,51 @@ pub async fn read_mentioned_file(
     match tokio::fs::read_to_string(path).await {
         Ok(content) => {
             if content.len() > 1_000_000 {
-                return Err("File too large (max 1MB)".to_string());
+                return Ok(None);
             }
-            Ok(Some(content))
+
+            let char_count = content.len();
+            // Simple token estimation: ~4 chars per token
+            let estimated_tokens = char_count / 4;
+
+            if estimated_tokens > max_tokens_limit {
+                return Ok(None);
+            }
+
+            Ok(Some(MentionedFileInfo {
+                path: file_path,
+                exists: true,
+                char_count,
+                estimated_tokens,
+            }))
         }
-        Err(e) => Err(format!("Failed to read file: {}", e)),
+        Err(_) => Ok(None),
     }
 }
 
-/// Agent config entry for IPC (flattened from HashMap).
+/// Agent config for IPC (matches frontend AgentConfig interface).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AgentConfigEntry {
+pub struct AgentConfig {
     pub name: String,
     pub color: Option<String>,
 }
 
 /// Read agent configurations from .claude/agents/ directory.
-/// Returns array of (name, AgentConfig) pairs from the HashMap.
+/// Returns a map from agent name to AgentConfig (matches Electron HTTP API behavior).
 #[tauri::command]
-pub fn read_agent_configs(project_root: String) -> Vec<AgentConfigEntry> {
+pub fn read_agent_configs(project_root: String) -> std::collections::HashMap<String, AgentConfig> {
     let configs = crate::parsing::agent_config_reader::read_agent_configs(&project_root);
     configs
         .into_iter()
-        .map(|(name, config)| AgentConfigEntry {
-            name,
-            color: config.color,
+        .map(|(name, config)| {
+            (
+                name.clone(),
+                AgentConfig {
+                    name,
+                    color: config.color,
+                },
+            )
         })
         .collect()
 }

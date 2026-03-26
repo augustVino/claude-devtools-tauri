@@ -40,11 +40,17 @@ export interface AgentConfig {
 }
 
 /**
- * Agent config entry for IPC (flattened from HashMap).
+ * Information about a mentioned file returned from IPC.
  */
-export interface AgentConfigEntry {
-  name: string;
-  color?: string;
+export interface MentionedFileInfo {
+  /** Absolute file path */
+  path: string;
+  /** Whether the file exists on disk */
+  exists: boolean;
+  /** Character count of file content */
+  charCount: number;
+  /** Estimated token count (typically charCount / 4) */
+  estimatedTokens: number;
 }
 
 // =============================================================================
@@ -424,10 +430,12 @@ export interface ElectronAPI {
     absolutePath: string,
     projectRoot: string,
     maxTokens?: number,
-  ) => Promise<string | null>;
+  ) => Promise<MentionedFileInfo | null>;
 
   // Agent config reading
-  readAgentConfigs: (projectRoot: string) => Promise<AgentConfigEntry[]>;
+  readAgentConfigs: (
+    projectRoot: string,
+  ) => Promise<Record<string, AgentConfig>>;
 
   // Notifications API
   notifications: NotificationsAPI;

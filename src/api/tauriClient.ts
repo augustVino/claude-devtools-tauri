@@ -10,7 +10,13 @@ import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 
-import type { ElectronAPI, ConfigAPI, ClaudeMdFileInfo, AgentConfigEntry } from '@shared/types/api';
+import type {
+  ElectronAPI,
+  ConfigAPI,
+  ClaudeMdFileInfo,
+  AgentConfig,
+  MentionedFileInfo
+} from '@shared/types/api';
 import type {
   Session,
   SessionDetail,
@@ -322,10 +328,11 @@ export class TauriAPIClient implements ElectronAPI {
   readonly readMentionedFile = async (
     filePath: string,
     projectRoot: string,
-    _maxTokens?: number
-  ): Promise<string | null> => invoke('read_mentioned_file', { filePath, projectRoot });
+    maxTokens?: number
+  ): Promise<MentionedFileInfo | null> =>
+    invoke('read_mentioned_file', { filePath, projectRoot, maxTokens });
 
-  readonly readAgentConfigs = (projectRoot: string): Promise<AgentConfigEntry[]> =>
+  readonly readAgentConfigs = (projectRoot: string): Promise<Record<string, AgentConfig>> =>
     invoke('read_agent_configs', { projectRoot });
 
   // Nested API objects — partially implemented
