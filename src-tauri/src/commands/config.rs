@@ -164,3 +164,49 @@ pub async fn test_trigger(
     let scanner = ProjectScanner::new();
     Ok(error_trigger_tester::test_trigger(&trigger, &scanner, None).await)
 }
+
+// =============================================================================
+// Repository Ignore
+// =============================================================================
+
+#[command]
+pub async fn add_ignore_repository(
+    state: State<'_, Arc<RwLock<AppState>>>,
+    repository_id: String,
+) -> Result<AppConfig, String> {
+    let app_state = state.read().await;
+    Ok(app_state.config_manager.add_ignore_repository(repository_id))
+}
+
+#[command]
+pub async fn remove_ignore_repository(
+    state: State<'_, Arc<RwLock<AppState>>>,
+    repository_id: String,
+) -> Result<AppConfig, String> {
+    let app_state = state.read().await;
+    Ok(app_state.config_manager.remove_ignore_repository(repository_id))
+}
+
+// =============================================================================
+// Bulk Session Hide/Unhide
+// =============================================================================
+
+#[command]
+pub async fn hide_sessions(
+    state: State<'_, Arc<RwLock<AppState>>>,
+    project_id: String,
+    session_ids: Vec<String>,
+) -> Result<AppConfig, String> {
+    let app_state = state.read().await;
+    Ok(app_state.config_manager.hide_sessions(project_id, session_ids))
+}
+
+#[command]
+pub async fn unhide_sessions(
+    state: State<'_, Arc<RwLock<AppState>>>,
+    project_id: String,
+    session_ids: Vec<String>,
+) -> Result<AppConfig, String> {
+    let app_state = state.read().await;
+    Ok(app_state.config_manager.unhide_sessions(project_id, session_ids))
+}
