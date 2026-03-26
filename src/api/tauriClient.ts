@@ -387,8 +387,10 @@ export class TauriAPIClient implements ElectronAPI {
       invoke<AppConfig>("add_ignore_regex", { pattern }),
     removeIgnoreRegex: (pattern: string): Promise<AppConfig> =>
       invoke<AppConfig>("remove_ignore_regex", { pattern }),
-    addIgnoreRepository: notImplemented,
-    removeIgnoreRepository: notImplemented,
+    addIgnoreRepository: (repositoryId: string): Promise<AppConfig> =>
+      invoke<AppConfig>("add_ignore_repository", { repositoryId }),
+    removeIgnoreRepository: (repositoryId: string): Promise<AppConfig> =>
+      invoke<AppConfig>("remove_ignore_repository", { repositoryId }),
     snooze: (minutes: number): Promise<AppConfig> =>
       invoke<AppConfig>("snooze", { minutes }),
     clearSnooze: (): Promise<AppConfig> => invoke<AppConfig>("clear_snooze"),
@@ -429,20 +431,24 @@ export class TauriAPIClient implements ElectronAPI {
       });
       if (result === null) return null;
       const selectedPath = Array.isArray(result) ? result[0] : result;
+      const hasProjectsDir = await invoke<boolean>(
+        "check_projects_dir_exists",
+        { path: selectedPath },
+      );
       return {
         path: selectedPath,
         isClaudeDirName: selectedPath.endsWith(".claude"),
-        hasProjectsDir: false,
+        hasProjectsDir,
       };
     },
     getClaudeRootInfo: () =>
-      Promise.resolve({
-        defaultPath: "",
-        resolvedPath: "",
-        customPath: null,
-      }),
+      invoke<{
+        defaultPath: string;
+        resolvedPath: string;
+        customPath: string | null;
+      }>("get_claude_root_info"),
     findWslClaudeRoots: () => Promise.resolve([]),
-    openInEditor: notImplemented,
+    openInEditor: (): Promise<void> => invoke("open_in_editor"),
     pinSession: (projectId: string, sessionId: string): Promise<void> =>
       invoke("pin_session", { projectId, sessionId }),
     unpinSession: (projectId: string, sessionId: string): Promise<void> =>
@@ -451,8 +457,10 @@ export class TauriAPIClient implements ElectronAPI {
       invoke("hide_session", { projectId, sessionId }),
     unhideSession: (projectId: string, sessionId: string): Promise<void> =>
       invoke("unhide_session", { projectId, sessionId }),
-    hideSessions: notImplemented,
-    unhideSessions: notImplemented,
+    hideSessions: (projectId: string, sessionIds: string[]): Promise<void> =>
+      invoke("hide_sessions", { projectId, sessionIds }),
+    unhideSessions: (projectId: string, sessionIds: string[]): Promise<void> =>
+      invoke("unhide_sessions", { projectId, sessionIds }),
   };
 
   // Event listeners — wired to Tauri events

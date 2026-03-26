@@ -275,6 +275,15 @@ pub async fn get_claude_root_info(
     })
 }
 
+// =============================================================================
+// Projects Directory Check
+// =============================================================================
+
+#[command]
+pub async fn check_projects_dir_exists(path: String) -> Result<bool, String> {
+    Ok(std::path::Path::new(&path).join("projects").is_dir())
+}
+
 /// Try to spawn an editor process. Returns true if successful.
 async fn try_spawn_editor(editor: &str, file_path: &str) -> bool {
     tokio::process::Command::new(editor)
