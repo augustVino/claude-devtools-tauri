@@ -21,4 +21,3 @@ pub use projects::*;
 pub use subagents::*;
 pub use notifications::*;
 pub use sessions::AppState;
-pub use updater::PendingUpdate;
