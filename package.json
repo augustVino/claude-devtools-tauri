@@ -19,6 +19,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:macos": "tauri build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
