@@ -63,10 +63,8 @@ impl TrayIconManager {
         } else {
             for project in &recent {
                 let label = &project.name;
-                // Get the most recent session ID from the sessions list
-                // Note: sessions are stored in directory iteration order, not sorted by recency
-                // We use the last one as a reasonable approximation
-                let session_id = project.sessions.last().cloned().unwrap_or_default();
+                // Use most_recent_session for the session ID (this is what we filtered on)
+                let session_id = project.most_recent_session.clone().unwrap_or_default();
                 let item_id = format!("session:{}:{}", project.id, session_id);
 
                 submenu_builder = submenu_builder.item(
@@ -99,7 +97,12 @@ impl TrayIconManager {
 
         // Build the tray icon
         let tray = TrayIconBuilder::new()
-            .icon(self.app_handle.default_window_icon().unwrap().clone())
+            .icon(
+                self.app_handle
+                    .default_window_icon()
+                    .ok_or_else(|| "No default window icon configured".to_string())?
+                    .clone(),
+            )
             .tooltip("claude-devtools")
             .icon_as_template(true)
             .menu(&menu)
