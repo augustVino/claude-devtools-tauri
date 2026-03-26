@@ -217,12 +217,17 @@ struct OpenSessionPayload {
 pub fn restore_dock_icon() {
     use cocoa::appkit::NSApplication;
     use cocoa::base::nil;
+    use cocoa::foundation::NSData;
     use objc::runtime::Object;
     use objc::*;
 
     let icon_bytes = include_bytes!("../../icons/icon.icns");
     unsafe {
-        let ns_data: *mut Object = msg_send![class!(NSData), dataWithBytes:icon_bytes.as_ptr() as *const std::ffi::c_void length:icon_bytes.len() as u64];
+        let ns_data = NSData::dataWithBytes_length_(
+            nil,
+            icon_bytes.as_ptr() as *const std::ffi::c_void,
+            icon_bytes.len() as u64,
+        );
         let ns_image: *mut Object = msg_send![class!(NSImage), initWithData: ns_data];
         if !ns_image.is_null() {
             let app = NSApplication::sharedApplication(nil);
