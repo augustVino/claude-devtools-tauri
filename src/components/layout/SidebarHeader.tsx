@@ -333,7 +333,7 @@ export const SidebarHeader = (): React.JSX.Element => {
       <div
         ref={(el) => {
           projectDropdownRef.current = el;
-          dragRef.current = el;
+          dragRef(el);
         }}
         className="relative flex select-none items-center gap-2 pr-2"
         style={

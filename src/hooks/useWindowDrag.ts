@@ -1,22 +1,27 @@
-import { useEffect, useRef } from 'react';
+import { useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { isTauriMode } from '@renderer/api';
 
 /**
  * Enables Tauri window dragging on the referenced element.
  *
- * Attach this ref to the drag-region container div. In Tauri, it adds
- * a mousedown listener that calls `getCurrentWindow().startDragging()`.
+ * Returns a callback ref that attaches a mousedown listener to the element.
+ * In Tauri, it calls `getCurrentWindow().startDragging()`.
  * In Electron, `-webkit-app-region: drag` CSS handles this instead.
  *
  * Interactive children (buttons, inputs, links) are automatically excluded
  * from the drag region. Double-click toggles maximize.
+ *
+ * Usage — standalone:
+ *   const dragRef = useWindowDrag<HTMLDivElement>();
+ *   <div ref={dragRef}>...</div>
+ *
+ * Usage — merged with another ref:
+ *   const dragRef = useWindowDrag<HTMLDivElement>();
+ *   <div ref={(el) => { otherRef.current = el; dragRef(el); }}>...</div>
  */
 export function useWindowDrag<T extends HTMLElement>() {
-  const ref = useRef<T | null>(null);
-
-  useEffect(() => {
-    const el = ref.current;
+  const attachDrag = useCallback((el: T | null) => {
     if (!el || !isTauriMode()) return;
 
     const handleMouseDown = (e: MouseEvent) => {
@@ -43,8 +48,7 @@ export function useWindowDrag<T extends HTMLElement>() {
     };
 
     el.addEventListener('mousedown', handleMouseDown);
-    return () => el.removeEventListener('mousedown', handleMouseDown);
   }, []);
 
-  return ref;
+  return attachDrag;
 }
