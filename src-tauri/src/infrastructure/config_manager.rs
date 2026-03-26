@@ -127,6 +127,7 @@ impl ConfigManager {
         let updated = update_section(&current_json, section, &data);
         let merged: AppConfig = merge_with_defaults(&updated)?;
         *config = merged.clone();
+        self.persist()?;
         Ok(merged)
     }
 
