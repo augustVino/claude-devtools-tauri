@@ -9,9 +9,10 @@ pub type TokenUsage = UsageMetadata;
 // Enums
 // =============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageType {
+    #[default]
     User,
     Assistant,
     System,

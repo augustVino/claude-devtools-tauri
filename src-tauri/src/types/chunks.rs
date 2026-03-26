@@ -169,3 +169,78 @@ pub struct TeamInfo {
     #[serde(rename = "memberColor")]
     pub member_color: String,
 }
+
+// =============================================================================
+// SubagentResolver Process → Chunk Process conversion
+// =============================================================================
+
+/// Convert subagent_resolver::Process → chunks::Process.
+impl From<crate::discovery::subagent_resolver::Process> for Process {
+    fn from(p: crate::discovery::subagent_resolver::Process) -> Self {
+        Self {
+            id: p.id,
+            file_path: p.file_path,
+            description: None,
+            subagent_type: None,
+            messages: vec![],
+            start_time: p.start_time_ms,
+            end_time: p.end_time_ms,
+            duration_ms: p.duration_ms,
+            metrics: p.metrics,
+            is_parallel: p.is_parallel,
+            parent_task_id: p.task_id,
+            is_ongoing: Some(p.is_ongoing),
+            main_session_impact: None,
+            team: None,
+        }
+    }
+}
+
+// =============================================================================
+// Task Execution
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskExecution {
+    pub task_id: String,
+    #[serde(rename = "toolCallId")]
+    pub tool_call_id: String,
+    pub input: serde_json::Value,
+    pub subagent: Process,
+    #[serde(rename = "toolResult")]
+    pub tool_result: ParsedMessage,
+    #[serde(rename = "taskCallTimestamp")]
+    pub task_call_timestamp: f64,
+    #[serde(rename = "resultTimestamp")]
+    pub result_timestamp: f64,
+    #[serde(rename = "durationMs")]
+    pub duration_ms: u64,
+}
+
+// =============================================================================
+// Conversation Group
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationGroup {
+    pub id: String,
+    pub r#type: String,
+    #[serde(rename = "userMessage")]
+    pub user_message: ParsedMessage,
+    #[serde(rename = "aiResponses")]
+    pub ai_responses: Vec<ParsedMessage>,
+    pub processes: Vec<Process>,
+    #[serde(rename = "toolExecutions")]
+    pub tool_executions: Vec<ToolExecution>,
+    #[serde(rename = "taskExecutions")]
+    pub task_executions: Vec<TaskExecution>,
+    #[serde(rename = "startTime")]
+    pub start_time: f64,
+    #[serde(rename = "endTime")]
+    pub end_time: f64,
+    #[serde(rename = "durationMs")]
+    pub duration_ms: u64,
+    pub metrics: SessionMetrics,
+}
