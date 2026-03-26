@@ -3,6 +3,7 @@
 //! Responsibilities:
 //! - Watch directories for session file changes
 //! - Debounce rapid file events (100ms)
+//! - Parse paths to extract projectId, sessionId, isSubagent
 //! - Emit FileChangeEvent to subscribers
 
 use std::path::Path;
@@ -54,6 +55,11 @@ impl FileWatcher {
     /// Starts watching a directory with debouncing.
     ///
     /// Only emits events for `.jsonl` and `.json` files.
+    /// Parses paths to extract projectId, sessionId, and isSubagent.
+    ///
+    /// Path patterns:
+    /// - Session file: `watchPath/projectId/sessionId.jsonl`
+    /// - Subagent file: `watchPath/projectId/sessionId/subagents/agent-hash.jsonl`
     pub async fn watch(&mut self, path: &Path) -> Result<(), String> {
         if !path.exists() {
             return Err(format!("Path does not exist: {}", path.display()));
@@ -65,7 +71,7 @@ impl FileWatcher {
         }
 
         let sender = self.sender.clone();
-        let path_owned = path.to_path_buf();
+        let watch_path = path.to_path_buf();
 
         // Create debounced watcher with channel for events
         let (tx, mut rx) = tokio::sync::mpsc::channel::<DebouncedEvent>(64);
@@ -81,13 +87,15 @@ impl FileWatcher {
 
         debouncer
             .watcher()
-            .watch(&path_owned, RecursiveMode::Recursive)
+            .watch(&watch_path, RecursiveMode::Recursive)
             .map_err(|e| format!("Failed to start watcher: {}", e))?;
 
         // Spawn task to process debounced events
         tokio::spawn(async move {
             while let Some(debounced_event) = rx.recv().await {
-                if let Some(change_event) = Self::process_debounced_event(&debounced_event) {
+                if let Some(change_event) =
+                    Self::process_debounced_event(&debounced_event, &watch_path)
+                {
                     let _ = sender.send(change_event);
                 }
             }
@@ -122,7 +130,16 @@ impl FileWatcher {
     }
 
     /// Processes a debounced event and converts to FileChangeEvent.
-    fn process_debounced_event(event: &DebouncedEvent) -> Option<FileChangeEvent> {
+    ///
+    /// Parses the file path relative to the watch path to extract:
+    /// - projectId: First directory component after watch path
+    /// - sessionId: Session ID from the path
+    /// - isSubagent: Whether this is a subagent file
+    ///
+    /// Path patterns (mirrors Electron FileWatcher.ts):
+    /// - Session file: `watchPath/projectId/sessionId.jsonl`
+    /// - Subagent file: `watchPath/projectId/sessionId/subagents/agent-hash.jsonl`
+    fn process_debounced_event(event: &DebouncedEvent, watch_path: &Path) -> Option<FileChangeEvent> {
         // Filter to only .jsonl and .json files
         let extension = event.path.extension()?.to_str()?;
 
@@ -134,20 +151,56 @@ impl FileWatcher {
         // (debouncer-mini doesn't distinguish - only Any/AnyContinuous)
         let event_type = if event.path.exists() {
             // File exists: could be add or change
-            // We'll report "change" for simplicity
+            // We'll report "change" for simplicity (Electron also reports "change" for most cases)
             FileChangeType::Change
         } else {
             // File doesn't exist: it was removed
             FileChangeType::Unlink
         };
 
+        // Parse relative path to extract projectId, sessionId, isSubagent
+        let relative_path = event.path.strip_prefix(watch_path).ok()?;
+        let parts: Vec<&str> = relative_path
+            .components()
+            .filter_map(|c| c.as_os_str().to_str())
+            .collect();
+
+        let (project_id, session_id, is_subagent) = Self::parse_path_parts(&parts);
+
         Some(FileChangeEvent {
             event_type,
             path: event.path.to_string_lossy().to_string(),
-            project_id: None,
-            session_id: None,
-            is_subagent: false,
+            project_id,
+            session_id,
+            is_subagent,
         })
+    }
+
+    /// Parses path parts to extract projectId, sessionId, and isSubagent.
+    ///
+    /// Matches Electron FileWatcher.ts logic (lines 507-533):
+    /// - Session file (2 parts): `projectId/sessionId.jsonl`
+    /// - Subagent file (4 parts): `projectId/sessionId/subagents/agent-hash.jsonl`
+    fn parse_path_parts(parts: &[&str]) -> (Option<String>, Option<String>, bool) {
+        if parts.is_empty() {
+            return (None, None, false);
+        }
+
+        let project_id = Some(parts[0].to_string());
+
+        // Session file at project root: projectId/sessionId.jsonl
+        if parts.len() == 2 && parts[1].ends_with(".jsonl") {
+            let session_id = parts[1].strip_suffix(".jsonl").map(|s| s.to_string());
+            return (project_id, session_id, false);
+        }
+
+        // Subagent file: projectId/sessionId/subagents/agent-hash.jsonl
+        if parts.len() == 4 && parts[2] == "subagents" && parts[3].ends_with(".jsonl") {
+            let session_id = parts[1].to_string();
+            return (project_id, Some(session_id), true);
+        }
+
+        (project_id, None, false)
     }
 }
 
@@ -187,5 +240,64 @@ mod tests {
     fn test_receiver_creation() {
         let watcher = FileWatcher::new();
         let _receiver = watcher.receiver();
+    }
+
+    #[test]
+    fn test_parse_path_parts_session_file() {
+        // Session file: projectId/sessionId.jsonl
+        let parts = vec!["-Users-name-project", "session-abc123.jsonl"];
+        let (project_id, session_id, is_subagent) = FileWatcher::parse_path_parts(&parts);
+
+        assert_eq!(project_id, Some("-Users-name-project".to_string()));
+        assert_eq!(session_id, Some("session-abc123".to_string()));
+        assert!(!is_subagent);
+    }
+
+    #[test]
+    fn test_parse_path_parts_subagent_file() {
+        // Subagent file: projectId/sessionId/subagents/agent-hash.jsonl
+        let parts = vec![
+            "-Users-name-project",
+            "session-abc123",
+            "subagents",
+            "agent-def456.jsonl",
+        ];
+        let (project_id, session_id, is_subagent) = FileWatcher::parse_path_parts(&parts);
+
+        assert_eq!(project_id, Some("-Users-name-project".to_string()));
+        assert_eq!(session_id, Some("session-abc123".to_string()));
+        assert!(is_subagent);
+    }
+
+    #[test]
+    fn test_parse_path_parts_empty() {
+        let parts: Vec<&str> = vec![];
+        let (project_id, session_id, is_subagent) = FileWatcher::parse_path_parts(&parts);
+
+        assert_eq!(project_id, None);
+        assert_eq!(session_id, None);
+        assert!(!is_subagent);
+    }
+
+    #[test]
+    fn test_parse_path_parts_only_project() {
+        // Just a project directory, no session file
+        let parts = vec!["-Users-name-project"];
+        let (project_id, session_id, is_subagent) = FileWatcher::parse_path_parts(&parts);
+
+        assert_eq!(project_id, Some("-Users-name-project".to_string()));
+        assert_eq!(session_id, None);
+        assert!(!is_subagent);
+    }
+
+    #[test]
+    fn test_parse_path_parts_nested_directory() {
+        // Nested directory that's not a subagent file
+        let parts = vec!["-Users-name-project", "some-dir", "other.jsonl"];
+        let (project_id, session_id, is_subagent) = FileWatcher::parse_path_parts(&parts);
+
+        assert_eq!(project_id, Some("-Users-name-project".to_string()));
+        assert_eq!(session_id, None);
+        assert!(!is_subagent);
     }
 }
