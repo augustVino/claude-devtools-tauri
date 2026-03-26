@@ -85,6 +85,9 @@ pub fn run() {
             ns_app.setActivationPolicy_(
               NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
             );
+            // Re-activate the app after switching to Accessory policy
+            // macOS deactivates the app when switching to Accessory mode
+            NSApplication::activateIgnoringOtherApps_(ns_app, true);
           }
         }
       }

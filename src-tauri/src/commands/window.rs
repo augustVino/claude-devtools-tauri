@@ -96,6 +96,10 @@ pub async fn set_dock_visible(
             app.setActivationPolicy_(
                 NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
             );
+            // Re-activate the app after switching to Accessory policy
+            // macOS deactivates the app when switching to Accessory mode,
+            // causing the window to lose focus and the first menu click to fail
+            let _: () = msg_send![app, activateIgnoringOtherApps: true];
         }
     }
     // Persist to config
