@@ -11,8 +11,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useDroppable } from '@dnd-kit/core';
 import { horizontalListSortingStrategy, SortableContext } from '@dnd-kit/sortable';
-import { isElectronMode } from '@renderer/api';
+import { isElectronMode, isTauriMode } from '@renderer/api';
 import { HEADER_ROW1_HEIGHT } from '@renderer/constants/layout';
+import { useWindowDrag } from '@renderer/hooks/useWindowDrag';
 import { useStore } from '@renderer/store';
 import { formatShortcut } from '@renderer/utils/stringUtils';
 import { Bell, PanelLeft, Plus, RefreshCw } from 'lucide-react';
@@ -78,6 +79,9 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
       tabSessionData: s.tabSessionData,
     }))
   );
+
+  const tabBarDragRef = useWindowDrag<HTMLDivElement>();
+  const spacerDragRef = useWindowDrag<HTMLDivElement>();
 
   const openTabs = useMemo(() => pane?.tabs ?? [], [pane?.tabs]);
   const activeTabId = pane?.activeTabId ?? null;
@@ -255,6 +259,7 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
 
   return (
     <div
+      ref={isTauriMode() && isLeftmostPane ? tabBarDragRef : undefined}
       className="flex items-center justify-between pr-2"
       style={
         {
@@ -346,6 +351,7 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
           Gives users a reliable window-drag target regardless of how many tabs are open.
           Only applied on the leftmost pane in Electron to match the TabBar drag region logic. */}
       <div
+        ref={isTauriMode() && isLeftmostPane ? spacerDragRef : undefined}
         className="flex-1 self-stretch"
         style={
           {
