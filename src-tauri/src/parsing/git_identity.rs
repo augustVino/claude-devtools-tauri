@@ -320,6 +320,12 @@ impl GitIdentityResolver {
         if parts.iter().any(|&p| p == CCSWITCH_DIR) && parts.iter().any(|&p| p == WORKTREES_DIR) {
             return true;
         }
+        // Subpaths in conductor/workspaces are worktrees
+        if let Some(conductor_idx) = parts.iter().position(|&p| p == CONDUCTOR_DIR) {
+            if conductor_idx + 3 < parts.len() && parts[conductor_idx + 1] == WORKSPACES_DIR {
+                return true;
+            }
+        }
 
         // Fallback: check filesystem
         let git_path = PathBuf::from(project_path).join(".git");

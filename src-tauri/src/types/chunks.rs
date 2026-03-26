@@ -133,10 +133,12 @@ pub struct SessionDetail {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolExecution {
+    #[serde(rename = "toolCall")]
     pub tool_call: ToolCall,
     pub result: Option<ToolResult>,
     #[serde(rename = "startTime")]
     pub start_time: String,
+    #[serde(rename = "endTime")]
     pub end_time: Option<String>,
     #[serde(rename = "durationMs")]
     pub duration_ms: Option<u64>,

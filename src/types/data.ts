@@ -178,6 +178,49 @@ export function asEnhancedChunkArray(chunks: Chunk[]): EnhancedChunk[] | null {
         base.endTime,
       ) as unknown as EnhancedChunk["endTime"];
     }
+    // SemanticStep times arrive as ISO strings from Rust — convert to Date objects
+    if (chunk.chunkType === "ai") {
+      const record = base as Record<string, unknown>;
+      if (
+        Array.isArray(record.semanticSteps) &&
+        record.semanticSteps.length > 0
+      ) {
+        record.semanticSteps = (
+          record.semanticSteps as Array<Record<string, unknown>>
+        ).map((step) => ({
+          ...step,
+          startTime:
+            typeof step.startTime === "string"
+              ? new Date(step.startTime)
+              : step.startTime,
+          endTime:
+            step.endTime != null && typeof step.endTime === "string"
+              ? new Date(step.endTime)
+              : step.endTime,
+          effectiveEndTime:
+            step.effectiveEndTime != null &&
+            typeof step.effectiveEndTime === "string"
+              ? new Date(step.effectiveEndTime)
+              : step.effectiveEndTime,
+        }));
+      }
+      // ToolExecution times also arrive as ISO strings — convert to Date objects
+      if (Array.isArray(record.toolExecutions)) {
+        record.toolExecutions = (
+          record.toolExecutions as Array<Record<string, unknown>>
+        ).map((te) => ({
+          ...te,
+          startTime:
+            typeof te.startTime === "string"
+              ? new Date(te.startTime)
+              : te.startTime,
+          endTime:
+            te.endTime != null && typeof te.endTime === "string"
+              ? new Date(te.endTime)
+              : te.endTime,
+        }));
+      }
+    }
     return base as EnhancedChunk;
   });
   return enhanced;

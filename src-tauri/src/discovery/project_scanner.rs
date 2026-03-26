@@ -25,6 +25,8 @@ struct SessionPreview {
     git_branch: Option<String>,
     /// Stored command display as fallback title (e.g., "/model sonnet").
     command_fallback: Option<String>,
+    /// Current working directory from the first entry that has a `cwd` field.
+    cwd: Option<String>,
 }
 
 impl Default for SessionPreview {
@@ -37,6 +39,7 @@ impl Default for SessionPreview {
             message_count: 0,
             is_ongoing: None,
             git_branch: None,
+            cwd: None,
         }
     }
 }
@@ -141,10 +144,11 @@ impl ProjectScanner {
             return None;
         }
 
-        // Extract session IDs and compute timestamps
+        // Extract session IDs, timestamps, and cwd from session files
         let mut session_ids: Vec<String> = Vec::new();
         let mut most_recent_session: Option<u64> = None;
         let mut created_at = u64::MAX;
+        let mut first_cwd: Option<String> = None;
 
         for entry in &session_files {
             let file_name = entry.file_name();
@@ -172,10 +176,19 @@ impl ProjectScanner {
                     created_at = created_at.min(birthtime);
                 }
             }
+
+            // Extract cwd from the first session file that has one
+            if first_cwd.is_none() {
+                let preview = self.extract_session_preview(&entry.path());
+                if let Some(cwd) = preview.cwd {
+                    first_cwd = Some(cwd);
+                }
+            }
         }
 
-        let base_name = path_decoder::extract_project_name(encoded_name, None);
-        let actual_path = self.resolve_project_path(encoded_name);
+        let base_name =
+            path_decoder::extract_project_name(encoded_name, first_cwd.as_deref());
+        let actual_path = first_cwd.unwrap_or_else(|| self.resolve_project_path(encoded_name));
 
         Some(Project {
             id: encoded_name.to_string(),
@@ -226,10 +239,12 @@ impl ProjectScanner {
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
 
-            let decoded_path = self.resolve_project_path(&base_dir);
-
-            // Light-weight preview: read first few KB to extract first user message
+            // Light-weight preview: read first few KB to extract first user message and cwd
             let preview = self.extract_session_preview(&path);
+
+            let decoded_path = preview
+                .cwd
+                .unwrap_or_else(|| self.resolve_project_path(&base_dir));
 
             sessions.push(Session {
                 id: session_id,
@@ -283,6 +298,17 @@ impl ProjectScanner {
             };
 
             let msg_type = json.get("type").and_then(|t| t.as_str()).unwrap_or("");
+
+            // Extract cwd from any entry that has it (first wins)
+            if preview.cwd.is_none() {
+                if let Some(cwd) = json.get("cwd").and_then(|v| v.as_str()) {
+                    if !cwd.is_empty() {
+                        preview.cwd = Some(normalize_drive_letter(
+                            translate_wsl_mount_path(cwd),
+                        ));
+                    }
+                }
+            }
 
             if matches!(msg_type, "user" | "assistant" | "system") {
                 preview.message_count += 1;
@@ -438,6 +464,34 @@ impl ProjectScanner {
     }
 }
 
+/// Normalize Windows drive letter to uppercase for consistent path comparison.
+/// CLI uses uppercase (C:\...) while VS Code extension uses lowercase (c:\...).
+fn normalize_drive_letter(p: String) -> String {
+    let bytes = p.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' {
+        let mut chars: Vec<char> = p.chars().collect();
+        chars[0] = chars[0].to_ascii_uppercase();
+        chars.into_iter().collect()
+    } else {
+        p
+    }
+}
+
+/// Translate WSL mount paths (e.g., /mnt/c/...) to Windows drive paths (C:/...).
+fn translate_wsl_mount_path(p: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(rest) = p.strip_prefix("/mnt/") {
+            if let Some(drive) = rest.chars().next().filter(|c| c.is_ascii_alphabetic()) {
+                let rem = &rest[drive.len_utf8()..];
+                let sep = if rem.is_empty() || rem.starts_with('/') { "" } else { "/" };
+                return format!("{}:{}{}", drive.to_ascii_uppercase(), sep, rem);
+            }
+        }
+    }
+    p.to_string()
+}
+
 impl Default for ProjectScanner {
     fn default() -> Self {
         Self::new()
@@ -533,5 +587,74 @@ mod tests {
 
         let files = scanner.list_session_files(encoded_path);
         assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn test_scan_project_uses_cwd_for_name_and_path() {
+        let (temp_dir, scanner) = setup_test_env();
+
+        // Encoded name that would lossy-decode to "server" instead of "happy-server"
+        // /Users/test/happy-server → -Users-test-happy-server
+        // decode_path: -Users-test-happy-server → /Users/test/happy/server (WRONG, lossy)
+        let encoded_path = "-Users-test-happy-server";
+        let project_dir = temp_dir.path().join("projects").join(encoded_path);
+        fs::create_dir_all(&project_dir).unwrap();
+
+        // Session file with correct cwd in JSONL
+        let jsonl = r#"{"type":"user","cwd":"/Users/test/happy-server","message":{"role":"user","content":"hello"}}"#;
+        let session_path = project_dir.join("test-session.jsonl");
+        fs::write(&session_path, jsonl).unwrap();
+
+        let projects = scanner.scan();
+        assert_eq!(projects.len(), 1);
+
+        let project = &projects[0];
+        // Name should come from cwd, not from lossy decode
+        assert_eq!(project.name, "happy-server", "name should be 'happy-server' from cwd, not 'server' from lossy decode");
+        // Path should come from cwd
+        assert_eq!(project.path, "/Users/test/happy-server", "path should use cwd");
+    }
+
+    #[test]
+    fn test_scan_project_falls_back_to_decode_without_cwd() {
+        let (temp_dir, scanner) = setup_test_env();
+
+        let encoded_path = "-Users-test-myproject";
+        let project_dir = temp_dir.path().join("projects").join(encoded_path);
+        fs::create_dir_all(&project_dir).unwrap();
+
+        // Session file WITHOUT cwd field
+        let jsonl = r#"{"type":"user","message":{"role":"user","content":"hello"}}"#;
+        fs::write(project_dir.join("test-session.jsonl"), jsonl).unwrap();
+
+        let projects = scanner.scan();
+        assert_eq!(projects.len(), 1);
+
+        let project = &projects[0];
+        // Should fall back to lossy decode
+        assert_eq!(project.name, "myproject");
+    }
+
+    #[test]
+    fn test_list_sessions_uses_cwd_for_project_path() {
+        let (temp_dir, scanner) = setup_test_env();
+
+        let encoded_path = "-Users-test-happy-server";
+        let project_dir = temp_dir.path().join("projects").join(encoded_path);
+        fs::create_dir_all(&project_dir).unwrap();
+
+        let jsonl = r#"{"type":"user","cwd":"/Users/test/happy-server","message":{"role":"user","content":"hello"}}"#;
+        fs::write(project_dir.join("session-1.jsonl"), jsonl).unwrap();
+
+        let sessions = scanner.list_sessions(encoded_path);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].project_path, "/Users/test/happy-server");
+    }
+
+    #[test]
+    fn test_normalize_drive_letter() {
+        assert_eq!(normalize_drive_letter("c:/Users/test".to_string()), "C:/Users/test");
+        assert_eq!(normalize_drive_letter("C:/Users/test".to_string()), "C:/Users/test");
+        assert_eq!(normalize_drive_letter("/Users/test".to_string()), "/Users/test");
     }
 }

@@ -113,9 +113,9 @@ pub struct SemanticStep {
     pub content: SemanticStepContent,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tokens: Option<StepTokens>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "isParallel", skip_serializing_if = "Option::is_none")]
     pub is_parallel: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "groupId", skip_serializing_if = "Option::is_none")]
     pub group_id: Option<String>,
     pub context: String,
     #[serde(rename = "agentId", skip_serializing_if = "Option::is_none")]
@@ -139,25 +139,25 @@ pub struct SemanticStep {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct SemanticStepContent {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "outputText", skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "thinkingText", skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "toolName", skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "toolInput", skip_serializing_if = "Option::is_none")]
     pub tool_input: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "toolResultContent", skip_serializing_if = "Option::is_none")]
     pub tool_output: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_use_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_result_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "subagentId", skip_serializing_if = "Option::is_none")]
     pub subagent_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "subagentDescription", skip_serializing_if = "Option::is_none")]
     pub subagent_description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "toolUseResult", skip_serializing_if = "Option::is_none")]
     pub tool_use_result: Option<ToolUseResultData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
