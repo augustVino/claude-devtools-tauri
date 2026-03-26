@@ -37,13 +37,12 @@ function getHttpBaseUrl(): string {
 let httpClient: HttpAPIClient | null = null;
 let tauriClient: TauriAPIClient | null = null;
 
-function isTauriEnvironment(): boolean {
-  return !!(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
-}
+export const isTauriMode = (): boolean =>
+  !!(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
 
 function getImpl(): ElectronAPI {
   if (window.electronAPI) return window.electronAPI;
-  if (isTauriEnvironment()) {
+  if (isTauriMode()) {
     if (!tauriClient) {
       tauriClient = new TauriAPIClient();
     }
@@ -69,7 +68,7 @@ function getImpl(): ElectronAPI {
  * Use this to hide Electron-only UI (settings, traffic lights, etc.) in browser mode.
  */
 export const isElectronMode = (): boolean =>
-  !!window.electronAPI || isTauriEnvironment();
+  !!window.electronAPI || isTauriMode();
 
 export const api: ElectronAPI = new Proxy({} as ElectronAPI, {
   get(_target, prop, receiver) {
