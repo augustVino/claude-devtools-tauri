@@ -16,6 +16,9 @@
     "opener:default",
     "notification:default",
     "process:allow-restart",
-    "updater:default"
+    "updater:default",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled"
   ]
 }

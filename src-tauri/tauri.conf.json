@@ -16,6 +16,7 @@
         "title": "",
         "width": 1200,
         "height": 800,
+        "visible": false,
         "minWidth": 800,
         "minHeight": 600,
         "decorations": true,

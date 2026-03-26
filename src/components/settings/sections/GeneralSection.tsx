@@ -292,7 +292,10 @@ export const GeneralSection = ({
           >
             <SettingsToggle
               enabled={safeConfig.general.launchAtLogin}
-              onChange={(v) => onGeneralToggle("launchAtLogin", v)}
+              onChange={(v) => {
+                onGeneralToggle("launchAtLogin", v);
+                void (v ? api.autoStart.enable() : api.autoStart.disable());
+              }}
               disabled={saving}
             />
           </SettingRow>

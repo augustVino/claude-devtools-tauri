@@ -31,10 +31,21 @@ pub fn run() {
     .plugin(tauri_plugin_notification::init())
     .plugin(tauri_plugin_process::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
+    .plugin(tauri_plugin_autostart::Builder::new()
+      .args(["--minimized"])
+      .build())
     .manage(commands::PendingUpdate(std::sync::Mutex::new(None)))
     .manage(app_state.clone())
     .setup(move |app| {
       let state = app_state.clone();
+
+      // If not launched via autostart (--minimized), show the window
+      let args: Vec<String> = std::env::args().collect();
+      if !args.contains(&"--minimized".to_string()) {
+        if let Some(window) = app.get_webview_window("main") {
+          window.show().map_err(|e| e.to_string())?;
+        }
+      }
 
       // Initialize state asynchronously
       tauri::async_runtime::spawn(async move {
