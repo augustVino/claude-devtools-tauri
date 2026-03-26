@@ -96,14 +96,15 @@ impl TrayIconManager {
         .map_err(|e| format!("Failed to create tray menu: {e}"))?;
 
         // Build the tray icon
-        // Load the tray icon from embedded bytes (32x32 monochrome for macOS template)
+        // Load the tray icon from embedded bytes (32x32 for menu bar)
+        // Note: iconAsTemplate: false because 32x32.png is a full-color icon, not a template
         let tray_icon = Image::from_bytes(include_bytes!("../../icons/32x32.png"))
             .map_err(|e| format!("Failed to load tray icon: {e}"))?;
 
         let tray = TrayIconBuilder::new()
             .icon(tray_icon)
             .tooltip("claude-devtools")
-            .icon_as_template(true)
+            .icon_as_template(false)
             .menu(&menu)
             .on_menu_event(|app, event| {
                 match event.id().as_ref() {
