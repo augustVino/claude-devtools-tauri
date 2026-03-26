@@ -28,6 +28,7 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_notification::init())
     .plugin(tauri_plugin_process::init())
+    .plugin(tauri_plugin_updater::Builder::new().build())
     .manage(app_state.clone())
     .setup(move |app| {
       let state = app_state.clone();
@@ -156,6 +157,46 @@ pub fn run() {
           }
           Err(e) => {
             log::error!("Error detection pipeline: failed to start watcher: {}", e);
+          }
+        }
+      });
+
+      // Todo file watcher — watches ~/.claude/todos/ for checklist changes
+      let todo_app_handle = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+        let mut todo_watcher = FileWatcher::new();
+
+        let todos_path = if let Some(home) = dirs::home_dir() {
+          home.join(".claude").join("todos")
+        } else {
+          return;
+        };
+
+        if !todos_path.exists() {
+          if let Err(e) = tokio::fs::create_dir_all(&todos_path).await {
+            log::error!("Failed to create todos directory: {}", e);
+            return;
+          }
+        }
+
+        match todo_watcher.watch(&todos_path).await {
+          Ok(()) => {
+            log::info!("Todo FileWatcher started successfully");
+            let mut receiver = todo_watcher.receiver();
+
+            while let Ok(event) = receiver.recv().await {
+              let session_id = Path::new(&event.path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+              events::emit_todo_change(
+                &todo_app_handle,
+                events::TodoChangeEvent { session_id },
+              );
+            }
+          }
+          Err(e) => {
+            log::error!("Failed to start todo FileWatcher: {}", e);
           }
         }
       });
