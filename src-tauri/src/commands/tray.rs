@@ -7,7 +7,7 @@
 //! - Coordinate with set_dock_visible command
 
 use tauri::{
-    AppHandle, Emitter, Manager,
+    AppHandle, Emitter, Manager, image::Image,
     menu::{Menu, MenuItem, PredefinedMenuItem, SubmenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -96,13 +96,12 @@ impl TrayIconManager {
         .map_err(|e| format!("Failed to create tray menu: {e}"))?;
 
         // Build the tray icon
+        // Load the tray icon from embedded bytes (32x32 monochrome for macOS template)
+        let tray_icon = Image::from_bytes(include_bytes!("../../icons/32x32.png"))
+            .map_err(|e| format!("Failed to load tray icon: {e}"))?;
+
         let tray = TrayIconBuilder::new()
-            .icon(
-                self.app_handle
-                    .default_window_icon()
-                    .ok_or_else(|| "No default window icon configured".to_string())?
-                    .clone(),
-            )
+            .icon(tray_icon)
             .tooltip("claude-devtools")
             .icon_as_template(true)
             .menu(&menu)
