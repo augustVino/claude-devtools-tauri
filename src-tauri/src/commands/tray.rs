@@ -19,10 +19,10 @@ pub struct TrayIconManager {
     icon: Option<tauri::tray::TrayIcon>,
     app_handle: AppHandle,
     dock_visible: bool,
-    /// Saved pointer to the dock icon NSImage (retained) before switching
-    /// to Accessory mode. Used to restore the icon when switching back.
+    /// Saved raw pointer to the dock icon NSImage (retained) before switching
+    /// to Accessory mode. Stored as usize to avoid Send/Sync issues.
     #[cfg(target_os = "macos")]
-    saved_dock_icon: std::sync::Mutex<Option<objc::runtime::Object>>,
+    saved_dock_icon: std::sync::Mutex<Option<usize>>,
 }
 
 impl TrayIconManager {
@@ -48,17 +48,15 @@ impl TrayIconManager {
     pub fn save_dock_icon(&self) {
         use cocoa::appkit::NSApplication;
         use cocoa::base::nil;
-        use objc::runtime::Object;
         use objc::*;
 
         unsafe {
             let app = NSApplication::sharedApplication(nil);
-            let current_icon: *mut Object = msg_send![app, applicationIconImage];
-            if !current_icon.is_null() {
-                let _: () = msg_send![current_icon, retain];
-                // SAFETY: objc::runtime::Object is Send, and we've retained the object
-                let owned: Object = std::ptr::read(current_icon);
-                *self.saved_dock_icon.lock().unwrap() = Some(owned);
+            let current_icon: usize = msg_send![app, applicationIconImage];
+            if current_icon != 0 {
+                // retain the NSImage so it's not deallocated
+                let _: () = msg_send![current_icon as *mut objc::runtime::Object, retain];
+                *self.saved_dock_icon.lock().unwrap() = Some(current_icon);
                 log::info!("Saved dock icon reference");
             }
         }
@@ -69,15 +67,15 @@ impl TrayIconManager {
     pub fn restore_dock_icon(&self) {
         use cocoa::appkit::NSApplication;
         use cocoa::base::nil;
-        use objc::runtime::Object;
         use objc::*;
 
         let mut guard = self.saved_dock_icon.lock().unwrap();
-        if let Some(icon) = guard.take() {
+        if let Some(icon_ptr) = guard.take() {
             unsafe {
                 let app = NSApplication::sharedApplication(nil);
-                let _: () = msg_send![app, setApplicationIconImage: &icon as *const Object as *mut Object];
-                let _: () = msg_send![&icon as *const Object as *mut Object, release];
+                let icon = icon_ptr as *mut objc::runtime::Object;
+                let _: () = msg_send![app, setApplicationIconImage: icon];
+                let _: () = msg_send![icon, release];
                 log::info!("Dock icon restored from saved reference");
             }
         } else {
