@@ -2,33 +2,48 @@
  * GeneralSection - General settings including startup, appearance, browser access, and local Claude root.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { api, isElectronMode } from '@renderer/api';
-import { confirm } from '@renderer/components/common/ConfirmDialog';
-import { useStore } from '@renderer/store';
-import { getFullResetState } from '@renderer/store/utils/stateResetHelpers';
-import { Check, Copy, FolderOpen, Laptop, Loader2, RotateCcw } from 'lucide-react';
+import { api, isDesktopMode } from "@renderer/api";
+import { confirm } from "@renderer/components/common/ConfirmDialog";
+import { useStore } from "@renderer/store";
+import { getFullResetState } from "@renderer/store/utils/stateResetHelpers";
+import {
+  Check,
+  Copy,
+  FolderOpen,
+  Laptop,
+  Loader2,
+  RotateCcw,
+} from "lucide-react";
 
-import { SettingRow, SettingsSectionHeader, SettingsSelect, SettingsToggle } from '../components';
+import {
+  SettingRow,
+  SettingsSectionHeader,
+  SettingsSelect,
+  SettingsToggle,
+} from "../components";
 
-import type { SafeConfig } from '../hooks/useSettingsConfig';
-import type { ClaudeRootInfo, WslClaudeRootCandidate } from '@shared/types';
-import type { HttpServerStatus } from '@shared/types/api';
-import type { AppConfig } from '@shared/types/notifications';
+import type { SafeConfig } from "../hooks/useSettingsConfig";
+import type { ClaudeRootInfo, WslClaudeRootCandidate } from "@shared/types";
+import type { HttpServerStatus } from "@shared/types/api";
+import type { AppConfig } from "@shared/types/notifications";
 
 // Theme options
 const THEME_OPTIONS = [
-  { value: 'dark', label: 'Dark' },
-  { value: 'light', label: 'Light' },
-  { value: 'system', label: 'System' },
+  { value: "dark", label: "Dark" },
+  { value: "light", label: "Light" },
+  { value: "system", label: "System" },
 ] as const;
 
 interface GeneralSectionProps {
   readonly safeConfig: SafeConfig;
   readonly saving: boolean;
-  readonly onGeneralToggle: (key: keyof AppConfig['general'], value: boolean) => void;
-  readonly onThemeChange: (value: 'dark' | 'light' | 'system') => void;
+  readonly onGeneralToggle: (
+    key: keyof AppConfig["general"],
+    value: boolean,
+  ) => void;
+  readonly onThemeChange: (value: "dark" | "light" | "system") => void;
 }
 
 export const GeneralSection = ({
@@ -49,11 +64,15 @@ export const GeneralSection = ({
   const fetchProjects = useStore((s) => s.fetchProjects);
   const fetchRepositoryGroups = useStore((s) => s.fetchRepositoryGroups);
 
-  const [claudeRootInfo, setClaudeRootInfo] = useState<ClaudeRootInfo | null>(null);
+  const [claudeRootInfo, setClaudeRootInfo] = useState<ClaudeRootInfo | null>(
+    null,
+  );
   const [updatingClaudeRoot, setUpdatingClaudeRoot] = useState(false);
   const [claudeRootError, setClaudeRootError] = useState<string | null>(null);
   const [findingWslRoots, setFindingWslRoots] = useState(false);
-  const [wslCandidates, setWslCandidates] = useState<WslClaudeRootCandidate[]>([]);
+  const [wslCandidates, setWslCandidates] = useState<WslClaudeRootCandidate[]>(
+    [],
+  );
   const [showWslModal, setShowWslModal] = useState(false);
 
   // Fetch server status and Claude root info on mount
@@ -67,7 +86,9 @@ export const GeneralSection = ({
       setClaudeRootInfo(info);
     } catch (error) {
       setClaudeRootError(
-        error instanceof Error ? error.message : 'Failed to load local Claude root settings'
+        error instanceof Error
+          ? error.message
+          : "Failed to load local Claude root settings",
       );
     }
   }, []);
@@ -79,7 +100,9 @@ export const GeneralSection = ({
   const handleServerToggle = useCallback(async (enabled: boolean) => {
     setServerLoading(true);
     try {
-      const status = enabled ? await api.httpServer.start() : await api.httpServer.stop();
+      const status = enabled
+        ? await api.httpServer.start()
+        : await api.httpServer.stop();
       setServerStatus(status);
     } catch {
       // Status didn't change
@@ -107,14 +130,14 @@ export const GeneralSection = ({
       paneLayout: {
         panes: [
           {
-            id: 'pane-default',
+            id: "pane-default",
             tabs: [],
             activeTabId: null,
             selectedTabIds: [],
             widthFraction: 1,
           },
         ],
-        focusedPaneId: 'pane-default',
+        focusedPaneId: "pane-default",
       },
       ...getFullResetState(),
     });
@@ -126,15 +149,19 @@ export const GeneralSection = ({
         setUpdatingClaudeRoot(true);
         setClaudeRootError(null);
 
-        await api.config.update('general', { claudeRootPath });
+        await api.config.update("general", { claudeRootPath });
         await loadClaudeRootInfo();
 
-        if (connectionMode === 'local') {
+        if (connectionMode === "local") {
           resetWorkspaceForRootChange();
           await Promise.all([fetchProjects(), fetchRepositoryGroups()]);
         }
       } catch (error) {
-        setClaudeRootError(error instanceof Error ? error.message : 'Failed to update Claude root');
+        setClaudeRootError(
+          error instanceof Error
+            ? error.message
+            : "Failed to update Claude root",
+        );
       } finally {
         setUpdatingClaudeRoot(false);
       }
@@ -145,7 +172,7 @@ export const GeneralSection = ({
       fetchRepositoryGroups,
       loadClaudeRootInfo,
       resetWorkspaceForRootChange,
-    ]
+    ],
   );
 
   const handleSelectClaudeRootFolder = useCallback(async (): Promise<void> => {
@@ -158,9 +185,9 @@ export const GeneralSection = ({
 
     if (!selection.isClaudeDirName) {
       const proceed = await confirm({
-        title: 'Selected folder is not .claude',
+        title: "Selected folder is not .claude",
         message: `This folder is named "${selection.path.split(/[\\/]/).pop() ?? selection.path}", not ".claude". Continue anyway?`,
-        confirmLabel: 'Use Folder',
+        confirmLabel: "Use Folder",
       });
       if (!proceed) {
         return;
@@ -169,9 +196,10 @@ export const GeneralSection = ({
 
     if (!selection.hasProjectsDir) {
       const proceed = await confirm({
-        title: 'No projects directory found',
-        message: 'This folder does not contain a "projects" directory. Continue anyway?',
-        confirmLabel: 'Use Folder',
+        title: "No projects directory found",
+        message:
+          'This folder does not contain a "projects" directory. Continue anyway?',
+        confirmLabel: "Use Folder",
       });
       if (!proceed) {
         return;
@@ -189,9 +217,9 @@ export const GeneralSection = ({
     async (candidate: WslClaudeRootCandidate): Promise<void> => {
       if (!candidate.hasProjectsDir) {
         const proceed = await confirm({
-          title: 'WSL path missing projects directory',
+          title: "WSL path missing projects directory",
           message: `"${candidate.path}" does not contain a "projects" directory. Continue anyway?`,
-          confirmLabel: 'Use Path',
+          confirmLabel: "Use Path",
         });
         if (!proceed) {
           return;
@@ -201,7 +229,7 @@ export const GeneralSection = ({
       await applyClaudeRootPath(candidate.path);
       setShowWslModal(false);
     },
-    [applyClaudeRootPath]
+    [applyClaudeRootPath],
   );
 
   const handleUseWslForClaude = useCallback(async (): Promise<void> => {
@@ -213,10 +241,10 @@ export const GeneralSection = ({
 
       if (candidates.length === 0) {
         const pickManually = await confirm({
-          title: 'No WSL Claude paths found',
+          title: "No WSL Claude paths found",
           message:
-            'Could not find WSL distros with Claude data automatically. Select folder manually?',
-          confirmLabel: 'Select Folder',
+            "Could not find WSL distros with Claude data automatically. Select folder manually?",
+          confirmLabel: "Select Folder",
         });
         if (pickManually) {
           await handleSelectClaudeRootFolder();
@@ -224,7 +252,9 @@ export const GeneralSection = ({
         return;
       }
 
-      const candidatesWithProjects = candidates.filter((candidate) => candidate.hasProjectsDir);
+      const candidatesWithProjects = candidates.filter(
+        (candidate) => candidate.hasProjectsDir,
+      );
       if (candidatesWithProjects.length === 1) {
         await applyWslCandidate(candidatesWithProjects[0]);
         return;
@@ -233,7 +263,9 @@ export const GeneralSection = ({
       setShowWslModal(true);
     } catch (error) {
       setClaudeRootError(
-        error instanceof Error ? error.message : 'Failed to detect WSL Claude root paths'
+        error instanceof Error
+          ? error.message
+          : "Failed to detect WSL Claude root paths",
       );
     } finally {
       setFindingWslRoots(false);
@@ -241,16 +273,17 @@ export const GeneralSection = ({
   }, [applyWslCandidate, handleSelectClaudeRootFolder]);
 
   const isCustomClaudeRoot = Boolean(claudeRootInfo?.customPath);
-  const resolvedClaudeRootPath = claudeRootInfo?.resolvedPath ?? '~/.claude';
-  const defaultClaudeRootPath = claudeRootInfo?.defaultPath ?? '~/.claude';
+  const resolvedClaudeRootPath = claudeRootInfo?.resolvedPath ?? "~/.claude";
+  const defaultClaudeRootPath = claudeRootInfo?.defaultPath ?? "~/.claude";
   const isWindowsStyleDefaultPath =
-    /^[a-zA-Z]:\\/.test(defaultClaudeRootPath) || defaultClaudeRootPath.startsWith('\\\\');
+    /^[a-zA-Z]:\\/.test(defaultClaudeRootPath) ||
+    defaultClaudeRootPath.startsWith("\\\\");
 
-  const isElectron = useMemo(() => isElectronMode(), []);
+  const isDesktop = useMemo(() => isDesktopMode(), []);
 
   return (
     <div>
-      {isElectron && (
+      {isDesktop && (
         <>
           <SettingsSectionHeader title="Startup" />
           <SettingRow
@@ -259,18 +292,18 @@ export const GeneralSection = ({
           >
             <SettingsToggle
               enabled={safeConfig.general.launchAtLogin}
-              onChange={(v) => onGeneralToggle('launchAtLogin', v)}
+              onChange={(v) => onGeneralToggle("launchAtLogin", v)}
               disabled={saving}
             />
           </SettingRow>
-          {window.navigator.userAgent.includes('Macintosh') && (
+          {window.navigator.userAgent.includes("Macintosh") && (
             <SettingRow
               label="Show dock icon"
               description="Display the app icon in the dock (macOS)"
             >
               <SettingsToggle
                 enabled={safeConfig.general.showDockIcon}
-                onChange={(v) => onGeneralToggle('showDockIcon', v)}
+                onChange={(v) => onGeneralToggle("showDockIcon", v)}
                 disabled={saving}
               />
             </SettingRow>
@@ -293,11 +326,11 @@ export const GeneralSection = ({
       >
         <SettingsToggle
           enabled={safeConfig.general.autoExpandAIGroups ?? false}
-          onChange={(v) => onGeneralToggle('autoExpandAIGroups', v)}
+          onChange={(v) => onGeneralToggle("autoExpandAIGroups", v)}
           disabled={saving}
         />
       </SettingRow>
-      {isElectron && !window.navigator.userAgent.includes('Macintosh') && (
+      {isDesktop && !window.navigator.userAgent.includes("Macintosh") && (
         <SettingRow
           label="Use native title bar"
           description="Use the default system window frame instead of the custom title bar"
@@ -306,15 +339,16 @@ export const GeneralSection = ({
             enabled={safeConfig.general.useNativeTitleBar}
             onChange={async (v) => {
               const shouldRelaunch = await confirm({
-                title: 'Restart required',
-                message: 'The app needs to restart to apply the title bar change. Restart now?',
-                confirmLabel: 'Restart',
+                title: "Restart required",
+                message:
+                  "The app needs to restart to apply the title bar change. Restart now?",
+                confirmLabel: "Restart",
               });
               if (shouldRelaunch) {
-                onGeneralToggle('useNativeTitleBar', v);
+                onGeneralToggle("useNativeTitleBar", v);
                 // Small delay to let config persist before relaunch
                 setTimeout(() => {
-                  void window.electronAPI?.windowControls?.relaunch();
+                  void api.windowControls.relaunch();
                 }, 200);
               }
             }}
@@ -323,22 +357,35 @@ export const GeneralSection = ({
         </SettingRow>
       )}
 
-      {isElectron && (
+      {isDesktop && (
         <>
           <SettingsSectionHeader title="Local Claude Root" />
-          <p className="mb-4 text-sm" style={{ color: 'var(--color-text-muted)' }}>
+          <p
+            className="mb-4 text-sm"
+            style={{ color: "var(--color-text-muted)" }}
+          >
             Choose which local folder is treated as your Claude data root
           </p>
 
           <SettingRow
             label="Current Local Root"
-            description={isCustomClaudeRoot ? 'Using custom path' : 'Using auto-detected path'}
+            description={
+              isCustomClaudeRoot
+                ? "Using custom path"
+                : "Using auto-detected path"
+            }
           >
             <div className="max-w-96 text-right">
-              <div className="truncate font-mono text-xs" style={{ color: 'var(--color-text)' }}>
+              <div
+                className="truncate font-mono text-xs"
+                style={{ color: "var(--color-text)" }}
+              >
                 {resolvedClaudeRootPath}
               </div>
-              <div className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
+              <div
+                className="text-[11px]"
+                style={{ color: "var(--color-text-muted)" }}
+              >
                 Auto-detected: {defaultClaudeRootPath}
               </div>
             </div>
@@ -350,8 +397,8 @@ export const GeneralSection = ({
               disabled={updatingClaudeRoot}
               className="rounded-md px-4 py-1.5 text-sm transition-colors disabled:opacity-50"
               style={{
-                backgroundColor: 'var(--color-surface-raised)',
-                color: 'var(--color-text)',
+                backgroundColor: "var(--color-surface-raised)",
+                color: "var(--color-text)",
               }}
             >
               <span className="flex items-center gap-2">
@@ -369,8 +416,8 @@ export const GeneralSection = ({
               disabled={updatingClaudeRoot || !isCustomClaudeRoot}
               className="rounded-md px-4 py-1.5 text-sm transition-colors disabled:opacity-50"
               style={{
-                backgroundColor: 'var(--color-surface-raised)',
-                color: 'var(--color-text-secondary)',
+                backgroundColor: "var(--color-surface-raised)",
+                color: "var(--color-text-secondary)",
               }}
             >
               <span className="flex items-center gap-2">
@@ -385,8 +432,8 @@ export const GeneralSection = ({
                 disabled={updatingClaudeRoot || findingWslRoots}
                 className="rounded-md px-4 py-1.5 text-sm transition-colors disabled:opacity-50"
                 style={{
-                  backgroundColor: 'var(--color-surface-raised)',
-                  color: 'var(--color-text-secondary)',
+                  backgroundColor: "var(--color-surface-raised)",
+                  color: "var(--color-text-secondary)",
                 }}
               >
                 <span className="flex items-center gap-2">
@@ -411,7 +458,7 @@ export const GeneralSection = ({
             <div className="fixed inset-0 z-50 flex items-center justify-center">
               <button
                 className="absolute inset-0 cursor-default"
-                style={{ backgroundColor: 'rgba(0, 0, 0, 0.6)' }}
+                style={{ backgroundColor: "rgba(0, 0, 0, 0.6)" }}
                 onClick={() => setShowWslModal(false)}
                 aria-label="Close WSL path modal"
                 tabIndex={-1}
@@ -419,14 +466,20 @@ export const GeneralSection = ({
               <div
                 className="relative mx-4 w-full max-w-2xl rounded-lg border p-5 shadow-xl"
                 style={{
-                  backgroundColor: 'var(--color-surface-overlay)',
-                  borderColor: 'var(--color-border-emphasis)',
+                  backgroundColor: "var(--color-surface-overlay)",
+                  borderColor: "var(--color-border-emphasis)",
                 }}
               >
-                <h3 className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
+                <h3
+                  className="text-sm font-semibold"
+                  style={{ color: "var(--color-text)" }}
+                >
                   Select WSL Claude Root
                 </h3>
-                <p className="mt-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                <p
+                  className="mt-1 text-xs"
+                  style={{ color: "var(--color-text-muted)" }}
+                >
                   Detected WSL distributions and Claude root candidates
                 </p>
 
@@ -435,15 +488,18 @@ export const GeneralSection = ({
                     <div
                       key={`${candidate.distro}:${candidate.path}`}
                       className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
-                      style={{ borderColor: 'var(--color-border)' }}
+                      style={{ borderColor: "var(--color-border)" }}
                     >
                       <div className="min-w-0">
-                        <p className="text-xs font-medium" style={{ color: 'var(--color-text)' }}>
+                        <p
+                          className="text-xs font-medium"
+                          style={{ color: "var(--color-text)" }}
+                        >
                           {candidate.distro}
                         </p>
                         <p
                           className="truncate font-mono text-[11px]"
-                          style={{ color: 'var(--color-text-muted)' }}
+                          style={{ color: "var(--color-text-muted)" }}
                         >
                           {candidate.path}
                         </p>
@@ -457,8 +513,8 @@ export const GeneralSection = ({
                         onClick={() => void applyWslCandidate(candidate)}
                         className="rounded-md px-3 py-1.5 text-xs transition-colors"
                         style={{
-                          backgroundColor: 'var(--color-surface-raised)',
-                          color: 'var(--color-text)',
+                          backgroundColor: "var(--color-surface-raised)",
+                          color: "var(--color-text)",
                         }}
                       >
                         Use This Path
@@ -472,8 +528,8 @@ export const GeneralSection = ({
                     onClick={() => setShowWslModal(false)}
                     className="rounded-md border px-3 py-1.5 text-xs transition-colors hover:bg-white/5"
                     style={{
-                      borderColor: 'var(--color-border)',
-                      color: 'var(--color-text-secondary)',
+                      borderColor: "var(--color-border)",
+                      color: "var(--color-text-secondary)",
                     }}
                   >
                     Cancel
@@ -485,8 +541,8 @@ export const GeneralSection = ({
                     }}
                     className="rounded-md px-3 py-1.5 text-xs transition-colors"
                     style={{
-                      backgroundColor: 'var(--color-surface-raised)',
-                      color: 'var(--color-text)',
+                      backgroundColor: "var(--color-surface-raised)",
+                      color: "var(--color-text)",
                     }}
                   >
                     Select Folder Manually
@@ -498,7 +554,7 @@ export const GeneralSection = ({
         </>
       )}
 
-      {isElectron ? (
+      {isDesktop ? (
         <>
           <SettingsSectionHeader title="Browser Access" />
           <SettingRow
@@ -508,7 +564,7 @@ export const GeneralSection = ({
             {serverLoading ? (
               <Loader2
                 className="size-5 animate-spin"
-                style={{ color: 'var(--color-text-muted)' }}
+                style={{ color: "var(--color-text-muted)" }}
               />
             ) : (
               <SettingsToggle
@@ -522,24 +578,24 @@ export const GeneralSection = ({
           {serverStatus.running && (
             <div
               className="mb-2 flex items-center gap-3 rounded-md px-3 py-2.5"
-              style={{ backgroundColor: 'var(--color-surface-raised)' }}
+              style={{ backgroundColor: "var(--color-surface-raised)" }}
             >
               <div
                 className="size-2 shrink-0 rounded-full"
-                style={{ backgroundColor: '#22c55e' }}
+                style={{ backgroundColor: "#22c55e" }}
               />
               <span
                 className="text-xs font-medium"
-                style={{ color: 'var(--color-text-secondary)' }}
+                style={{ color: "var(--color-text-secondary)" }}
               >
                 Running on
               </span>
               <code
                 className="rounded px-1.5 py-0.5 font-mono text-xs"
                 style={{
-                  backgroundColor: 'var(--color-surface)',
-                  color: 'var(--color-text)',
-                  border: '1px solid var(--color-border)',
+                  backgroundColor: "var(--color-surface)",
+                  color: "var(--color-text)",
+                  border: "1px solid var(--color-border)",
                 }}
               >
                 {serverUrl}
@@ -548,12 +604,16 @@ export const GeneralSection = ({
                 onClick={handleCopyUrl}
                 className="ml-auto flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-white/5"
                 style={{
-                  borderColor: 'var(--color-border)',
-                  color: copied ? '#22c55e' : 'var(--color-text-secondary)',
+                  borderColor: "var(--color-border)",
+                  color: copied ? "#22c55e" : "var(--color-text-secondary)",
                 }}
               >
-                {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
-                {copied ? 'Copied' : 'Copy URL'}
+                {copied ? (
+                  <Check className="size-3" />
+                ) : (
+                  <Copy className="size-3" />
+                )}
+                {copied ? "Copied" : "Copy URL"}
               </button>
             </div>
           )}
@@ -563,18 +623,24 @@ export const GeneralSection = ({
           <SettingsSectionHeader title="Server" />
           <div
             className="mb-2 flex items-center gap-3 rounded-md px-3 py-2.5"
-            style={{ backgroundColor: 'var(--color-surface-raised)' }}
+            style={{ backgroundColor: "var(--color-surface-raised)" }}
           >
-            <div className="size-2 shrink-0 rounded-full" style={{ backgroundColor: '#22c55e' }} />
-            <span className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+            <div
+              className="size-2 shrink-0 rounded-full"
+              style={{ backgroundColor: "#22c55e" }}
+            />
+            <span
+              className="text-xs font-medium"
+              style={{ color: "var(--color-text-secondary)" }}
+            >
               Running on
             </span>
             <code
               className="rounded px-1.5 py-0.5 font-mono text-xs"
               style={{
-                backgroundColor: 'var(--color-surface)',
-                color: 'var(--color-text)',
-                border: '1px solid var(--color-border)',
+                backgroundColor: "var(--color-surface)",
+                color: "var(--color-text)",
+                border: "1px solid var(--color-border)",
               }}
             >
               {window.location.origin}
@@ -587,17 +653,22 @@ export const GeneralSection = ({
               }}
               className="ml-auto flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-white/5"
               style={{
-                borderColor: 'var(--color-border)',
-                color: copied ? '#22c55e' : 'var(--color-text-secondary)',
+                borderColor: "var(--color-border)",
+                color: copied ? "#22c55e" : "var(--color-text-secondary)",
               }}
             >
-              {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
-              {copied ? 'Copied' : 'Copy URL'}
+              {copied ? (
+                <Check className="size-3" />
+              ) : (
+                <Copy className="size-3" />
+              )}
+              {copied ? "Copied" : "Copy URL"}
             </button>
           </div>
-          <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-            Running in standalone mode. The HTTP server is always active. System notifications are
-            not available — notification triggers are logged in-app only.
+          <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+            Running in standalone mode. The HTTP server is always active. System
+            notifications are not available — notification triggers are logged
+            in-app only.
           </p>
         </>
       )}

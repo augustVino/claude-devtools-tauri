@@ -7,21 +7,24 @@
  * When sidebar is collapsed, shows expand button on the left with macOS traffic light spacing.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { useDroppable } from '@dnd-kit/core';
-import { horizontalListSortingStrategy, SortableContext } from '@dnd-kit/sortable';
-import { isElectronMode, isTauriMode } from '@renderer/api';
-import { HEADER_ROW1_HEIGHT } from '@renderer/constants/layout';
-import { useWindowDrag } from '@renderer/hooks/useWindowDrag';
-import { useStore } from '@renderer/store';
-import { formatShortcut } from '@renderer/utils/stringUtils';
-import { Bell, PanelLeft, Plus, RefreshCw } from 'lucide-react';
-import { useShallow } from 'zustand/react/shallow';
+import { useDroppable } from "@dnd-kit/core";
+import {
+  horizontalListSortingStrategy,
+  SortableContext,
+} from "@dnd-kit/sortable";
+import { isDesktopMode, isTauriMode } from "@renderer/api";
+import { HEADER_ROW1_HEIGHT } from "@renderer/constants/layout";
+import { useWindowDrag } from "@renderer/hooks/useWindowDrag";
+import { useStore } from "@renderer/store";
+import { formatShortcut } from "@renderer/utils/stringUtils";
+import { Bell, PanelLeft, Plus, RefreshCw } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 
-import { MoreMenu } from './MoreMenu';
-import { SortableTab } from './SortableTab';
-import { TabContextMenu } from './TabContextMenu';
+import { MoreMenu } from "./MoreMenu";
+import { SortableTab } from "./SortableTab";
+import { TabContextMenu } from "./TabContextMenu";
 
 interface TabBarProps {
   paneId: string;
@@ -77,7 +80,7 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
       toggleHideSession: s.toggleHideSession,
       hiddenSessionIds: s.hiddenSessionIds,
       tabSessionData: s.tabSessionData,
-    }))
+    })),
   );
 
   const tabBarDragRef = useWindowDrag<HTMLDivElement>();
@@ -85,7 +88,10 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
 
   const openTabs = useMemo(() => pane?.tabs ?? [], [pane?.tabs]);
   const activeTabId = pane?.activeTabId ?? null;
-  const selectedTabIds = useMemo(() => pane?.selectedTabIds ?? [], [pane?.selectedTabIds]);
+  const selectedTabIds = useMemo(
+    () => pane?.selectedTabIds ?? [],
+    [pane?.selectedTabIds],
+  );
 
   // Derive Set for O(1) lookups
   const selectedSet = useMemo(() => new Set(selectedTabIds), [selectedTabIds]);
@@ -105,9 +111,11 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
   const [notificationsHover, setNotificationsHover] = useState(false);
 
   // Context menu state
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(
-    null
-  );
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    tabId: string;
+  } | null>(null);
 
   // Track last clicked tab for Shift range selection
   const lastClickedTabIdRef = useRef<string | null>(null);
@@ -120,13 +128,15 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Make the tab bar area droppable for cross-pane drops
-  const { setNodeRef: setDroppableRef, isOver: isDroppableOver } = useDroppable({
-    id: `tabbar-${paneId}`,
-    data: {
-      type: 'tabbar',
-      paneId,
+  const { setNodeRef: setDroppableRef, isOver: isDroppableOver } = useDroppable(
+    {
+      id: `tabbar-${paneId}`,
+      data: {
+        type: "tabbar",
+        paneId,
+      },
     },
-  });
+  );
 
   // Auto-scroll to active tab when it changes
   useEffect(() => {
@@ -135,9 +145,9 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
     const tabElement = tabRefsMap.current.get(activeTabId);
     if (tabElement && scrollContainerRef.current) {
       tabElement.scrollIntoView({
-        behavior: 'smooth',
-        block: 'nearest',
-        inline: 'nearest',
+        behavior: "smooth",
+        block: "nearest",
+        inline: "nearest",
       });
     }
   }, [activeTabId]);
@@ -145,12 +155,12 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
   // Clear selection on Escape
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && selectedTabIds.length > 0) {
+      if (e.key === "Escape" && selectedTabIds.length > 0) {
         clearTabSelection();
       }
     };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [selectedTabIds.length, clearTabSelection]);
 
   // Handle tab click with multi-select support
@@ -172,7 +182,9 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
 
       if (isShift && lastClickedTabIdRef.current) {
         // Shift+click: range selection from last clicked to current
-        const lastIndex = openTabs.findIndex((t) => t.id === lastClickedTabIdRef.current);
+        const lastIndex = openTabs.findIndex(
+          (t) => t.id === lastClickedTabIdRef.current,
+        );
         const currentIndex = openTabs.findIndex((t) => t.id === tabId);
         if (lastIndex !== -1 && currentIndex !== -1) {
           const start = Math.min(lastIndex, currentIndex);
@@ -190,7 +202,14 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
       lastClickedTabIdRef.current = tabId;
       setActiveTab(tabId);
     },
-    [openTabs, selectedTabIds, selectedSet, setActiveTab, setSelectedTabIds, clearTabSelection]
+    [
+      openTabs,
+      selectedTabIds,
+      selectedSet,
+      setActiveTab,
+      setSelectedTabIds,
+      clearTabSelection,
+    ],
   );
 
   // Middle-click to close + prevent text selection on Shift/Cmd click
@@ -206,23 +225,30 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
         e.preventDefault();
       }
     },
-    [closeTab]
+    [closeTab],
   );
 
   // Right-click context menu
-  const handleContextMenu = useCallback((tabId: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY, tabId });
-  }, []);
+  const handleContextMenu = useCallback(
+    (tabId: string, e: React.MouseEvent) => {
+      e.preventDefault();
+      setContextMenu({ x: e.clientX, y: e.clientY, tabId });
+    },
+    [],
+  );
 
   // Handle refresh for active session tab
   const handleRefresh = async (): Promise<void> => {
-    if (activeTab?.type === 'session' && activeTab.projectId && activeTab.sessionId) {
+    if (
+      activeTab?.type === "session" &&
+      activeTab.projectId &&
+      activeTab.sessionId
+    ) {
       await Promise.all([
         refreshSessionInPlace(activeTab.projectId, activeTab.sessionId),
         fetchSessions(activeTab.projectId),
       ]);
-      window.dispatchEvent(new CustomEvent('session-refresh-scroll-bottom'));
+      window.dispatchEvent(new CustomEvent("session-refresh-scroll-bottom"));
     }
   };
 
@@ -238,11 +264,15 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
   // Context menu helpers
   const contextMenuTabId = contextMenu?.tabId ?? null;
   const effectiveSelectedCount =
-    contextMenuTabId && selectedSet.has(contextMenuTabId) ? selectedTabIds.length : 0;
+    contextMenuTabId && selectedSet.has(contextMenuTabId)
+      ? selectedTabIds.length
+      : 0;
 
   // Pin state for context menu tab
-  const contextMenuTab = contextMenuTabId ? openTabs.find((t) => t.id === contextMenuTabId) : null;
-  const isContextMenuTabSession = contextMenuTab?.type === 'session';
+  const contextMenuTab = contextMenuTabId
+    ? openTabs.find((t) => t.id === contextMenuTabId)
+    : null;
+  const isContextMenuTabSession = contextMenuTab?.type === "session";
   const isContextMenuTabPinned =
     isContextMenuTabSession && contextMenuTab?.sessionId
       ? pinnedSessionIds.includes(contextMenuTab.sessionId)
@@ -254,7 +284,8 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
 
   // Show sidebar expand button only in the leftmost pane
   const isLeftmostPane = useStore(
-    (s) => s.paneLayout.panes.length === 0 || s.paneLayout.panes[0]?.id === paneId
+    (s) =>
+      s.paneLayout.panes.length === 0 || s.paneLayout.panes[0]?.id === paneId,
   );
 
   return (
@@ -266,11 +297,12 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
           height: `${HEADER_ROW1_HEIGHT}px`,
           paddingLeft:
             sidebarCollapsed && isLeftmostPane
-              ? 'var(--macos-traffic-light-padding-left, 72px)'
-              : '8px',
-          WebkitAppRegion: isElectronMode() && isLeftmostPane ? 'drag' : undefined,
-          backgroundColor: 'var(--color-surface)',
-          borderBottom: '1px solid var(--color-border)',
+              ? "var(--macos-traffic-light-padding-left, 72px)"
+              : "8px",
+          WebkitAppRegion:
+            isDesktopMode() && isLeftmostPane ? "drag" : undefined,
+          backgroundColor: "var(--color-surface)",
+          borderBottom: "1px solid var(--color-border)",
           opacity: isFocused || paneCount === 1 ? 1 : 0.7,
         } as React.CSSProperties
       }
@@ -284,9 +316,13 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
           className="mr-2 shrink-0 rounded-md p-1.5 transition-colors"
           style={
             {
-              WebkitAppRegion: 'no-drag',
-              color: expandHover ? 'var(--color-text)' : 'var(--color-text-muted)',
-              backgroundColor: expandHover ? 'var(--color-surface-raised)' : 'transparent',
+              WebkitAppRegion: "no-drag",
+              color: expandHover
+                ? "var(--color-text)"
+                : "var(--color-text-muted)",
+              backgroundColor: expandHover
+                ? "var(--color-surface-raised)"
+                : "transparent",
             } as React.CSSProperties
           }
           title="Expand sidebar"
@@ -305,14 +341,19 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
         className="scrollbar-none flex min-w-0 shrink items-center gap-1 overflow-x-auto"
         style={
           {
-            maxWidth: '75%',
-            WebkitAppRegion: 'no-drag',
-            outline: isDroppableOver ? '1px dashed var(--color-accent, #6366f1)' : 'none',
-            outlineOffset: '-1px',
+            maxWidth: "75%",
+            WebkitAppRegion: "no-drag",
+            outline: isDroppableOver
+              ? "1px dashed var(--color-accent, #6366f1)"
+              : "none",
+            outlineOffset: "-1px",
           } as React.CSSProperties
         }
       >
-        <SortableContext items={tabIds} strategy={horizontalListSortingStrategy}>
+        <SortableContext
+          items={tabIds}
+          strategy={horizontalListSortingStrategy}
+        >
           {openTabs.map((tab) => (
             <SortableTab
               key={tab.id}
@@ -330,17 +371,21 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
         </SortableContext>
 
         {/* Refresh button - show only for session tabs */}
-        {activeTab?.type === 'session' && (
+        {activeTab?.type === "session" && (
           <button
             className="flex size-8 shrink-0 items-center justify-center rounded-md transition-colors"
             style={{
-              color: refreshHover ? 'var(--color-text)' : 'var(--color-text-muted)',
-              backgroundColor: refreshHover ? 'var(--color-surface-raised)' : 'transparent',
+              color: refreshHover
+                ? "var(--color-text)"
+                : "var(--color-text-muted)",
+              backgroundColor: refreshHover
+                ? "var(--color-surface-raised)"
+                : "transparent",
             }}
             onMouseEnter={() => setRefreshHover(true)}
             onMouseLeave={() => setRefreshHover(false)}
             onClick={handleRefresh}
-            title={`Refresh Session (${formatShortcut('R')})`}
+            title={`Refresh Session (${formatShortcut("R")})`}
           >
             <RefreshCw className="size-4" />
           </button>
@@ -349,13 +394,14 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
 
       {/* Drag spacer — fills empty space between tab list and action buttons.
           Gives users a reliable window-drag target regardless of how many tabs are open.
-          Only applied on the leftmost pane in Electron to match the TabBar drag region logic. */}
+          Only applied on the leftmost pane in desktop mode to match the TabBar drag region logic. */}
       <div
         ref={isTauriMode() && isLeftmostPane ? spacerDragRef : undefined}
         className="flex-1 self-stretch"
         style={
           {
-            WebkitAppRegion: isElectronMode() && isLeftmostPane ? 'drag' : undefined,
+            WebkitAppRegion:
+              isDesktopMode() && isLeftmostPane ? "drag" : undefined,
           } as React.CSSProperties
         }
       />
@@ -363,7 +409,7 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
       {/* Right side actions */}
       <div
         className="ml-2 flex shrink-0 items-center gap-1"
-        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
         {/* New tab button */}
         <button
@@ -372,8 +418,12 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
           onMouseLeave={() => setNewTabHover(false)}
           className="rounded-md p-2 transition-colors"
           style={{
-            color: newTabHover ? 'var(--color-text)' : 'var(--color-text-muted)',
-            backgroundColor: newTabHover ? 'var(--color-surface-raised)' : 'transparent',
+            color: newTabHover
+              ? "var(--color-text)"
+              : "var(--color-text-muted)",
+            backgroundColor: newTabHover
+              ? "var(--color-surface-raised)"
+              : "transparent",
           }}
           title="New tab (Dashboard)"
         >
@@ -387,21 +437,28 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
           onMouseLeave={() => setNotificationsHover(false)}
           className="relative rounded-md p-2 transition-colors"
           style={{
-            color: notificationsHover ? 'var(--color-text)' : 'var(--color-text-muted)',
-            backgroundColor: notificationsHover ? 'var(--color-surface-raised)' : 'transparent',
+            color: notificationsHover
+              ? "var(--color-text)"
+              : "var(--color-text-muted)",
+            backgroundColor: notificationsHover
+              ? "var(--color-surface-raised)"
+              : "transparent",
           }}
           title="Notifications"
         >
           <Bell className="size-4" />
           {unreadCount > 0 && (
             <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-xs font-medium text-white">
-              {unreadCount > 99 ? '99+' : unreadCount}
+              {unreadCount > 99 ? "99+" : unreadCount}
             </span>
           )}
         </button>
 
         {/* More menu (Search, Export, Settings) */}
-        <MoreMenu activeTab={activeTab} activeTabSessionDetail={activeTabSessionDetail} />
+        <MoreMenu
+          activeTab={activeTab}
+          activeTabSessionDetail={activeTabSessionDetail}
+        />
       </div>
 
       {/* Context menu */}
@@ -417,10 +474,12 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
           onCloseOtherTabs={() => closeOtherTabs(contextMenuTabId)}
           onCloseAllTabs={() => closeAllTabs()}
           onCloseSelectedTabs={
-            effectiveSelectedCount > 1 ? () => closeTabs([...selectedTabIds]) : undefined
+            effectiveSelectedCount > 1
+              ? () => closeTabs([...selectedTabIds])
+              : undefined
           }
-          onSplitRight={() => splitPane(paneId, contextMenuTabId, 'right')}
-          onSplitLeft={() => splitPane(paneId, contextMenuTabId, 'left')}
+          onSplitRight={() => splitPane(paneId, contextMenuTabId, "right")}
+          onSplitLeft={() => splitPane(paneId, contextMenuTabId, "left")}
           disableSplit={paneCount >= 4}
           isSessionTab={isContextMenuTabSession}
           isPinned={isContextMenuTabPinned}

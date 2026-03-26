@@ -6,31 +6,35 @@
  * - Main content: PaneContainer with one or more panes, each with TabBar + content
  */
 
-import { isElectronMode } from '@renderer/api';
-import { getTrafficLightPaddingForZoom } from '@renderer/constants/layout';
-import { useKeyboardShortcuts } from '@renderer/hooks/useKeyboardShortcuts';
-import { useZoomFactor } from '@renderer/hooks/useZoomFactor';
+import { isDesktopMode } from "@renderer/api";
+import { getTrafficLightPaddingForZoom } from "@renderer/constants/layout";
+import { useKeyboardShortcuts } from "@renderer/hooks/useKeyboardShortcuts";
+import { useZoomFactor } from "@renderer/hooks/useZoomFactor";
 
-import { UpdateBanner } from '../common/UpdateBanner';
-import { UpdateDialog } from '../common/UpdateDialog';
-import { WorkspaceIndicator } from '../common/WorkspaceIndicator';
-import { CommandPalette } from '../search/CommandPalette';
+import { UpdateBanner } from "../common/UpdateBanner";
+import { UpdateDialog } from "../common/UpdateDialog";
+import { WorkspaceIndicator } from "../common/WorkspaceIndicator";
+import { CommandPalette } from "../search/CommandPalette";
 
-import { CustomTitleBar } from './CustomTitleBar';
-import { PaneContainer } from './PaneContainer';
-import { Sidebar } from './Sidebar';
+import { CustomTitleBar } from "./CustomTitleBar";
+import { PaneContainer } from "./PaneContainer";
+import { Sidebar } from "./Sidebar";
 
 export const TabbedLayout = (): React.JSX.Element => {
   // Enable keyboard shortcuts
   useKeyboardShortcuts();
   const zoomFactor = useZoomFactor();
-  const trafficLightPadding = isElectronMode() ? getTrafficLightPaddingForZoom(zoomFactor) : 0;
+  const trafficLightPadding = isDesktopMode()
+    ? getTrafficLightPaddingForZoom(zoomFactor)
+    : 0;
 
   return (
     <div
       className="flex h-screen flex-col bg-claude-dark-bg text-claude-dark-text"
       style={
-        { '--macos-traffic-light-padding-left': `${trafficLightPadding}px` } as React.CSSProperties
+        {
+          "--macos-traffic-light-padding-left": `${trafficLightPadding}px`,
+        } as React.CSSProperties
       }
     >
       <CustomTitleBar />
