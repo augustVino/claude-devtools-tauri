@@ -204,3 +204,32 @@ struct OpenSessionPayload {
     project_id: String,
     session_id: String,
 }
+
+/// Restore the dock icon after switching from Accessory to Regular activation policy.
+///
+/// This is a known macOS bug: when an app transitions from Accessory to Regular
+/// activation policy at runtime, the Dock doesn't properly restore the app icon.
+/// We work around this by explicitly loading the icon from embedded bytes and
+/// setting it via NSApplication.setApplicationIconImage.
+///
+/// Works in both dev mode (no .app bundle) and production mode.
+#[cfg(target_os = "macos")]
+pub fn restore_dock_icon() {
+    use cocoa::appkit::NSApplication;
+    use cocoa::base::nil;
+    use objc::runtime::Object;
+    use objc::*;
+
+    let icon_bytes = include_bytes!("../../icons/icon.icns");
+    unsafe {
+        let ns_data: *mut Object = msg_send![class!(NSData), dataWithBytes:icon_bytes.as_ptr() as *const std::ffi::c_void length:icon_bytes.len() as u64];
+        let ns_image: *mut Object = msg_send![class!(NSImage), initWithData: ns_data];
+        if !ns_image.is_null() {
+            let app = NSApplication::sharedApplication(nil);
+            let _: () = msg_send![app, setApplicationIconImage: ns_image];
+            log::info!("Dock icon restored from embedded icon.icns");
+        } else {
+            log::warn!("Failed to create NSImage from embedded icon.icns");
+        }
+    }
+}
