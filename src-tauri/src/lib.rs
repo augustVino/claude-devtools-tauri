@@ -21,6 +21,7 @@ use tauri::{Emitter, Manager};
 use commands::AppState;
 use error::error_detector::ErrorDetector;
 use infrastructure::{ConfigManager, FileWatcher, NotificationManager};
+use commands::tray::TrayIconManager;
 use utils::{get_projects_base_path, is_subagent_file};
 
 /// 运行 Tauri 应用。
@@ -42,6 +43,25 @@ pub fn run() {
       .args(["--minimized"])
       .build())
     .manage(app_state.clone())
+    .on_window_event(|window, event| {
+      if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        #[cfg(target_os = "macos")]
+        {
+          // Use try_state() because this handler is registered before .setup()
+          // where TrayIconManager is actually managed
+          let tray = window.app_handle().try_state::<std::sync::Mutex<TrayIconManager>>();
+          if let Some(tray) = tray {
+            if let Ok(tray) = tray.lock() {
+              if !tray.is_dock_visible() {
+                log::info!("Hiding window to tray (dock hidden)");
+                let _ = window.hide();
+                api.prevent_close();
+              }
+            }
+          }
+        }
+      }
+    })
     .setup(move |app| {
       let state = app_state.clone();
 
@@ -53,7 +73,11 @@ pub fn run() {
         }
       }
 
-      // macOS: 根据配置隐藏 Dock 图标
+// Create and register TrayIconManager (needed for macOS dock hiding and window close interception)
+      let tray_manager = std::sync::Mutex::new(TrayIconManager::new(app.handle().clone()));
+      app.manage(tray_manager);
+
+      // macOS: Create tray and hide Dock icon if config says so
       #[cfg(target_os = "macos")]
       {
         let hide_dock = {
@@ -61,13 +85,19 @@ pub fn run() {
           !state_guard.config_manager.get_config().general.show_dock_icon
         };
         if hide_dock {
+          // Create tray FIRST, then hide dock
+          let tray = app.state::<std::sync::Mutex<TrayIconManager>>();
+          let _ = tray.lock().map(|mut t| t.create());
           use cocoa::appkit::{NSApplication, NSApplicationActivationPolicy};
           use cocoa::base::nil;
           unsafe {
-            let app = NSApplication::sharedApplication(nil);
-            app.setActivationPolicy_(
+            let ns_app = NSApplication::sharedApplication(nil);
+            ns_app.setActivationPolicy_(
               NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
             );
+            // Re-activate the app after switching to Accessory policy
+            // macOS deactivates the app when switching to Accessory mode
+            NSApplication::activateIgnoringOtherApps_(ns_app, true);
           }
         }
       }

@@ -16,6 +16,7 @@ pub mod projects;
 pub mod subagents;
 pub mod notifications;
 pub mod updater;
+pub mod tray;
 
 pub use window::*;
 pub use version::*;

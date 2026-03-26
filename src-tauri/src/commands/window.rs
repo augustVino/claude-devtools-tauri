@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tauri::{command, AppHandle, Manager};
 use tokio::sync::RwLock;
 
-use super::sessions::AppState;
+use super::{sessions::AppState, tray::TrayIconManager};
 
 #[command]
 pub async fn minimize(app: AppHandle) -> Result<(), String> {
@@ -49,46 +49,40 @@ pub async fn relaunch(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 #[command]
 pub async fn set_dock_visible(
+    tray: tauri::State<'_, std::sync::Mutex<TrayIconManager>>,
     state: tauri::State<'_, Arc<RwLock<AppState>>>,
     visible: bool,
 ) -> Result<(), String> {
     use cocoa::appkit::{NSApplication, NSApplicationActivationPolicy};
     use cocoa::base::nil;
-    use cocoa::foundation::NSString;
-    use objc::{runtime::Object, *};
+    use objc::*;
 
     unsafe {
         let app = NSApplication::sharedApplication(nil);
         if visible {
+            // Restore dock icon by setting Regular policy
             app.setActivationPolicy_(
                 NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
             );
-            // macOS does not restore the app icon when switching back from Accessory.
-            // Re-set it via NSBundle + NSImage using objc messaging.
-            let bundle: *mut Object = msg_send![class!(NSBundle), mainBundle];
-            let icon_key = NSString::alloc(nil).init_str("CFBundleIconFile");
-            let icon_name: *mut Object = msg_send![bundle, objectForInfoDictionaryKey: icon_key];
-            if !icon_name.is_null() {
-                let icon_cstr: *const std::os::raw::c_char = msg_send![icon_name, UTF8String];
-                let icon_str = std::ffi::CStr::from_ptr(icon_cstr);
-                let icon_name = icon_str.to_str().unwrap_or("icon");
-                let bundle_path: *mut Object = msg_send![bundle, bundlePath];
-                let path_cstr: *const std::os::raw::c_char = msg_send![bundle_path, UTF8String];
-                let path_str = std::ffi::CStr::from_ptr(path_cstr);
-                let bundle_path_str = path_str.to_str().unwrap_or(".");
-                let icon_path = format!("{bundle_path_str}/Contents/Resources/{icon_name}");
-
-                let ns_image: *mut Object = msg_send![class!(NSImage), alloc];
-                let ns_path = NSString::alloc(nil).init_str(&icon_path);
-                let image: *mut Object = msg_send![ns_image, initWithContentsOfFile: ns_path];
-                if !image.is_null() {
-                    let _: () = msg_send![app, setApplicationIconImage: image];
-                }
-            }
+            // Restore the saved dock icon, then remove tray
+            let mut tray_guard = tray.lock().map_err(|e| e.to_string())?;
+            tray_guard.restore_dock_icon();
+            tray_guard.destroy();
         } else {
+            // Save dock icon BEFORE switching to Accessory (known macOS bug:
+            // icon is lost when switching back to Regular)
+            {
+                let tray_guard = tray.lock().map_err(|e| e.to_string())?;
+                tray_guard.save_dock_icon();
+            }
+            // Create tray FIRST (ensures user always has an entry point)
+            tray.lock().map_err(|e| e.to_string())?.create()?;
+            // Then hide dock
             app.setActivationPolicy_(
                 NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
             );
+            // Re-activate the app after switching to Accessory policy
+            let _: () = msg_send![app, activateIgnoringOtherApps: true];
         }
     }
     // Persist to config
