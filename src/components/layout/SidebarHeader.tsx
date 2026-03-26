@@ -20,6 +20,8 @@ import { formatShortcut, truncateMiddle } from '@renderer/utils/stringUtils';
 import { Check, ChevronDown, GitBranch, PanelLeft } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 
+import { useWindowDrag } from '@renderer/hooks/useWindowDrag';
+
 import { WorktreeBadge } from '../common/WorktreeBadge';
 
 import type { Worktree, WorktreeSource } from '@renderer/types/data';
@@ -197,6 +199,7 @@ const ProjectDropdownItem = ({
 export const SidebarHeader = (): React.JSX.Element => {
   const isMacElectron =
     isElectronMode() && window.navigator.userAgent.toLowerCase().includes('mac');
+  const dragRef = useWindowDrag<HTMLDivElement>();
 
   const {
     repositoryGroups,
@@ -328,7 +331,10 @@ export const SidebarHeader = (): React.JSX.Element => {
     >
       {/* ROW 1: Project Identity (Title Bar / Drag Region) */}
       <div
-        ref={projectDropdownRef}
+        ref={(el) => {
+          projectDropdownRef.current = el;
+          dragRef.current = el;
+        }}
         className="relative flex select-none items-center gap-2 pr-2"
         style={
           {
