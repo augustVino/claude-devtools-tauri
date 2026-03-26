@@ -27,7 +27,14 @@ import type {
   TodoChangeEvent,
   RepositoryGroup,
   RawSubagentDetail,
+  ConversationGroup,
 } from "@main/types";
+import type { WaterfallData } from "@shared/types/visualization";
+import {
+  adaptWaterfallData,
+  type WaterfallDataRust,
+  adaptConversationGroup,
+} from "@renderer/types/data";
 import type {
   AppConfig,
   NotificationTrigger,
@@ -259,11 +266,29 @@ export class TauriAPIClient implements ElectronAPI {
   };
 
   // ===========================================================================
-  // Stubbed — will be implemented in later phases
+  // Waterfall and Conversation Group commands
   // ===========================================================================
 
-  readonly getWaterfallData = notImplemented; // Complex visualization, defer
-  readonly getSessionGroups = notImplemented; // Requires ConversationGroupBuilder
+  readonly getWaterfallData = (
+    projectId: string,
+    sessionId: string,
+  ): Promise<WaterfallData | null> =>
+    invoke<WaterfallDataRust>("get_waterfall_data", { projectId, sessionId })
+      .then(adaptWaterfallData)
+      .catch((e) => {
+        // Return null if session not found (matches Electron behavior)
+        if (String(e).includes("not found")) return null;
+        throw e;
+      }),
+
+  readonly getSessionGroups = (
+    projectId: string,
+    sessionId: string,
+  ): Promise<ConversationGroup[]> =>
+    invoke<Record<string, unknown>[]>("get_session_groups", {
+      projectId,
+      sessionId,
+    }).then((groups) => groups.map(adaptConversationGroup)),
 
   // ===========================================================================
   // Repository and Worktree commands
