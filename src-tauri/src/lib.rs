@@ -37,11 +37,17 @@ pub fn run() {
       if let tauri::WindowEvent::CloseRequested { api, .. } = event {
         #[cfg(target_os = "macos")]
         {
-          let tray = window.app_handle().state::<std::sync::Mutex<TrayIconManager>>();
-          let should_hide = tray.lock().map(|t| !t.is_dock_visible()).unwrap_or(false);
-          if should_hide {
-            let _ = window.hide();
-            api.prevent_close();
+          // Use try_state() because this handler is registered before .setup()
+          // where TrayIconManager is actually managed
+          let tray = window.app_handle().try_state::<std::sync::Mutex<TrayIconManager>>();
+          if let Some(tray) = tray {
+            if let Ok(tray) = tray.lock() {
+              if !tray.is_dock_visible() {
+                log::info!("Hiding window to tray (dock hidden)");
+                let _ = window.hide();
+                api.prevent_close();
+              }
+            }
           }
         }
       }
