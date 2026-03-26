@@ -85,7 +85,8 @@ pub async fn read_mentioned_file(
 ) -> Result<Option<String>, String> {
     let path = Path::new(&file_path);
 
-    if !path.exists() {
+    // Skip non-existent paths and directories
+    if !path.exists() || path.is_dir() {
         return Ok(None);
     }
 

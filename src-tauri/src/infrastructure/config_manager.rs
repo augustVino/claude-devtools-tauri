@@ -111,23 +111,27 @@ impl ConfigManager {
         section: &str,
         data: serde_json::Value,
     ) -> Result<AppConfig, String> {
-        let mut config = self
-            .config
-            .write()
-            .map_err(|e| format!("failed to acquire write lock: {e}"))?;
+        let merged: AppConfig = {
+            let mut config = self
+                .config
+                .write()
+                .map_err(|e| format!("failed to acquire write lock: {e}"))?;
 
-        let current_json = serde_json::to_value(&*config)
-            .map_err(|e| format!("failed to serialize current config: {e}"))?;
+            let current_json = serde_json::to_value(&*config)
+                .map_err(|e| format!("failed to serialize current config: {e}"))?;
 
-        let valid_sections = ["notifications", "general", "display", "sessions"];
-        if !valid_sections.contains(&section) {
-            return Err(format!("unknown config section: {section}"));
-        }
+            let valid_sections = ["notifications", "general", "display", "sessions"];
+            if !valid_sections.contains(&section) {
+                return Err(format!("unknown config section: {section}"));
+            }
 
-        let updated = update_section(&current_json, section, &data);
-        let merged: AppConfig = merge_with_defaults(&updated)?;
-        *config = merged.clone();
-        self.persist()?;
+            let updated = update_section(&current_json, section, &data);
+            let merged: AppConfig = merge_with_defaults(&updated)?;
+            *config = merged.clone();
+            merged
+        }; // Write lock is released here
+
+        self.persist()?; // Now persist can acquire read lock safely
         Ok(merged)
     }
 

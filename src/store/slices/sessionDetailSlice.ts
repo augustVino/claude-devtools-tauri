@@ -9,7 +9,7 @@ import { processSessionClaudeMd } from '@renderer/utils/claudeMdTracker';
 import { processSessionContextWithPhases } from '@renderer/utils/contextTracker';
 import {
   extractFileReferences,
-  transformChunksToConversation,
+  transformChunksToConversation
 } from '@renderer/utils/groupTransformer';
 import { createLogger } from '@shared/utils/logger';
 
@@ -34,7 +34,7 @@ import type { ClaudeMdStats } from '@renderer/types/claudeMd';
 import type {
   ContextPhaseInfo,
   ContextStats,
-  MentionedFileInfo,
+  MentionedFileInfo
 } from '@renderer/types/contextInjection';
 import type { ClaudeMdFileInfo, SessionDetail } from '@renderer/types/data';
 import type { AIGroup, SessionConversation } from '@renderer/types/groups';
@@ -69,7 +69,7 @@ function createEmptyTabSessionData(): TabSessionData {
     sessionContextStats: null,
     sessionPhaseInfo: null,
     visibleAIGroupId: null,
-    selectedAIGroup: null,
+    selectedAIGroup: null
   };
 }
 
@@ -152,7 +152,7 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
     set({
       sessionDetailLoading: true,
       sessionDetailError: null,
-      conversationLoading: true,
+      conversationLoading: true
     });
 
     // Also set per-tab loading state
@@ -165,9 +165,9 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
             ...(prev[tabId] ?? createEmptyTabSessionData()),
             sessionDetailLoading: true,
             sessionDetailError: null,
-            conversationLoading: true,
-          },
-        },
+            conversationLoading: true
+          }
+        }
       });
     }
     try {
@@ -313,9 +313,17 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
         for (const item of conversation.items) {
           if (item.type === 'user' && item.group.content.fileReferences) {
             for (const ref of item.group.content.fileReferences) {
+              // Skip empty or invalid paths (e.g., '.', empty string)
+              const trimmedPath = ref.path?.trim();
+              if (!trimmedPath || trimmedPath === '.' || trimmedPath === './') {
+                continue;
+              }
               // Use resolveFilePath to properly handle ./ and ../ prefixes
-              const absolutePath = resolveFilePath(projectRoot, ref.path);
-              mentionedFilePaths.add(absolutePath);
+              const absolutePath = resolveFilePath(projectRoot, trimmedPath);
+              // Skip if resolved path is the project root itself (directory)
+              if (absolutePath && absolutePath !== projectRoot) {
+                mentionedFilePaths.add(absolutePath);
+              }
             }
           }
         }
@@ -335,8 +343,14 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
               }
               if (text) {
                 for (const ref of extractFileReferences(text)) {
-                  const absolutePath = resolveFilePath(projectRoot, ref.path);
-                  mentionedFilePaths.add(absolutePath);
+                  const trimmedPath = ref.path?.trim();
+                  if (!trimmedPath || trimmedPath === '.' || trimmedPath === './') {
+                    continue;
+                  }
+                  const absolutePath = resolveFilePath(projectRoot, trimmedPath);
+                  if (absolutePath && absolutePath !== projectRoot) {
+                    mentionedFilePaths.add(absolutePath);
+                  }
                 }
               }
             }
@@ -392,7 +406,7 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
       if (!stillViewingSession) {
         set({
           sessionDetailLoading: false,
-          conversationLoading: false,
+          conversationLoading: false
         });
         return;
       }
@@ -413,7 +427,7 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
         selectedAIGroup: firstAIGroup,
         sessionClaudeMdStats: claudeMdStats,
         sessionContextStats: contextStats,
-        sessionPhaseInfo: phaseInfo,
+        sessionPhaseInfo: phaseInfo
       });
 
       // Auto-expand all AI groups if the setting is enabled
@@ -441,9 +455,9 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
               sessionContextStats: contextStats,
               sessionPhaseInfo: phaseInfo,
               visibleAIGroupId: firstAIGroupId,
-              selectedAIGroup: firstAIGroup,
-            },
-          },
+              selectedAIGroup: firstAIGroup
+            }
+          }
         });
       }
     } catch (error) {
@@ -455,7 +469,7 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
       set({
         sessionDetailError: errorMsg,
         sessionDetailLoading: false,
-        conversationLoading: false,
+        conversationLoading: false
       });
 
       // Store per-tab error state
@@ -468,9 +482,9 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
               ...(prev[tabId] ?? createEmptyTabSessionData()),
               sessionDetailError: errorMsg,
               sessionDetailLoading: false,
-              conversationLoading: false,
-            },
-          },
+              conversationLoading: false
+            }
+          }
         });
       }
     }
@@ -582,9 +596,9 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
         // Preserve visible group if it still exists, otherwise keep current
         ...(visibleGroupStillExists
           ? {
-              selectedAIGroup: updatedSelectedGroup,
+              selectedAIGroup: updatedSelectedGroup
             }
-          : {}),
+          : {})
         // Note: aiGroupExpansionLevels and expandedStepIds are NOT touched
         // so expansion states are preserved
       }));
@@ -636,7 +650,7 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
             ...tabData,
             sessionDetail: detail,
             conversation: newConversation,
-            ...(tabGroupStillExists ? { selectedAIGroup: tabSelectedGroup } : {}),
+            ...(tabGroupStillExists ? { selectedAIGroup: tabSelectedGroup } : {})
           };
         }
       }
@@ -672,7 +686,7 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
 
     set({
       visibleAIGroupId: aiGroupId,
-      selectedAIGroup,
+      selectedAIGroup
     });
   },
 
@@ -701,9 +715,9 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
         [tabId]: {
           ...tabData,
           visibleAIGroupId: aiGroupId,
-          selectedAIGroup,
-        },
-      },
+          selectedAIGroup
+        }
+      }
     });
   },
 
@@ -714,5 +728,5 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
     const next = { ...prev };
     delete next[tabId];
     set({ tabSessionData: next });
-  },
+  }
 });
