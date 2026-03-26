@@ -107,6 +107,11 @@ jobs:
             |------|------|
             | macOS (Apple Silicon) | `claude-devtools-tauri_${{ steps.version.outputs.VERSION }}_aarch64.dmg` |
 
+            > 安装后应用无法打开？
+            ```bash
+            xattr -cr /Applications/claude-devtools-tauri.app
+            ```
+
             ## 📄 开源声明
 
             本项目衍生自 [claude-devtools](https://github.com/matt1398/claude-devtools)，原作者 matt1398 及贡献者，采用 MIT 协议。
