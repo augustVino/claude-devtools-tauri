@@ -1,4 +1,5 @@
 pub mod chunk_builder;
+pub mod conversation_group_builder;
 pub mod process_linker;
 pub mod semantic_step_extractor;
 pub mod semantic_step_grouper;

@@ -262,6 +262,101 @@ pub async fn get_sessions_by_ids(
 }
 
 // =============================================================================
+// Session Groups
+// =============================================================================
+
+#[command]
+pub async fn get_session_groups(
+    project_id: String,
+    session_id: String,
+) -> Result<Vec<crate::types::chunks::ConversationGroup>, String> {
+    let base_path = get_projects_base_path();
+    let project_dir = extract_base_dir(&project_id);
+    let session_path = base_path
+        .join(&project_dir)
+        .join(format!("{}.jsonl", session_id));
+
+    if !session_path.exists() {
+        return Ok(vec![]);
+    }
+
+    let parsed = parse_session_file(&session_path).await;
+
+    let subagents: Vec<crate::types::chunks::Process> = {
+        let resolver = crate::discovery::subagent_resolver::SubagentResolver::new(
+            get_projects_base_path(),
+        );
+        resolver
+            .resolve_subagents(&project_id, &session_id)
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    };
+
+    let groups =
+        crate::analysis::conversation_group_builder::build_groups(&parsed.messages, &subagents);
+    Ok(groups)
+}
+
+// =============================================================================
+// Waterfall Data
+// =============================================================================
+
+#[command]
+pub async fn get_waterfall_data(
+    project_id: String,
+    session_id: String,
+) -> Result<Option<crate::analysis::waterfall_builder::WaterfallData>, String> {
+    let base_path = get_projects_base_path();
+    let project_dir = extract_base_dir(&project_id);
+    let session_path = base_path
+        .join(&project_dir)
+        .join(format!("{}.jsonl", session_id));
+
+    if !session_path.exists() {
+        return Ok(None);
+    }
+
+    let parsed = parse_session_file(&session_path).await;
+
+    let session = build_session_metadata(&session_path, &project_id)
+        .await
+        .unwrap_or_else(|| Session {
+            id: session_id.clone(),
+            project_id: project_id.clone(),
+            project_path: decode_path(&project_id),
+            created_at: 0,
+            todo_data: None,
+            first_message: None,
+            message_timestamp: None,
+            has_subagents: !parsed.task_calls.is_empty(),
+            message_count: parsed.messages.len() as u32,
+            is_ongoing: Some(parsed.is_ongoing),
+            git_branch: None,
+            metadata_level: None,
+            context_consumption: None,
+            compaction_count: None,
+            phase_breakdown: None,
+        });
+
+    let subagents: Vec<crate::types::chunks::Process> = {
+        let resolver = crate::discovery::subagent_resolver::SubagentResolver::new(
+            get_projects_base_path(),
+        );
+        resolver
+            .resolve_subagents(&project_id, &session_id)
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    };
+
+    let detail = ChunkBuilder::build_session_detail(session, parsed.messages.clone(), subagents);
+    let waterfall =
+        crate::analysis::waterfall_builder::build_waterfall_data(&detail.chunks, &detail.processes);
+    Ok(Some(waterfall))
+}
+
+// =============================================================================
 // Helper Functions
 // =============================================================================
 

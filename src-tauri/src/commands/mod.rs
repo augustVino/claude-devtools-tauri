@@ -8,6 +8,7 @@ pub mod utility;
 pub mod projects;
 pub mod subagents;
 pub mod notifications;
+pub mod updater;
 
 pub use window::*;
 pub use version::*;
@@ -20,3 +21,4 @@ pub use projects::*;
 pub use subagents::*;
 pub use notifications::*;
 pub use sessions::AppState;
+pub use updater::PendingUpdate;

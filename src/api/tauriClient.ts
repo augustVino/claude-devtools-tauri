@@ -2,7 +2,7 @@
  * Tauri API client — implements ElectronAPI via @tauri-apps/api invoke/listen.
  *
  * Window controls, version, sessions, config, search, validation, notifications,
- * and trigger commands are implemented. Session, updater, and SSH features are stubbed.
+ * updater, and trigger commands are implemented. Session and SSH features are stubbed.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -27,7 +27,14 @@ import type {
   TodoChangeEvent,
   RepositoryGroup,
   RawSubagentDetail,
+  ConversationGroup,
 } from "@main/types";
+import type { WaterfallData } from "@shared/types/visualization";
+import {
+  adaptWaterfallData,
+  type WaterfallDataRust,
+  adaptConversationGroup,
+} from "@renderer/types/data";
 import type {
   AppConfig,
   NotificationTrigger,
@@ -112,6 +119,18 @@ interface MentionsValidationResult {
 interface ZoomFactorResult {
   factor: number;
 }
+
+/**
+ * Updater status events emitted on the `updater:status` channel.
+ * Matches the Rust UpdaterStatus enum (serde tag = "status", rename_all = "camelCase").
+ */
+type UpdaterStatus =
+  | { status: "checking" }
+  | { status: "available"; version: string }
+  | { status: "downloading"; progress: number; contentLength: number | null }
+  | { status: "downloaded" }
+  | { status: "upToDate" }
+  | { status: "error"; message: string };
 
 export class TauriAPIClient implements ElectronAPI {
   // ===========================================================================
@@ -247,11 +266,29 @@ export class TauriAPIClient implements ElectronAPI {
   };
 
   // ===========================================================================
-  // Stubbed — will be implemented in later phases
+  // Waterfall and Conversation Group commands
   // ===========================================================================
 
-  readonly getWaterfallData = notImplemented; // Complex visualization, defer
-  readonly getSessionGroups = notImplemented; // Requires ConversationGroupBuilder
+  readonly getWaterfallData = (
+    projectId: string,
+    sessionId: string,
+  ): Promise<WaterfallData | null> =>
+    invoke<WaterfallDataRust>("get_waterfall_data", { projectId, sessionId })
+      .then(adaptWaterfallData)
+      .catch((e) => {
+        // Return null if session not found (matches Electron behavior)
+        if (String(e).includes("not found")) return null;
+        throw e;
+      }),
+
+  readonly getSessionGroups = (
+    projectId: string,
+    sessionId: string,
+  ): Promise<ConversationGroup[]> =>
+    invoke<Record<string, unknown>[]>("get_session_groups", {
+      projectId,
+      sessionId,
+    }).then((groups) => groups.map(adaptConversationGroup)),
 
   // ===========================================================================
   // Repository and Worktree commands
@@ -373,7 +410,26 @@ export class TauriAPIClient implements ElectronAPI {
     },
   };
   readonly session = stubEventAPI() as any;
-  readonly updater = stubEventAPI() as any;
+  readonly updater = {
+    check: (): Promise<void> => invoke<void>("check_for_updates"),
+    download: (): Promise<void> => invoke<void>("download_and_install_update"),
+    install: (): Promise<void> => invoke<void>("install_update"),
+    onStatus: (
+      cb: (_event: unknown, status: unknown) => void,
+    ): (() => void) => {
+      let unlisten: UnlistenFn | null = null;
+      listen<UpdaterStatus>("updater:status", (e) => cb(e, e.payload))
+        .then((fn) => {
+          unlisten = fn;
+        })
+        .catch((err) => {
+          console.error("Failed to listen to updater:status event:", err);
+        });
+      return () => {
+        if (unlisten) unlisten();
+      };
+    },
+  } as any;
   readonly ssh = stubEventAPI() as any;
   readonly context = createContextAPI();
   readonly httpServer = createHttpServerAPI();
@@ -387,8 +443,10 @@ export class TauriAPIClient implements ElectronAPI {
       invoke<AppConfig>("add_ignore_regex", { pattern }),
     removeIgnoreRegex: (pattern: string): Promise<AppConfig> =>
       invoke<AppConfig>("remove_ignore_regex", { pattern }),
-    addIgnoreRepository: notImplemented,
-    removeIgnoreRepository: notImplemented,
+    addIgnoreRepository: (repositoryId: string): Promise<AppConfig> =>
+      invoke<AppConfig>("add_ignore_repository", { repositoryId }),
+    removeIgnoreRepository: (repositoryId: string): Promise<AppConfig> =>
+      invoke<AppConfig>("remove_ignore_repository", { repositoryId }),
     snooze: (minutes: number): Promise<AppConfig> =>
       invoke<AppConfig>("snooze", { minutes }),
     clearSnooze: (): Promise<AppConfig> => invoke<AppConfig>("clear_snooze"),
@@ -429,20 +487,24 @@ export class TauriAPIClient implements ElectronAPI {
       });
       if (result === null) return null;
       const selectedPath = Array.isArray(result) ? result[0] : result;
+      const hasProjectsDir = await invoke<boolean>(
+        "check_projects_dir_exists",
+        { path: selectedPath },
+      );
       return {
         path: selectedPath,
         isClaudeDirName: selectedPath.endsWith(".claude"),
-        hasProjectsDir: false,
+        hasProjectsDir,
       };
     },
     getClaudeRootInfo: () =>
-      Promise.resolve({
-        defaultPath: "",
-        resolvedPath: "",
-        customPath: null,
-      }),
+      invoke<{
+        defaultPath: string;
+        resolvedPath: string;
+        customPath: string | null;
+      }>("get_claude_root_info"),
     findWslClaudeRoots: () => Promise.resolve([]),
-    openInEditor: notImplemented,
+    openInEditor: (): Promise<void> => invoke("open_in_editor"),
     pinSession: (projectId: string, sessionId: string): Promise<void> =>
       invoke("pin_session", { projectId, sessionId }),
     unpinSession: (projectId: string, sessionId: string): Promise<void> =>
@@ -451,8 +513,10 @@ export class TauriAPIClient implements ElectronAPI {
       invoke("hide_session", { projectId, sessionId }),
     unhideSession: (projectId: string, sessionId: string): Promise<void> =>
       invoke("unhide_session", { projectId, sessionId }),
-    hideSessions: notImplemented,
-    unhideSessions: notImplemented,
+    hideSessions: (projectId: string, sessionIds: string[]): Promise<void> =>
+      invoke("hide_sessions", { projectId, sessionIds }),
+    unhideSessions: (projectId: string, sessionIds: string[]): Promise<void> =>
+      invoke("unhide_sessions", { projectId, sessionIds }),
   };
 
   // Event listeners — wired to Tauri events

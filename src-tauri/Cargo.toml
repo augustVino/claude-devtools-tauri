@@ -29,7 +29,9 @@ tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
-tokio = { version = "1", features = ["fs", "sync", "time", "macros", "rt-multi-thread"] }
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
+tokio = { version = "1", features = ["fs", "sync", "time", "macros", "rt-multi-thread", "process"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 thiserror = "2"

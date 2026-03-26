@@ -3,6 +3,7 @@
 //! Handlers:
 //! - validate_path: Validate a filesystem path
 //! - validate_mentions: Validate file mentions
+//! - scroll_to_line: Validate session scroll request
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -68,5 +69,40 @@ pub async fn validate_mentions(mentions: Vec<String>) -> Result<MentionsValidati
     Ok(MentionsValidationResult {
         valid: true,
         error: None,
+    })
+}
+
+// =============================================================================
+// Session Scroll
+// =============================================================================
+
+/// Result of a scroll-to-line request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScrollToLineResult {
+    pub success: bool,
+    pub session_id: String,
+    pub line_number: i64,
+}
+
+/// Validate a session scroll request and return success indicator.
+/// The actual scrolling is handled by the frontend.
+#[tauri::command]
+pub async fn scroll_to_line(
+    session_id: String,
+    line_number: i64,
+) -> Result<ScrollToLineResult, String> {
+    if session_id.is_empty() || line_number < 0 {
+        return Ok(ScrollToLineResult {
+            success: false,
+            session_id: String::new(),
+            line_number: 0,
+        });
+    }
+
+    Ok(ScrollToLineResult {
+        success: true,
+        session_id,
+        line_number,
     })
 }

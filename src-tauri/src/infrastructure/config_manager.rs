@@ -91,6 +91,11 @@ impl ConfigManager {
         Ok(())
     }
 
+    /// Returns the path to the config file.
+    pub fn get_config_path(&self) -> std::path::PathBuf {
+        self.config_path.clone()
+    }
+
     pub fn get_config(&self) -> AppConfig {
         self.config
             .read()

@@ -33,7 +33,7 @@ pub struct ToolResult {
 // ParsedMessage
 // =============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct ParsedMessage {
     pub uuid: String,
     #[serde(rename = "parentUuid", skip_serializing_if = "Option::is_none")]

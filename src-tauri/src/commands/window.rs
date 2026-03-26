@@ -35,3 +35,9 @@ pub async fn is_maximized(app: AppHandle) -> Result<bool, String> {
         .map(|w| w.is_maximized().map_err(|e| e.to_string()))
         .unwrap_or(Ok(false))
 }
+
+#[command]
+pub async fn relaunch(app: tauri::AppHandle) -> Result<(), String> {
+    app.request_restart();
+    Ok(())
+}
