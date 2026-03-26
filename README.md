@@ -1,5 +1,7 @@
 # claude-devtools-tauri
 
+[![Download](https://img.shields.io/github/v/release/augustVino/claude-devtools-tauri?label=Download&style=for-the-badge)](https://github.com/augustVino/claude-devtools-tauri/releases/latest)
+
 基于 [Tauri v2](https://tauri.app/) 的 Claude Code 会话可视化桌面应用 — 浏览对话记录、追踪上下文窗口使用情况、分析工具调用。
 
 ## Why
