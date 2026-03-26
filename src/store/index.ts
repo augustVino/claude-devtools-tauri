@@ -170,7 +170,7 @@ export function initializeNotificationListeners(): () => void {
   // Listen for task-list file changes to refresh currently viewed session metadata
   if (api.onTodoChange) {
     const cleanup = api.onTodoChange((event) => {
-      if (!event.sessionId || event.type === 'unlink') {
+      if (!event.sessionId) {
         return;
       }
 

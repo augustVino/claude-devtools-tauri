@@ -5,7 +5,7 @@
 import { api } from '@renderer/api';
 
 import type { AppState, BreadcrumbItem } from '../types';
-import type { SubagentDetail } from '@renderer/types/data';
+import type { RawSubagentDetail } from '@main/types/chunks';
 import type { StateCreator } from 'zustand';
 
 // =============================================================================
@@ -15,7 +15,7 @@ import type { StateCreator } from 'zustand';
 export interface SubagentSlice {
   // State
   drillDownStack: BreadcrumbItem[];
-  currentSubagentDetail: SubagentDetail | null;
+  currentSubagentDetail: RawSubagentDetail | null;
   subagentDetailLoading: boolean;
   subagentDetailError: string | null;
 

@@ -22,6 +22,7 @@ import type {
   NotificationTrigger,
   PaginatedSessionsResult,
   Project,
+  RawSubagentDetail,
   RepositoryGroup,
   SearchSessionsResult,
   Session,
@@ -35,7 +36,7 @@ import type {
   SshConnectionConfig,
   SshConnectionStatus,
   SshLastConnection,
-  SubagentDetail,
+  TodoChangeEvent,
   TriggerTestResult,
   UpdaterAPI,
   WaterfallData,
@@ -265,8 +266,8 @@ export class HttpAPIClient implements ElectronAPI {
     projectId: string,
     sessionId: string,
     subagentId: string,
-  ): Promise<SubagentDetail | null> =>
-    this.get<SubagentDetail | null>(
+  ): Promise<RawSubagentDetail | null> =>
+    this.get<RawSubagentDetail | null>(
       `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/subagents/${encodeURIComponent(subagentId)}`,
     );
 
@@ -567,7 +568,7 @@ export class HttpAPIClient implements ElectronAPI {
   onFileChange = (callback: (event: FileChangeEvent) => void): (() => void) =>
     this.addEventListener("file-change", callback);
 
-  onTodoChange = (callback: (event: FileChangeEvent) => void): (() => void) =>
+  onTodoChange = (callback: (event: TodoChangeEvent) => void): (() => void) =>
     this.addEventListener("todo-change", callback);
 
   // No-op in browser mode — Ctrl+R refresh is Electron-only
