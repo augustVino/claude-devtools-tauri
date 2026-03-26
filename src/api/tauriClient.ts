@@ -386,12 +386,14 @@ export class TauriAPIClient implements ElectronAPI {
   };
   readonly session = stubEventAPI() as any;
   readonly updater = {
-    check: () => invoke("check_for_updates"),
-    download: () => invoke("download_and_install_update"),
-    install: () => invoke("install_update"),
-    onStatus: (cb: (status: UpdaterStatus) => void): (() => void) => {
+    check: (): Promise<void> => invoke<void>("check_for_updates"),
+    download: (): Promise<void> => invoke<void>("download_and_install_update"),
+    install: (): Promise<void> => invoke<void>("install_update"),
+    onStatus: (
+      cb: (_event: unknown, status: unknown) => void,
+    ): (() => void) => {
       let unlisten: UnlistenFn | null = null;
-      listen<UpdaterStatus>("updater:status", (e) => cb(e.payload))
+      listen<UpdaterStatus>("updater:status", (e) => cb(e, e.payload))
         .then((fn) => {
           unlisten = fn;
         })
@@ -402,7 +404,7 @@ export class TauriAPIClient implements ElectronAPI {
         if (unlisten) unlisten();
       };
     },
-  };
+  } as any;
   readonly ssh = stubEventAPI() as any;
   readonly context = createContextAPI();
   readonly httpServer = createHttpServerAPI();
