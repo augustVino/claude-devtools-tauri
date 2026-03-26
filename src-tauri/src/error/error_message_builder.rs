@@ -1,7 +1,7 @@
-//! Error message builder — extracts error text from tool results and creates
-//! DetectedError instances.
+//! 错误消息构建器 —— 从工具结果中提取错误文本并创建
+//! [`DetectedError`] 实例。
 //!
-//! Ported from Electron `src/main/services/error/ErrorMessageBuilder.ts`.
+//! 从 Electron `src/main/services/error/ErrorMessageBuilder.ts` 移植而来。
 
 use uuid::Uuid;
 
@@ -10,17 +10,17 @@ use crate::types::config::{DetectedError, ErrorContext};
 use crate::types::messages::ParsedMessage;
 
 // =============================================================================
-// Constants
+// 常量
 // =============================================================================
 
-/// Maximum length for error messages before truncation.
+/// 错误消息截断前的最大长度。
 const MAX_ERROR_MESSAGE_LENGTH: usize = 500;
 
 // =============================================================================
-// Types
+// 类型定义
 // =============================================================================
 
-/// Parameters for creating a [`DetectedError`].
+/// 创建 [`DetectedError`] 所需的参数。
 #[derive(Debug, Clone)]
 pub struct CreateDetectedErrorParams {
     pub session_id: String,
@@ -40,14 +40,14 @@ pub struct CreateDetectedErrorParams {
 }
 
 // =============================================================================
-// Error Message Extraction
+// 错误消息提取
 // =============================================================================
 
-/// Extracts error message from a tool result.
+/// 从工具结果中提取错误消息。
 ///
-/// Handles both string content and array content blocks (objects with
-/// `"type": "text"`). Falls back to `"Unknown error"` when no text can be
-/// extracted.
+/// 支持字符串内容和数组内容块（`"type": "text"` 对象）两种形式。
+/// 当无法提取文本时，回退为 `"Unknown error"`。
+
 pub fn extract_error_message(result: &ExtractedToolResult) -> String {
     match &result.content {
         serde_json::Value::String(s) => {
@@ -83,10 +83,10 @@ pub fn extract_error_message(result: &ExtractedToolResult) -> String {
 }
 
 // =============================================================================
-// Tool Name Lookup
+// 工具名称查找
 // =============================================================================
 
-/// Finds tool name from message's tool calls by tool use ID.
+/// 根据工具调用 ID 从消息的 tool_calls 中查找工具名称。
 fn find_tool_name(message: &ParsedMessage, tool_use_id: &str) -> Option<String> {
     message
         .tool_calls
@@ -95,20 +95,20 @@ fn find_tool_name(message: &ParsedMessage, tool_use_id: &str) -> Option<String> 
         .map(|tc| tc.name.clone())
 }
 
-/// Finds tool name by searching tool_use_id in the message context.
+/// 在消息上下文中根据 tool_use_id 查找工具名称。
 ///
-/// First checks `toolCalls` array, then falls back to `toolUseResult`'s
-/// `toolName` field when `sourceToolUseID` matches.
+/// 首先检查 `toolCalls` 数组，然后当 `sourceToolUseID` 匹配时，
+/// 回退到 `toolUseResult` 的 `toolName` 字段。
 pub fn find_tool_name_by_tool_use_id(
     message: &ParsedMessage,
     tool_use_id: &str,
 ) -> Option<String> {
-    // Check toolCalls first
+    // 优先从 toolCalls 中查找
     if let Some(name) = find_tool_name(message, tool_use_id) {
         return Some(name);
     }
 
-    // Check sourceToolUseID if this message is a tool result
+    // 若此消息为工具结果，则检查 sourceToolUseID
     if let Some(ref source_id) = message.source_tool_use_id {
         if source_id == tool_use_id {
             if let Some(ref tool_result) = message.tool_use_result {
@@ -123,10 +123,10 @@ pub fn find_tool_name_by_tool_use_id(
 }
 
 // =============================================================================
-// Message Truncation
+// 消息截断
 // =============================================================================
 
-/// Truncates error message to a reasonable length for display.
+/// 将错误消息截断到适合显示的长度。
 fn truncate_message(message: &str) -> String {
     if message.len() <= MAX_ERROR_MESSAGE_LENGTH {
         return message.to_string();
@@ -135,13 +135,13 @@ fn truncate_message(message: &str) -> String {
 }
 
 // =============================================================================
-// DetectedError Creation
+// DetectedError 创建
 // =============================================================================
 
-/// Creates a [`DetectedError`] object with all required fields.
+/// 创建一个包含所有必需字段的 [`DetectedError`] 对象。
 ///
-/// Generates a UUID for the error ID and truncates the message to the
-/// maximum display length.
+/// 为错误 ID 生成 UUID，并将消息截断到最大显示长度。
+
 pub fn create_detected_error(params: CreateDetectedErrorParams) -> DetectedError {
     DetectedError {
         id: Uuid::new_v4().to_string(),
@@ -165,7 +165,7 @@ pub fn create_detected_error(params: CreateDetectedErrorParams) -> DetectedError
 }
 
 // =============================================================================
-// Tests
+// 测试
 // =============================================================================
 
 #[cfg(test)]
@@ -176,7 +176,7 @@ mod tests {
     use serde_json::json;
 
     // ---------------------------------------------------------------------------
-    // Helpers
+    // 辅助函数
     // ---------------------------------------------------------------------------
 
     fn make_extracted_tool_result(
@@ -380,7 +380,7 @@ mod tests {
             Some("tu_other"),
             Some(json!({"toolName": "Write"})),
         );
-        // sourceToolUseID is "tu_other", we query "tu1" — should not match
+        // sourceToolUseID 为 "tu_other"，查询 "tu1" — 不应匹配
         assert_eq!(find_tool_name_by_tool_use_id(&msg, "tu1"), None);
     }
 
@@ -392,7 +392,7 @@ mod tests {
             Some("tu1"),
             Some(json!({"toolName": "Bash"})),
         );
-        // toolCalls match should take priority over toolUseResult
+        // toolCalls 匹配应优先于 toolUseResult
         assert_eq!(
             find_tool_name_by_tool_use_id(&msg, "tu1"),
             Some("Read".to_string())

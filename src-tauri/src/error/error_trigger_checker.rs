@@ -1,12 +1,12 @@
-//! Error trigger checker -- checks different trigger types against messages.
+//! 错误触发器检查器 —— 检查不同类型的触发器是否匹配消息。
 //!
-//! Provides utilities for:
-//! - Checking tool_result triggers (error_status + content_match modes)
-//! - Checking tool_use triggers (content matching against tool input)
-//! - Checking token_threshold triggers (per-tool-use token counting)
-//! - Validating project scope (repository filtering)
+//! 提供以下功能：
+//! - 检查 tool_result 触发器（error_status + content_match 模式）
+//! - 检查 tool_use 触发器（基于工具输入内容的匹配）
+//! - 检查 token_threshold 触发器（按 tool_use 的 token 计数）
+//! - 验证项目范围（仓库过滤）
 //!
-//! Ported from Electron `src/main/services/error/ErrorTriggerChecker.ts`.
+//! 从 Electron `src/main/services/error/ErrorTriggerChecker.ts` 移植而来。
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -31,43 +31,43 @@ use crate::types::messages::{ParsedMessage, ToolCall};
 use crate::utils::path_decoder::extract_project_name;
 
 // =============================================================================
-// Repository Scope Checking
+// 仓库范围检查
 // =============================================================================
 
-/// Thread-safe cache for projectId -> repositoryId mapping.
+/// 线程安全的 projectId -> repositoryId 映射缓存。
 static REPOSITORY_ID_CACHE: LazyLock<RwLock<HashMap<String, Option<String>>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
-/// Target for pre-resolving repository IDs.
+/// 预解析仓库 ID 的目标。
 #[derive(Debug, Clone)]
 pub struct RepositoryScopeTarget {
     pub project_id: String,
     pub cwd_hint: Option<String>,
 }
 
-/// Checks if the project matches the trigger's repository scope.
+/// 检查项目是否匹配触发器的仓库范围。
 ///
-/// If no repository IDs are specified, the trigger applies to all repositories.
-/// If repository IDs are specified but the project's repository ID cannot be
-/// resolved from cache, the trigger does not match.
+/// 若未指定仓库 ID，则触发器适用于所有仓库。
+/// 若指定了仓库 ID 但无法从缓存中解析项目的仓库 ID，
+/// 则触发器不匹配。
 ///
-/// # Arguments
-/// * `project_id` - The encoded project ID (e.g., "-Users-username-myproject")
-/// * `repository_ids` - Optional list of repository group IDs to scope the trigger to
+/// # 参数
+/// * `project_id` - 编码后的项目 ID（例如 "-Users-username-myproject"）
+/// * `repository_ids` - 可选的仓库组 ID 列表，用于限定触发器作用范围
 ///
-/// # Returns
-/// `true` if the trigger should apply, `false` if it should be skipped.
+/// # 返回值
+/// 若触发器应应用于此项目则返回 `true`，否则返回 `false`。
 pub fn matches_repository_scope(
     project_id: &str,
     repository_ids: Option<&[String]>,
 ) -> bool {
-    // If no repository IDs specified, trigger applies to all repositories
+    // 未指定仓库 ID 时，触发器适用于所有仓库
     let ids = match repository_ids {
         Some(ids) if !ids.is_empty() => ids,
         _ => return true,
     };
 
-    // Get the repository ID for this project (from cache)
+    // 从缓存中获取此项目的仓库 ID
     let repo_id = {
         let cache = REPOSITORY_ID_CACHE
             .read()
@@ -80,44 +80,44 @@ pub fn matches_repository_scope(
         _ => return false,
     };
 
-    // Check if the repository ID matches any of the configured IDs
+    // 检查仓库 ID 是否匹配任意已配置的 ID
     ids.iter().any(|id| id == &resolved_id)
 }
 
-/// Pre-resolves repository IDs for multiple projects.
+/// 预解析多个项目的仓库 ID。
 ///
-/// Call this before checking triggers to populate the cache.
-/// Uses the `GitIdentityResolver` for actual resolution.
+/// 在检查触发器之前调用此函数以填充缓存。
+/// 使用 `GitIdentityResolver` 进行实际解析。
 ///
-/// # Arguments
-/// * `targets` - List of project IDs (or targets with cwd hints) to resolve
+/// # 参数
+/// * `targets` - 待解析的项目 ID 列表（或带 cwd 提示的目标）
 pub fn pre_resolve_repository_ids(_targets: &[RepositoryScopeTarget]) {
-    // TODO: Implement actual resolution using GitIdentityResolver.
-    // For now, this is a stub -- repository filtering can be implemented later
-    // once the project path resolver is available in the Tauri backend.
+    // TODO: 使用 GitIdentityResolver 实现实际的仓库 ID 解析。
+    // 当前为空实现 —— 待 Tauri 后端中项目路径解析器可用后，
+    // 再实现仓库过滤功能。
 }
 
 // =============================================================================
-// Tool Result Trigger Checking
+// 工具结果触发器检查
 // =============================================================================
 
-/// Checks if a tool_result matches a trigger.
+/// 检查 tool_result 是否匹配触发器。
 ///
-/// Handles two modes:
-/// - `require_error`: Only matches when `is_error` is true on a tool result
-/// - Content matching: Matches tool result content against the trigger pattern
+/// 处理两种模式：
+/// - `require_error`：仅当工具结果的 `is_error` 为 true 时匹配
+/// - 内容匹配：将工具结果内容与触发器 pattern 进行匹配
 ///
-/// # Arguments
-/// * `message` - The parsed message to check
-/// * `trigger` - The notification trigger configuration
-/// * `tool_use_map` - Map of tool_use ID to ToolUseInfo
-/// * `session_id` - Session identifier
-/// * `project_id` - Project identifier
-/// * `file_path` - Source file path
-/// * `line_number` - Line number in the file
+/// # 参数
+/// * `message` - 待检查的已解析消息
+/// * `trigger` - 通知触发器配置
+/// * `tool_use_map` - tool_use ID 到 ToolUseInfo 的映射
+/// * `session_id` - 会话标识符
+/// * `project_id` - 项目标识符
+/// * `file_path` - 源文件路径
+/// * `line_number` - 文件中的行号
 ///
-/// # Returns
-/// A `DetectedError` if the trigger matches, `None` otherwise.
+/// # 返回值
+/// 若触发器匹配则返回 `DetectedError`，否则返回 `None`。
 pub fn check_tool_result_trigger(
     message: &ParsedMessage,
     trigger: &NotificationTrigger,
@@ -135,21 +135,21 @@ pub fn check_tool_result_trigger(
     let timestamp_ms = parse_timestamp_to_ms(&message.timestamp);
 
     for result in &tool_results {
-        // If requireError is true, only match when is_error is true
+        // 若 requireError 为 true，仅匹配 is_error 为 true 的结果
         if trigger.require_error.unwrap_or(false) {
             if !result.is_error {
                 continue;
             }
 
-            // Extract error message for ignore pattern checking
+            // 提取错误消息用于忽略模式检查
             let error_message = extract_error_message(result);
 
-            // Check ignore patterns -- if any match, skip this error
+            // 检查忽略模式 —— 若任意匹配则跳过此错误
             if matches_ignore_patterns(&error_message, ignore_patterns) {
                 continue;
             }
 
-            // Create detected error
+            // 创建已检测的错误
             return Some(create_detected_error(CreateDetectedErrorParams {
                 session_id: session_id.to_string(),
                 project_id: project_id.to_string(),
@@ -171,7 +171,7 @@ pub fn check_tool_result_trigger(
             }));
         }
 
-        // Non-error tool_result triggers (if toolName is specified)
+        // 非错误 tool_result 触发器（若指定了 toolName）
         if let Some(ref tool_name) = trigger.tool_name {
             let tool_use = tool_use_map.get(&result.tool_use_id);
             if let Some(info) = tool_use {
@@ -182,7 +182,7 @@ pub fn check_tool_result_trigger(
                 continue;
             }
 
-            // Match against content if matchField is 'content'
+            // 当 matchField 为 .content. 时，匹配内容
             if trigger.match_field.as_deref() == Some("content") {
                 if let Some(ref pattern) = trigger.match_pattern {
                     let content = match &result.content {
@@ -225,24 +225,24 @@ pub fn check_tool_result_trigger(
 }
 
 // =============================================================================
-// Tool Use Trigger Checking
+// 工具调用触发器检查
 // =============================================================================
 
-/// Checks if a tool_use matches a trigger.
+/// 检查 tool_use 是否匹配触发器。
 ///
-/// Iterates over content blocks looking for `tool_use` type blocks,
-/// then checks tool name filter, pattern match, and ignore patterns.
+/// 遍历内容块查找 `tool_use` 类型的块，
+/// 然后检查工具名称过滤、模式匹配和忽略模式。
 ///
-/// # Arguments
-/// * `message` - The parsed message to check (must be assistant type)
-/// * `trigger` - The notification trigger configuration
-/// * `session_id` - Session identifier
-/// * `project_id` - Project identifier
-/// * `file_path` - Source file path
-/// * `line_number` - Line number in the file
+/// # 参数
+/// * `message` - 待检查的已解析消息（必须为 assistant 类型）
+/// * `trigger` - 通知触发器配置
+/// * `session_id` - 会话标识符
+/// * `project_id` - 项目标识符
+/// * `file_path` - 源文件路径
+/// * `line_number` - 文件中的行号
 ///
-/// # Returns
-/// A `DetectedError` if the trigger matches, `None` otherwise.
+/// # 返回值
+/// 若触发器匹配则返回 `DetectedError`，否则返回 `None`。
 pub fn check_tool_use_trigger(
     message: &ParsedMessage,
     trigger: &NotificationTrigger,
@@ -265,12 +265,12 @@ pub fn check_tool_use_trigger(
             continue;
         }
 
-        // Extract tool_use fields from the JSON block
+        // 从 JSON 块中提取 tool_use 字段
         let tool_use_id = block.get("id").and_then(|v| v.as_str()).unwrap_or("");
         let tool_use_name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
         let tool_use_input = block.get("input").cloned().unwrap_or(serde_json::Value::Null);
 
-        // Build a ToolCall for field extraction
+        // 构建 ToolCall 用于字段提取
         let tool_call = ToolCall {
             id: tool_use_id.to_string(),
             name: tool_use_name.to_string(),
@@ -280,19 +280,19 @@ pub fn check_tool_use_trigger(
             task_subagent_type: None,
         };
 
-        // Check tool name if specified
+        // 若指定了工具名称则进行过滤
         if let Some(ref trigger_tool_name) = trigger.tool_name {
             if tool_use_name != trigger_tool_name {
                 continue;
             }
         }
 
-        // Extract the field to match based on matchField
-        // If no matchField specified (e.g., "Any Tool"), match against entire input JSON
+        // 根据 matchField 提取待匹配的字段
+        // 若未指定 matchField（如"任意工具"），则匹配整个 input JSON
         let field_value = if trigger.match_field.is_some() {
             extract_tool_use_field(&tool_call, trigger.match_field.as_deref())
         } else {
-            // Match against entire input JSON
+            // 匹配整个 input JSON
             let input_str = serde_json::to_string(&tool_call.input).unwrap_or_default();
             if input_str.is_empty() || input_str == "null" {
                 None
@@ -306,19 +306,19 @@ pub fn check_tool_use_trigger(
             None => continue,
         };
 
-        // Check match pattern
+        // 检查匹配模式
         if let Some(ref pattern) = trigger.match_pattern {
             if !matches_pattern(&field_value, pattern) {
                 continue;
             }
         }
 
-        // Check ignore patterns
+        // 检查忽略模式
         if matches_ignore_patterns(&field_value, ignore_patterns) {
             continue;
         }
 
-        // Match found!
+        // 匹配成功！
         let field_label = trigger
             .match_field
             .as_deref()
@@ -348,30 +348,30 @@ pub fn check_tool_use_trigger(
 }
 
 // =============================================================================
-// Token Threshold Trigger Checking
+// Token 阈值触发器检查
 // =============================================================================
 
-/// Check if individual tool_use blocks exceed the token threshold.
+/// 检查单个 tool_use 块是否超过 token 阈值。
 ///
-/// Returns an array of `DetectedError` for each tool_use that exceeds the
-/// threshold.
+/// 为每个超过阈值的 tool_use 返回一个 `DetectedError` 数组。
+
 ///
-/// Token calculation (matches context window impact):
-/// - Tool call tokens: estimated from name + JSON.stringify(input) (what enters context)
-/// - Tool result tokens: estimated from tool_result.content (what Claude reads)
-/// - Total = call + result
+/// Token 计算方式（反映上下文窗口影响）：
+/// - 工具调用 token：根据 name + JSON.stringify(input) 估算（进入上下文的部分）
+/// - 工具结果 token：根据 tool_result.content 估算（Claude 读取的部分）
+/// - 总计 = 调用 + 结果
 ///
-/// # Arguments
-/// * `message` - The parsed message to check (must be assistant type)
-/// * `trigger` - The notification trigger configuration
-/// * `tool_result_map` - Map of tool_use ID to ToolResultInfo
-/// * `session_id` - Session identifier
-/// * `project_id` - Project identifier
-/// * `file_path` - Source file path
-/// * `line_number` - Line number in the file
+/// # 参数
+/// * `message` - 待检查的已解析消息（必须为 assistant 类型）
+/// * `trigger` - 通知触发器配置
+/// * `tool_result_map` - tool_use ID 到 ToolResultInfo 的映射
+/// * `session_id` - 会话标识符
+/// * `project_id` - 项目标识符
+/// * `file_path` - 源文件路径
+/// * `line_number` - 文件中的行号
 ///
-/// # Returns
-/// Vector of `DetectedError` for each tool_use that exceeds the threshold.
+/// # 返回值
+/// 每个超过阈值的 tool_use 对应的 `DetectedError` 向量。
 pub fn check_token_threshold_trigger(
     message: &ParsedMessage,
     trigger: &NotificationTrigger,
@@ -383,7 +383,7 @@ pub fn check_token_threshold_trigger(
 ) -> Vec<DetectedError> {
     let mut errors = Vec::new();
 
-    // Only check for token_threshold mode
+    // 仅检查 token_threshold 模式
     if trigger.mode != TriggerMode::TokenThreshold {
         return errors;
     }
@@ -393,7 +393,7 @@ pub fn check_token_threshold_trigger(
         _ => return errors,
     };
 
-    // Only check assistant messages that contain tool_use blocks
+    // 仅检查包含 tool_use 块的 assistant 消息
     if message.message_type != MessageType::Assistant {
         return errors;
     }
@@ -402,11 +402,11 @@ pub fn check_token_threshold_trigger(
     let ignore_patterns: &[String] = trigger.ignore_patterns.as_deref().unwrap_or(&[]);
     let timestamp_ms = parse_timestamp_to_ms(&message.timestamp);
 
-    // Collect all tool_use blocks from message, avoiding duplicates
+    // 从消息中收集所有 tool_use 块，避免重复
     let mut seen_ids: HashMap<String, bool> = HashMap::new();
     let mut tool_use_blocks: Vec<(String, String, serde_json::Value)> = Vec::new();
 
-    // Check content array for tool_use blocks
+    // 从 content 数组中查找 tool_use 块
     if let serde_json::Value::Array(ref blocks) = message.content {
         for block in blocks {
             if block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
@@ -430,7 +430,7 @@ pub fn check_token_threshold_trigger(
         }
     }
 
-    // Also check toolCalls array if present
+    // 同时检查 toolCalls 数组（若存在）
     for tool_call in &message.tool_calls {
         if !seen_ids.contains_key(&tool_call.id) {
             seen_ids.insert(tool_call.id.clone(), true);
@@ -446,41 +446,41 @@ pub fn check_token_threshold_trigger(
         return errors;
     }
 
-    // Check each tool_use block individually
+    // 逐个检查每个 tool_use 块
     for (tool_use_id, tool_use_name, tool_use_input) in &tool_use_blocks {
-        // Check tool name filter if specified
+        // 若指定了工具名称则进行过滤
         if let Some(ref trigger_tool_name) = trigger.tool_name {
             if tool_use_name != trigger_tool_name {
                 continue;
             }
         }
 
-        // Calculate tool call tokens directly from name + input
+        // 直接从 name + input 计算工具调用的 token 数
         let call_text = format!("{}{}", tool_use_name, tool_use_input);
         let tool_call_tokens = estimate_tokens(&serde_json::Value::String(call_text));
 
-        // Calculate tool result tokens (what Claude reads back)
+        // 计算工具结果的 token 数（Claude 回读的部分）
         let tool_result_tokens = tool_result_map
             .get(tool_use_id)
             .map(|result| estimate_tokens(&result.content))
             .unwrap_or(0);
 
-        // Calculate token count based on tokenType
+        // 根据 tokenType 计算 token 数量
         let token_count = match token_type {
             TriggerTokenType::Input => tool_call_tokens,
             TriggerTokenType::Output => tool_result_tokens,
             TriggerTokenType::Total => tool_call_tokens + tool_result_tokens,
         };
 
-        // Check threshold
+        // 检查阈值
         if token_count <= threshold {
             continue;
         }
 
-        // Build summary for the tool
+        // 构建工具摘要信息
         let tool_summary = get_tool_summary(tool_use_name, tool_use_input);
 
-        // Build message with tool info and token type for clarity
+        // 构建包含工具信息和 token 类型的消息
         let token_type_label = match token_type {
             TriggerTokenType::Total => String::new(),
             other => format!(" {}", serde_json::to_string(other).unwrap_or_default()),
@@ -493,7 +493,7 @@ pub fn check_token_threshold_trigger(
             token_type_label
         );
 
-        // Check ignore patterns
+        // 检查忽略模式
         if matches_ignore_patterns(&token_message, ignore_patterns) {
             continue;
         }
@@ -520,15 +520,15 @@ pub fn check_token_threshold_trigger(
 }
 
 // =============================================================================
-// Helpers
+// 辅助函数
 // =============================================================================
 
-/// Truncate content to a maximum length for display.
+/// 将内容截断到最大长度用于显示。
 fn truncate_content(content: &str, max_len: usize) -> String {
     if content.len() <= max_len {
         return content.to_string();
     }
-    // Try to truncate at a character boundary
+    // 尝试在字符边界处截断
     let end = content
         .char_indices()
         .take_while(|(i, _)| *i < max_len)
@@ -538,21 +538,21 @@ fn truncate_content(content: &str, max_len: usize) -> String {
     format!("{}...", &content[..end])
 }
 
-/// Parse a timestamp string to milliseconds since epoch.
+/// 将时间戳字符串解析为自纪元以来的毫秒数。
 ///
-/// Handles ISO 8601 format strings and millisecond timestamps.
+/// 支持 ISO 8601 格式字符串和毫秒时间戳。
 fn parse_timestamp_to_ms(timestamp: &str) -> u64 {
-    // Try parsing as a millisecond timestamp first
+    // 首先尝试解析为毫秒时间戳
     if let Ok(ms) = timestamp.parse::<u64>() {
         return ms;
     }
 
-    // Try ISO 8601 parsing
+    // 尝试 ISO 8601 解析
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(timestamp) {
         return dt.timestamp_millis() as u64;
     }
 
-    // Fallback: return 0
+    // 回退：返回 0
     0
 }
 
@@ -568,7 +568,7 @@ mod tests {
     use serde_json::json;
 
     // ---------------------------------------------------------------------------
-    // Helpers
+    // 辅助函数
     // ---------------------------------------------------------------------------
 
     fn make_trigger(

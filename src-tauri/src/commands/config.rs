@@ -7,9 +7,10 @@ use crate::types::config::AppConfig;
 use tauri_plugin_opener::OpenerExt;
 
 // =============================================================================
-// Config Commands
+// 配置命令
 // =============================================================================
 
+/// 获取当前完整的应用配置。
 #[command]
 pub async fn get_config(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -18,6 +19,10 @@ pub async fn get_config(
     Ok(app_state.config_manager.get_config())
 }
 
+/// 更新配置的指定分区。
+///
+/// `section` 为配置分区名称（如 "general"、"notification"），`data` 为该分区的 JSON 数据。
+/// 采用深度合并策略，未变更的字段保留原值。
 #[command]
 pub async fn update_config(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -29,9 +34,12 @@ pub async fn update_config(
 }
 
 // =============================================================================
-// Notification Ignore Regex
+// 通知忽略正则
 // =============================================================================
 
+/// 添加通知忽略正则表达式。
+///
+/// 匹配该正则的错误消息将不会触发通知。
 #[command]
 pub async fn add_ignore_regex(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -41,6 +49,7 @@ pub async fn add_ignore_regex(
     app_state.config_manager.add_ignore_regex(pattern)
 }
 
+/// 移除指定的通知忽略正则表达式。
 #[command]
 pub async fn remove_ignore_regex(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -51,9 +60,10 @@ pub async fn remove_ignore_regex(
 }
 
 // =============================================================================
-// Session Pin/Hide
+// 会话置顶/隐藏
 // =============================================================================
 
+/// 置顶指定会话。
 #[command]
 pub async fn pin_session(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -64,6 +74,7 @@ pub async fn pin_session(
     Ok(app_state.config_manager.pin_session(project_id, session_id))
 }
 
+/// 取消置顶指定会话。
 #[command]
 pub async fn unpin_session(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -74,6 +85,7 @@ pub async fn unpin_session(
     Ok(app_state.config_manager.unpin_session(project_id, session_id))
 }
 
+/// 隐藏指定会话。
 #[command]
 pub async fn hide_session(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -84,6 +96,7 @@ pub async fn hide_session(
     Ok(app_state.config_manager.hide_session(project_id, session_id))
 }
 
+/// 取消隐藏指定会话。
 #[command]
 pub async fn unhide_session(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -95,9 +108,10 @@ pub async fn unhide_session(
 }
 
 // =============================================================================
-// Snooze
+// 通知暂停
 // =============================================================================
 
+/// 暂停通知推送指定分钟数。
 #[command]
 pub async fn snooze(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -107,6 +121,7 @@ pub async fn snooze(
     Ok(app_state.config_manager.snooze(minutes))
 }
 
+/// 清除通知暂停设置，恢复通知推送。
 #[command]
 pub async fn clear_snooze(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -116,9 +131,10 @@ pub async fn clear_snooze(
 }
 
 // =============================================================================
-// Notification Triggers
+// 通知触发器
 // =============================================================================
 
+/// 添加自定义通知触发器。
 #[command]
 pub async fn add_trigger(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -128,6 +144,7 @@ pub async fn add_trigger(
     app_state.config_manager.add_trigger(trigger)
 }
 
+/// 更新指定通知触发器的配置。
 #[command]
 pub async fn update_trigger(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -138,6 +155,7 @@ pub async fn update_trigger(
     app_state.config_manager.update_trigger(&trigger_id, updates)
 }
 
+/// 删除指定通知触发器。
 #[command]
 pub async fn remove_trigger(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -147,6 +165,7 @@ pub async fn remove_trigger(
     app_state.config_manager.remove_trigger(&trigger_id)
 }
 
+/// 获取所有通知触发器列表。
 #[command]
 pub async fn get_triggers(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -155,6 +174,9 @@ pub async fn get_triggers(
     Ok(app_state.config_manager.get_triggers())
 }
 
+/// 测试通知触发器。
+///
+/// 使用项目扫描器扫描现有会话数据，检验触发器是否能匹配到错误。
 #[command]
 pub async fn test_trigger(
     trigger: crate::types::config::NotificationTrigger,
@@ -167,9 +189,12 @@ pub async fn test_trigger(
 }
 
 // =============================================================================
-// Repository Ignore
+// 仓库忽略
 // =============================================================================
 
+/// 添加仓库到忽略列表。
+///
+/// 被忽略的仓库将不会出现在项目列表中。
 #[command]
 pub async fn add_ignore_repository(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -179,6 +204,7 @@ pub async fn add_ignore_repository(
     Ok(app_state.config_manager.add_ignore_repository(repository_id))
 }
 
+/// 从忽略列表中移除指定仓库。
 #[command]
 pub async fn remove_ignore_repository(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -189,9 +215,10 @@ pub async fn remove_ignore_repository(
 }
 
 // =============================================================================
-// Bulk Session Hide/Unhide
+// 批量隐藏/取消隐藏会话
 // =============================================================================
 
+/// 批量隐藏指定会话。
 #[command]
 pub async fn hide_sessions(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -202,6 +229,7 @@ pub async fn hide_sessions(
     Ok(app_state.config_manager.hide_sessions(project_id, session_ids))
 }
 
+/// 批量取消隐藏指定会话。
 #[command]
 pub async fn unhide_sessions(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -213,9 +241,13 @@ pub async fn unhide_sessions(
 }
 
 // =============================================================================
-// Editor & Claude Root
+// 编辑器与 Claude 根目录
 // =============================================================================
 
+/// 在系统编辑器中打开配置文件。
+///
+/// 按优先级尝试 `$VISUAL`、`$EDITOR` 环境变量，以及常见编辑器（cursor、code、zed、subl），
+/// 最终回退到系统默认打开方式。
 #[command]
 pub async fn open_in_editor(
     app: tauri::AppHandle,
@@ -227,33 +259,36 @@ pub async fn open_in_editor(
 
     let config_path_str = config_path.to_string_lossy().to_string();
 
-    // Try $VISUAL
+    // 尝试 $VISUAL 环境变量
     if let Ok(editor) = std::env::var("VISUAL") {
         if try_spawn_editor(&editor, &config_path_str).await {
             return Ok(());
         }
     }
 
-    // Try $EDITOR
+    // 尝试 $EDITOR 环境变量
     if let Ok(editor) = std::env::var("EDITOR") {
         if try_spawn_editor(&editor, &config_path_str).await {
             return Ok(());
         }
     }
 
-    // Try common editors
+    // 尝试常见编辑器
     for editor in &["cursor", "code", "zed", "subl"] {
         if try_spawn_editor(editor, &config_path_str).await {
             return Ok(());
         }
     }
 
-    // Fallback: system default
+    // 回退到系统默认打开方式
     app.opener()
         .open_path(&config_path_str, None::<&str>)
         .map_err(|e| format!("Failed to open config file: {}", e))
 }
 
+/// 获取 Claude 根目录信息。
+///
+/// 返回默认路径（`~/.claude`）、用户自定义路径和实际使用的解析路径。
 #[command]
 pub async fn get_claude_root_info(
     state: State<'_, Arc<RwLock<AppState>>>,
@@ -276,15 +311,16 @@ pub async fn get_claude_root_info(
 }
 
 // =============================================================================
-// Projects Directory Check
+// 项目目录检查
 // =============================================================================
 
+/// 检查指定路径下是否存在 `projects` 目录。
 #[command]
 pub async fn check_projects_dir_exists(path: String) -> Result<bool, String> {
     Ok(std::path::Path::new(&path).join("projects").is_dir())
 }
 
-/// Try to spawn an editor process. Returns true if successful.
+/// 尝试启动编辑器进程打开文件。成功返回 `true`。
 async fn try_spawn_editor(editor: &str, file_path: &str) -> bool {
     tokio::process::Command::new(editor)
         .arg(file_path)

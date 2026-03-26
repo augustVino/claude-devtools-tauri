@@ -1,3 +1,15 @@
+//! 配置管理器 — 管理应用配置的加载、合并、分区更新和持久化。
+//!
+//! 配置文件路径: `~/.claude/claude-devtools-config.json`
+//!
+//! 核心特性:
+//! - 加载时与默认值进行深度合并，新增字段自动填充
+//! - 支持按分区更新 (notifications / general / display / sessions)
+//! - 会话的置顶/隐藏/批量操作
+//! - 通知的正则忽略列表和仓库忽略列表管理
+//! - 通知暂停 (snooze) 和恢复
+//! - 通知触发器的 CRUD 操作
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::RwLock;
@@ -7,10 +19,14 @@ use log::{error, info};
 use serde_json;
 use tokio::fs;
 
+/// 配置文件名
 const CONFIG_FILENAME: &str = "claude-devtools-config.json";
+
+/// 默认忽略的正则表达式列表（匹配用户拒绝工具使用的消息）
 const DEFAULT_IGNORED_REGEX: &[&str] =
     &[r"The user doesn't want to proceed with this tool use\."];
 
+/// 构造默认应用配置
 fn default_app_config() -> AppConfig {
     AppConfig {
         notifications: NotificationConfig {
@@ -46,10 +62,12 @@ fn default_app_config() -> AppConfig {
     }
 }
 
+/// 将默认配置序列化为 JSON Value
 fn default_config_json() -> serde_json::Value {
     serde_json::to_value(default_app_config()).expect("default config must serialize")
 }
 
+/// 获取当前时间的毫秒级 UNIX 时间戳
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -57,12 +75,19 @@ fn now_millis() -> u64 {
         .as_millis() as u64
 }
 
+/// 应用配置管理器
+///
+/// 负责从磁盘加载配置、深度合并默认值、分区更新和持久化。
+/// 内部使用 `RwLock` 保证线程安全的读写访问。
 pub struct ConfigManager {
+    /// 当前配置（受读写锁保护）
     config: RwLock<AppConfig>,
+    /// 配置文件路径
     config_path: PathBuf,
 }
 
 impl ConfigManager {
+    /// 使用默认路径 (`~/.claude/claude-devtools-config.json`) 创建配置管理器
     pub fn new() -> Self {
         let config_path = dirs::home_dir()
             .expect("home directory must exist")
@@ -74,6 +99,7 @@ impl ConfigManager {
         }
     }
 
+    /// 使用自定义路径创建配置管理器（主要用于测试）
     pub fn with_path(path: PathBuf) -> Self {
         Self {
             config: RwLock::new(default_app_config()),
@@ -81,6 +107,8 @@ impl ConfigManager {
         }
     }
 
+    /// 初始化：从磁盘加载配置并与默认值深度合并。
+    /// 如果配置文件不存在则使用默认值。
     pub async fn initialize(&self) -> Result<(), String> {
         let loaded = self.load_config().await?;
         let mut config = self
@@ -91,11 +119,13 @@ impl ConfigManager {
         Ok(())
     }
 
-    /// Returns the path to the config file.
+    /// 返回配置文件的路径
     pub fn get_config_path(&self) -> std::path::PathBuf {
         self.config_path.clone()
     }
 
+    /// 获取当前配置的完整副本。
+    /// 获取锁失败时返回默认配置并记录错误日志。
     pub fn get_config(&self) -> AppConfig {
         self.config
             .read()
@@ -106,6 +136,11 @@ impl ConfigManager {
             })
     }
 
+    /// 分区更新配置。
+    ///
+    /// 仅支持 `notifications`、`general`、`display`、`sessions` 四个分区。
+    /// 更新后自动与默认值合并，确保新增字段有默认值。
+    /// 更新完成后自动持久化到磁盘。
     pub fn update_config(
         &self,
         section: &str,
@@ -129,12 +164,14 @@ impl ConfigManager {
             let merged: AppConfig = merge_with_defaults(&updated)?;
             *config = merged.clone();
             merged
-        }; // Write lock is released here
+        }; // 写锁在此处释放
 
-        self.persist()?; // Now persist can acquire read lock safely
+        self.persist()?; // 持久化可以安全地获取读锁
         Ok(merged)
     }
 
+    /// 添加一个正则表达式到忽略列表。
+    /// 会校验正则语法和去重。
     pub fn add_ignore_regex(&self, pattern: String) -> Result<AppConfig, String> {
         let trimmed = pattern.trim().to_string();
         if trimmed.is_empty() {
@@ -157,6 +194,8 @@ impl ConfigManager {
         self.persist()?;
         Ok(self.get_config())
     }
+
+    /// 从忽略列表中移除指定的正则表达式
     pub fn remove_ignore_regex(&self, pattern: String) -> AppConfig {
         if let Ok(mut config) = self.config.write() {
             config.notifications.ignored_regex.retain(|p| p != &pattern);
@@ -165,6 +204,8 @@ impl ConfigManager {
         }
         self.get_config()
     }
+
+    /// 添加一个仓库 ID 到忽略列表
     pub fn add_ignore_repository(&self, repo_id: String) -> AppConfig {
         let trimmed = repo_id.trim().to_string();
         if trimmed.is_empty() {
@@ -179,6 +220,8 @@ impl ConfigManager {
         }
         self.get_config()
     }
+
+    /// 从忽略列表中移除指定的仓库 ID
     pub fn remove_ignore_repository(&self, repo_id: String) -> AppConfig {
         if let Ok(mut config) = self.config.write() {
             config.notifications.ignored_repositories.retain(|id| id != &repo_id);
@@ -187,6 +230,8 @@ impl ConfigManager {
         }
         self.get_config()
     }
+
+    /// 暂停通知指定分钟数
     pub fn snooze(&self, minutes: u32) -> AppConfig {
         let snoozed_until = now_millis() + (minutes as u64) * 60 * 1000;
         if let Ok(mut config) = self.config.write() {
@@ -197,6 +242,8 @@ impl ConfigManager {
         }
         self.get_config()
     }
+
+    /// 清除通知暂停状态，恢复通知
     pub fn clear_snooze(&self) -> AppConfig {
         if let Ok(mut config) = self.config.write() {
             config.notifications.snoozed_until = None;
@@ -206,6 +253,8 @@ impl ConfigManager {
         }
         self.get_config()
     }
+
+    /// 置顶指定会话（插入到列表头部，已存在则跳过）
     pub fn pin_session(&self, project_id: String, session_id: String) -> AppConfig {
         if let Ok(mut config) = self.config.write() {
             let pins = config.sessions.pinned_sessions.entry(project_id.clone()).or_default();
@@ -217,6 +266,8 @@ impl ConfigManager {
         }
         self.get_config()
     }
+
+    /// 取消置顶指定会话，并清理空的项目条目
     pub fn unpin_session(&self, project_id: String, session_id: String) -> AppConfig {
         if let Ok(mut config) = self.config.write() {
             if let Some(pins) = config.sessions.pinned_sessions.get_mut(&project_id) {
@@ -228,6 +279,8 @@ impl ConfigManager {
         }
         self.get_config()
     }
+
+    /// 隐藏指定会话（插入到列表头部，已存在则跳过）
     pub fn hide_session(&self, project_id: String, session_id: String) -> AppConfig {
         if let Ok(mut config) = self.config.write() {
             let hidden = config.sessions.hidden_sessions.entry(project_id.clone()).or_default();
@@ -239,6 +292,8 @@ impl ConfigManager {
         }
         self.get_config()
     }
+
+    /// 取消隐藏指定会话，并清理空的项目条目
     pub fn unhide_session(&self, project_id: String, session_id: String) -> AppConfig {
         if let Ok(mut config) = self.config.write() {
             if let Some(hidden) = config.sessions.hidden_sessions.get_mut(&project_id) {
@@ -250,6 +305,8 @@ impl ConfigManager {
         }
         self.get_config()
     }
+
+    /// 批量隐藏会话（去重后插入到列表头部）
     pub fn hide_sessions(&self, project_id: String, session_ids: Vec<String>) -> AppConfig {
         if session_ids.is_empty() {
             return self.get_config();
@@ -257,6 +314,7 @@ impl ConfigManager {
         let ts = now_millis();
         if let Ok(mut config) = self.config.write() {
             let hidden = config.sessions.hidden_sessions.entry(project_id.clone()).or_default();
+            // 收集已存在的会话 ID，避免重复
             let existing: std::collections::HashSet<String> =
                 hidden.iter().map(|h| h.session_id.clone()).collect();
             let new_entries: Vec<HiddenSession> = session_ids
@@ -274,6 +332,8 @@ impl ConfigManager {
         }
         self.get_config()
     }
+
+    /// 批量取消隐藏会话，并清理空的项目条目
     pub fn unhide_sessions(&self, project_id: String, session_ids: Vec<String>) -> AppConfig {
         if session_ids.is_empty() {
             return self.get_config();
@@ -290,18 +350,18 @@ impl ConfigManager {
         self.get_config()
     }
 
-    /// Get all notification triggers.
+    /// 获取所有通知触发器
     pub fn get_triggers(&self) -> Vec<NotificationTrigger> {
         let config = self.get_config();
         config.notifications.triggers.clone()
     }
 
-    /// Get only enabled triggers.
+    /// 仅获取已启用的通知触发器
     pub fn get_enabled_triggers(&self) -> Vec<NotificationTrigger> {
         self.get_triggers().into_iter().filter(|t| t.enabled).collect()
     }
 
-    /// Add a new trigger. Returns error if trigger ID already exists.
+    /// 添加新的通知触发器。若 ID 已存在则返回错误。
     pub fn add_trigger(
         &self,
         trigger: NotificationTrigger,
@@ -321,7 +381,8 @@ impl ConfigManager {
         Ok(self.get_config())
     }
 
-    /// Update an existing trigger by ID.
+    /// 根据 ID 更新已有的通知触发器。
+    /// 使用 camelCase 键名匹配 JSON 格式。
     pub fn update_trigger(
         &self,
         trigger_id: &str,
@@ -336,7 +397,7 @@ impl ConfigManager {
             .find(|t| t.id == trigger_id)
             .ok_or_else(|| format!("Trigger '{}' not found", trigger_id))?;
 
-        // Apply updates - use camelCase keys matching the JSON format
+        // 逐字段应用更新 — 使用 camelCase 键名匹配 JSON 格式
         if let Some(name) = updates.get("name").and_then(|v| v.as_str()) {
             trigger.name = name.to_string();
         }
@@ -369,7 +430,7 @@ impl ConfigManager {
         Ok(self.get_config())
     }
 
-    /// Remove a trigger by ID.
+    /// 根据 ID 移除通知触发器。未找到则返回错误。
     pub fn remove_trigger(
         &self,
         trigger_id: &str,
@@ -391,6 +452,8 @@ impl ConfigManager {
         Ok(self.get_config())
     }
 
+    /// 从磁盘加载配置文件并与默认值深度合并。
+    /// 文件不存在时直接返回默认配置。
     async fn load_config(&self) -> Result<AppConfig, String> {
         if !self.config_path.exists() {
             info!("No config file found at {:?}, using defaults", self.config_path);
@@ -404,6 +467,7 @@ impl ConfigManager {
         merge_with_defaults(&parsed)
     }
 
+    /// 将当前配置持久化到磁盘（格式化 JSON）
     fn persist(&self) -> Result<(), String> {
         let config = self.config.read().map_err(|e| format!("failed to acquire read lock: {e}"))?;
         if let Some(parent) = self.config_path.parent() {
@@ -416,13 +480,17 @@ impl ConfigManager {
     }
 }
 
-// Helpers
+// ========== 辅助函数 ==========
 
+/// 将加载的配置与默认值深度合并，确保所有字段都有值
 fn merge_with_defaults(loaded: &serde_json::Value) -> Result<AppConfig, String> {
     let defaults = default_config_json();
     let merged = json_merge(&defaults, loaded);
     serde_json::from_value(merged).map_err(|e| format!("failed to deserialize merged config: {e}"))
 }
+
+/// 递归深度合并两个 JSON Value。
+/// 对于 Object 类型递归合并；非 Object 类型直接用 patch 覆盖 base。
 fn json_merge(base: &serde_json::Value, patch: &serde_json::Value) -> serde_json::Value {
     match (base, patch) {
         (serde_json::Value::Object(base_map), serde_json::Value::Object(patch_map)) => {
@@ -436,6 +504,8 @@ fn json_merge(base: &serde_json::Value, patch: &serde_json::Value) -> serde_json
         (_, patch) => patch.clone(),
     }
 }
+
+/// 更新 JSON 中指定分区的值（深度合并）
 fn update_section(current: &serde_json::Value, section: &str, data: &serde_json::Value) -> serde_json::Value {
     let mut updated = current.clone();
     if let Some(current_section) = updated.get_mut(section) {
@@ -445,6 +515,8 @@ fn update_section(current: &serde_json::Value, section: &str, data: &serde_json:
     }
     updated
 }
+
+/// 清理项目下空的会话列表条目，避免 HashMap 中残留空 Vec
 fn cleanup_empty_project<T>(sessions: &mut HashMap<String, Vec<T>>, project_id: &str) {
     if sessions.get(project_id).is_some_and(|v| v.is_empty()) {
         sessions.remove(project_id);
@@ -493,9 +565,9 @@ mod tests {
         let p = temp_path();
         let m = ConfigManager::with_path(p.clone());
         assert!(m.add_ignore_regex("test-pat".into()).unwrap().notifications.ignored_regex.iter().any(|x| x == "test-pat"));
-        assert!(m.add_ignore_regex("test-pat".into()).is_err()); // dup
-        assert!(m.add_ignore_regex("(?P<bad".into()).is_err()); // invalid
-        assert!(m.add_ignore_regex("   ".into()).is_err()); // empty
+        assert!(m.add_ignore_regex("test-pat".into()).is_err()); // 重复
+        assert!(m.add_ignore_regex("(?P<bad".into()).is_err()); // 无效正则
+        assert!(m.add_ignore_regex("   ".into()).is_err()); // 空字符串
         assert!(!m.remove_ignore_regex("test-pat".into()).notifications.ignored_regex.iter().any(|x| x == "test-pat"));
         cleanup(&p);
     }
@@ -507,11 +579,11 @@ mod tests {
         let c = m.pin_session("p".into(), "s1".into());
         assert_eq!(c.sessions.pinned_sessions["p"][0].session_id, "s1");
         let c = m.pin_session("p".into(), "s2".into());
-        assert_eq!(c.sessions.pinned_sessions["p"][0].session_id, "s2"); // prepended
-        let c = m.pin_session("p".into(), "s1".into()); // idempotent
+        assert_eq!(c.sessions.pinned_sessions["p"][0].session_id, "s2"); // 插入到头部
+        let c = m.pin_session("p".into(), "s1".into()); // 幂等操作
         assert_eq!(c.sessions.pinned_sessions["p"].len(), 2);
         let c = m.unpin_session("p".into(), "s2".into());
-        assert_eq!(c.sessions.pinned_sessions["p"].len(), 1); // s1 remains
+        assert_eq!(c.sessions.pinned_sessions["p"].len(), 1); // s1 保留
         cleanup(&p);
     }
 
@@ -520,7 +592,7 @@ mod tests {
         let r = json_merge(&serde_json::json!({"a": 1, "b": {"c": 2, "d": 3}}), &serde_json::json!({"a": 10, "b": {"c": 20}}));
         assert_eq!(r["a"], 10);
         assert_eq!(r["b"]["c"], 20);
-        assert_eq!(r["b"]["d"], 3); // preserved
+        assert_eq!(r["b"]["d"], 3); // 保留未被覆盖的字段
     }
 
     #[tokio::test]

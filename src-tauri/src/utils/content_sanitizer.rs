@@ -1,19 +1,19 @@
-//! Content sanitization utilities aligned with Electron's contentSanitizer.ts.
+//! 内容清洗工具模块，与 Electron 端 contentSanitizer.ts 保持一致。
 //!
-//! Used for title extraction and display formatting of raw JSONL content
-//! that may contain XML tags injected by Claude Code.
+//! 用于从原始 JSONL 内容中提取标题和格式化显示文本，
+//! 处理 Claude Code 注入的 XML 标签。
 
-/// Tags that represent noise and should be completely removed.
+/// 需要完全移除的噪声标签列表。
 const NOISE_TAGS: &[&str] = &[
     "local-command-caveat",
     "system-reminder",
     "task-notification",
 ];
 
-/// Command-related tags to strip from mixed content.
+/// 混合内容中需要剥离的命令相关标签列表。
 const COMMAND_TAGS: &[&str] = &["command-name", "command-message", "command-args"];
 
-/// Remove all occurrences of a specific XML tag (including content between open/close).
+/// 移除指定 XML 标签及其内容（包括开闭标签之间的所有文本）。
 fn remove_tag(text: &str, tag: &str) -> String {
     let open = format!("<{}>", tag);
     let close = format!("</{}>", tag);
@@ -24,7 +24,7 @@ fn remove_tag(text: &str, tag: &str) -> String {
             let end = start + end_offset + close.len();
             result.replace_range(start..end, "");
         } else {
-            // Unclosed tag — remove from open tag to end
+            // 未闭合标签 — 从开标签处截断到末尾
             result.truncate(start);
             break;
         }
@@ -33,7 +33,7 @@ fn remove_tag(text: &str, tag: &str) -> String {
     result
 }
 
-/// Remove noise tags from content: `<local-command-caveat>`, `<system-reminder>`, `<task-notification>`.
+/// 从内容中移除噪声标签：`<local-command-caveat>`、`<system-reminder>`、`<task-notification>`。
 pub fn remove_noise_tags(text: &str) -> String {
     let mut result = text.to_string();
     for tag in NOISE_TAGS {
@@ -42,10 +42,10 @@ pub fn remove_noise_tags(text: &str) -> String {
     result
 }
 
-/// Extract command display from `<command-name>` tags.
+/// 从 `<command-name>` 标签中提取命令显示文本。
 ///
-/// The tag content already includes the `/` prefix (e.g., `<command-name>/compact</command-name>`).
-/// Returns e.g. `/model sonnet` or `/compact`.
+/// 标签内容已包含 `/` 前缀（如 `<command-name>/compact</command-name>`）。
+/// 返回值示例：`/model sonnet` 或 `/compact`。
 pub fn extract_command_display(text: &str) -> Option<String> {
     let name_start = "<command-name>";
     let name_end = "</command-name>";
@@ -62,7 +62,7 @@ pub fn extract_command_display(text: &str) -> Option<String> {
         rest.find(args_end).map(|e| rest[..e].trim().to_string())
     });
 
-    // name already includes the "/" prefix (e.g., "/model")
+    // name 已包含 "/" 前缀（如 "/model"）
     let display = match args {
         Some(ref a) if !a.is_empty() => format!("{} {}", name, a),
         _ => name,
@@ -71,23 +71,23 @@ pub fn extract_command_display(text: &str) -> Option<String> {
     Some(display)
 }
 
-/// Sanitize content for display (title extraction).
+/// 清洗内容用于显示（标题提取）。
 ///
-/// Matches Electron's `sanitizeDisplayContent()` behavior:
-/// 1. Removes noise tags
-/// 2. Removes remaining command tags
-/// 3. Removes trailing "Read the output file..." instructions
-/// 4. Trims whitespace
+/// 与 Electron 端 `sanitizeDisplayContent()` 行为一致：
+/// 1. 移除噪声标签
+/// 2. 移除剩余的命令标签
+/// 3. 移除末尾的 "Read the output file..." 指令
+/// 4. 去除首尾空白
 pub fn sanitize_display_content(text: &str) -> String {
-    // Remove noise tags
+    // 第一步：移除噪声标签
     let mut sanitized = remove_noise_tags(text);
 
-    // Remove remaining command tags (in case of mixed content)
+    // 第二步：移除剩余的命令标签（处理混合内容场景）
     for tag in COMMAND_TAGS {
         sanitized = remove_tag(&sanitized, tag);
     }
 
-    // Remove trailing "Read the output file to retrieve the result: /path" instructions
+    // 第三步：移除末尾的 "Read the output file to retrieve the result: /path" 指令
     if let Some(pos) = sanitized.find("Read the output file to retrieve the result:") {
         sanitized.truncate(pos);
     }
@@ -95,7 +95,7 @@ pub fn sanitize_display_content(text: &str) -> String {
     sanitized.trim().to_string()
 }
 
-/// Check if content starts with a command output tag.
+/// 检查内容是否以命令输出标签开头。
 pub fn is_command_output_content(text: &str) -> bool {
     text.trim_start()
         .starts_with("<local-command-stdout>")
@@ -104,7 +104,7 @@ pub fn is_command_output_content(text: &str) -> bool {
             .starts_with("<local-command-stderr>")
 }
 
-/// Check if content starts with a command message tag.
+/// 检查内容是否以命令消息标签开头。
 pub fn is_command_content(text: &str) -> bool {
     text.trim_start().starts_with("<command-name>")
         || text
@@ -112,13 +112,13 @@ pub fn is_command_content(text: &str) -> bool {
             .starts_with("<command-message>")
 }
 
-/// Extract the first user message suitable for use as a session title.
+/// 从消息序列中提取第一条适合作为会话标题的用户消息。
 ///
-/// Iterates through messages to find the first suitable non-meta user text,
-/// with a fallback to command display text. This mirrors Electron's
-/// `analyzeSessionFileMetadata` title extraction logic.
+/// 遍历消息列表，查找第一条合适的非元用户文本，
+/// 回退到命令显示文本。此逻辑镜像 Electron 端
+/// `analyzeSessionFileMetadata` 的标题提取行为。
 ///
-/// Returns `None` if no suitable message is found.
+/// 若未找到合适的消息则返回 `None`。
 pub fn extract_session_title<'a, I>(messages: I) -> Option<String>
 where
     I: Iterator<Item = &'a serde_json::Value>,
@@ -126,19 +126,19 @@ where
     let mut first_command_text: Option<String> = None;
 
     for msg in messages {
-        // Must be a user message
+        // 仅处理用户消息
         let msg_type = msg.get("type").and_then(|v| v.as_str()).unwrap_or("");
         if msg_type != "user" {
             continue;
         }
 
-        // Skip meta messages
+        // 跳过元消息
         let is_meta = msg.get("isMeta").and_then(|v| v.as_bool()).unwrap_or(false);
         if is_meta {
             continue;
         }
 
-        // Extract text from content (string or array of text blocks)
+        // 从 content 中提取文本（支持字符串和文本块数组两种格式）
         let text = match msg.get("message").and_then(|m| m.get("content")) {
             Some(serde_json::Value::String(s)) => s.clone(),
             Some(serde_json::Value::Array(arr)) => arr
@@ -160,14 +160,14 @@ where
             continue;
         }
 
-        // Skip command output and interruptions
+        // 跳过命令输出和用户中断消息
         if is_command_output_content(trimmed)
             || trimmed.starts_with("[Request interrupted by user")
         {
             continue;
         }
 
-        // Store command-name as fallback, keep looking for real text
+        // 存储命令文本作为回退选项，继续查找真实用户文本
         if is_command_content(trimmed) {
             if first_command_text.is_none() {
                 first_command_text = extract_command_display(trimmed);
@@ -175,7 +175,7 @@ where
             continue;
         }
 
-        // Real user text found — sanitize and truncate to 500 chars
+        // 找到真实用户文本 — 清洗并截断至 500 字符
         let sanitized = sanitize_display_content(trimmed);
         if sanitized.is_empty() {
             continue;
@@ -184,7 +184,7 @@ where
         return Some(truncated);
     }
 
-    // Fall back to stored command text
+    // 回退到已存储的命令文本
     first_command_text
 }
 
@@ -393,7 +393,7 @@ mod tests {
                 "message": { "content": "actual user request" }
             }),
         ];
-        // Should prefer real text over command
+        // 优先选择真实文本而非命令
         assert_eq!(
             extract_session_title(messages.iter()),
             Some("actual user request".to_string())

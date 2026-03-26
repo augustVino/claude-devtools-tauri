@@ -1,10 +1,10 @@
-//! FileWatcher service - Watches for changes in Claude Code project files.
+//! 文件监听器 — 监听 Claude Code 项目文件的变化。
 //!
-//! Responsibilities:
-//! - Watch directories for session file changes
-//! - Debounce rapid file events (100ms)
-//! - Parse paths to extract projectId, sessionId, isSubagent
-//! - Emit FileChangeEvent to subscribers
+//! 职责:
+//! - 监听目录中会话文件的变更
+//! - 对快速连续的文件事件进行防抖（100ms）
+//! - 解析路径以提取 projectId、sessionId、isSubagent
+//! - 向订阅者广播 FileChangeEvent
 
 use std::path::Path;
 use std::sync::Arc;
@@ -12,37 +12,37 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 
-// Import all notify types from notify_debouncer_mini to ensure version compatibility
-// (notify-debouncer-mini uses notify v7 while direct dependency is v8)
+// 从 notify_debouncer_mini 导入所有 notify 类型，以确保版本兼容性
+// (notify-debouncer-mini 使用 notify v7，而直接依赖为 v8)
 use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent};
 
 use crate::types::domain::{FileChangeEvent, FileChangeType};
 
-/// Debounce interval in milliseconds (matches Electron implementation)
+/// 防抖间隔（毫秒），与 Electron 实现保持一致
 const DEBOUNCE_MS: u64 = 100;
 
-/// Broadcast channel capacity for file change events
+/// 文件变更事件的广播通道容量
 const CHANNEL_CAPACITY: usize = 64;
 
-/// FileWatcher watches directories for file changes with debouncing.
+/// 文件监听器，以防抖方式监听目录中的文件变更。
 pub struct FileWatcher {
-    /// Inner debounced watcher (wrapped for async access)
+    /// 内部防抖监听器（封装以支持异步访问）
     inner: Arc<Mutex<Option<DebouncedWatcher>>>,
-    /// Broadcast sender for file change events
+    /// 文件变更事件的广播发送端
     sender: broadcast::Sender<FileChangeEvent>,
-    /// Whether currently watching
+    /// 是否正在监听
     is_watching: Arc<Mutex<bool>>,
 }
 
-/// Wrapper for the debounced watcher handle
+/// 防抖监听器句柄的包装结构
 struct DebouncedWatcher {
     #[allow(dead_code)]
     watcher: notify_debouncer_mini::Debouncer<RecommendedWatcher>,
 }
 
 impl FileWatcher {
-    /// Creates a new FileWatcher instance.
+    /// 创建新的 FileWatcher 实例。
     pub fn new() -> Self {
         let (sender, _) = broadcast::channel(CHANNEL_CAPACITY);
         Self {
@@ -52,14 +52,14 @@ impl FileWatcher {
         }
     }
 
-    /// Starts watching a directory with debouncing.
+    /// 启动对指定目录的防抖监听。
     ///
-    /// Only emits events for `.jsonl` and `.json` files.
-    /// Parses paths to extract projectId, sessionId, and isSubagent.
+    /// 仅对 `.jsonl` 和 `.json` 文件发出事件。
+    /// 解析路径以提取 projectId、sessionId 和 isSubagent。
     ///
-    /// Path patterns:
-    /// - Session file: `watchPath/projectId/sessionId.jsonl`
-    /// - Subagent file: `watchPath/projectId/sessionId/subagents/agent-hash.jsonl`
+    /// 路径模式:
+    /// - 会话文件: `watchPath/projectId/sessionId.jsonl`
+    /// - 子代理文件: `watchPath/projectId/sessionId/subagents/agent-hash.jsonl`
     pub async fn watch(&mut self, path: &Path) -> Result<(), String> {
         if !path.exists() {
             return Err(format!("Path does not exist: {}", path.display()));
@@ -73,7 +73,7 @@ impl FileWatcher {
         let sender = self.sender.clone();
         let watch_path = path.to_path_buf();
 
-        // Create debounced watcher with channel for events
+        // 创建防抖监听器及事件通道
         let (tx, mut rx) = tokio::sync::mpsc::channel::<DebouncedEvent>(64);
 
         let mut debouncer = new_debouncer(Duration::from_millis(DEBOUNCE_MS), move |result| {
@@ -90,7 +90,7 @@ impl FileWatcher {
             .watch(&watch_path, RecursiveMode::Recursive)
             .map_err(|e| format!("Failed to start watcher: {}", e))?;
 
-        // Spawn task to process debounced events
+        // 启动异步任务处理防抖后的事件
         tokio::spawn(async move {
             while let Some(debounced_event) = rx.recv().await {
                 if let Some(change_event) =
@@ -108,7 +108,7 @@ impl FileWatcher {
         Ok(())
     }
 
-    /// Stops watching the directory.
+    /// 停止监听目录。
     pub async fn stop(&mut self) {
         let mut inner = self.inner.lock().await;
         let mut is_watching = self.is_watching.lock().await;
@@ -119,46 +119,46 @@ impl FileWatcher {
         *is_watching = false;
     }
 
-    /// Returns a receiver for file change events.
+    /// 返回文件变更事件的广播接收端。
     pub fn receiver(&self) -> broadcast::Receiver<FileChangeEvent> {
         self.sender.subscribe()
     }
 
-    /// Checks if currently watching a directory.
+    /// 检查当前是否正在监听目录。
     pub async fn is_watching(&self) -> bool {
         *self.is_watching.lock().await
     }
 
-    /// Processes a debounced event and converts to FileChangeEvent.
+    /// 处理防抖事件并转换为 FileChangeEvent。
     ///
-    /// Parses the file path relative to the watch path to extract:
-    /// - projectId: First directory component after watch path
-    /// - sessionId: Session ID from the path
-    /// - isSubagent: Whether this is a subagent file
+    /// 解析相对于监听根目录的文件路径，提取:
+    /// - projectId: 监听路径后的第一级目录
+    /// - sessionId: 路径中的会话 ID
+    /// - isSubagent: 是否为子代理文件
     ///
-    /// Path patterns (mirrors Electron FileWatcher.ts):
-    /// - Session file: `watchPath/projectId/sessionId.jsonl`
-    /// - Subagent file: `watchPath/projectId/sessionId/subagents/agent-hash.jsonl`
+    /// 路径模式（与 Electron FileWatcher.ts 一致）:
+    /// - 会话文件: `watchPath/projectId/sessionId.jsonl`
+    /// - 子代理文件: `watchPath/projectId/sessionId/subagents/agent-hash.jsonl`
     fn process_debounced_event(event: &DebouncedEvent, watch_path: &Path) -> Option<FileChangeEvent> {
-        // Filter to only .jsonl and .json files
+        // 仅处理 .jsonl 和 .json 文件
         let extension = event.path.extension()?.to_str()?;
 
         if extension != "jsonl" && extension != "json" {
             return None;
         }
 
-        // Check if file exists to determine if this is add or remove
-        // (debouncer-mini doesn't distinguish - only Any/AnyContinuous)
+        // 通过检查文件是否存在来判断是新增/修改还是删除
+        // (debouncer-mini 不区分事件类型 — 仅返回 Any/AnyContinuous)
         let event_type = if event.path.exists() {
-            // File exists: could be add or change
-            // We'll report "change" for simplicity (Electron also reports "change" for most cases)
+            // 文件存在: 可能是新增或修改
+            // 统一报告 "change"（Electron 也对大多数情况报告 "change"）
             FileChangeType::Change
         } else {
-            // File doesn't exist: it was removed
+            // 文件不存在: 已被删除
             FileChangeType::Unlink
         };
 
-        // Parse relative path to extract projectId, sessionId, isSubagent
+        // 解析相对路径以提取 projectId、sessionId、isSubagent
         let relative_path = event.path.strip_prefix(watch_path).ok()?;
         let parts: Vec<&str> = relative_path
             .components()
@@ -176,11 +176,11 @@ impl FileWatcher {
         })
     }
 
-    /// Parses path parts to extract projectId, sessionId, and isSubagent.
+    /// 解析路径分段，提取 projectId、sessionId 和 isSubagent。
     ///
-    /// Matches Electron FileWatcher.ts logic (lines 507-533):
-    /// - Session file (2 parts): `projectId/sessionId.jsonl`
-    /// - Subagent file (4 parts): `projectId/sessionId/subagents/agent-hash.jsonl`
+    /// 与 Electron FileWatcher.ts 逻辑一致（第 507-533 行）:
+    /// - 会话文件（2 段）: `projectId/sessionId.jsonl`
+    /// - 子代理文件（4 段）: `projectId/sessionId/subagents/agent-hash.jsonl`
     fn parse_path_parts(parts: &[&str]) -> (Option<String>, Option<String>, bool) {
         if parts.is_empty() {
             return (None, None, false);
@@ -188,13 +188,13 @@ impl FileWatcher {
 
         let project_id = Some(parts[0].to_string());
 
-        // Session file at project root: projectId/sessionId.jsonl
+        // 项目根目录下的会话文件: projectId/sessionId.jsonl
         if parts.len() == 2 && parts[1].ends_with(".jsonl") {
             let session_id = parts[1].strip_suffix(".jsonl").map(|s| s.to_string());
             return (project_id, session_id, false);
         }
 
-        // Subagent file: projectId/sessionId/subagents/agent-hash.jsonl
+        // 子代理文件: projectId/sessionId/subagents/agent-hash.jsonl
         if parts.len() == 4 && parts[2] == "subagents" && parts[3].ends_with(".jsonl") {
             let session_id = parts[1].to_string();
             return (project_id, Some(session_id), true);
@@ -231,7 +231,7 @@ mod tests {
     #[tokio::test]
     async fn test_stop_without_watch() {
         let mut watcher = FileWatcher::new();
-        // Should not panic
+        // 不应 panic
         watcher.stop().await;
         assert!(!watcher.is_watching().await);
     }
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_parse_path_parts_session_file() {
-        // Session file: projectId/sessionId.jsonl
+        // 会话文件: projectId/sessionId.jsonl
         let parts = vec!["-Users-name-project", "session-abc123.jsonl"];
         let (project_id, session_id, is_subagent) = FileWatcher::parse_path_parts(&parts);
 
@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn test_parse_path_parts_subagent_file() {
-        // Subagent file: projectId/sessionId/subagents/agent-hash.jsonl
+        // 子代理文件: projectId/sessionId/subagents/agent-hash.jsonl
         let parts = vec![
             "-Users-name-project",
             "session-abc123",
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_parse_path_parts_only_project() {
-        // Just a project directory, no session file
+        // 仅项目目录，无会话文件
         let parts = vec!["-Users-name-project"];
         let (project_id, session_id, is_subagent) = FileWatcher::parse_path_parts(&parts);
 
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn test_parse_path_parts_nested_directory() {
-        // Nested directory that's not a subagent file
+        // 非子代理文件的嵌套目录
         let parts = vec!["-Users-name-project", "some-dir", "other.jsonl"];
         let (project_id, session_id, is_subagent) = FileWatcher::parse_path_parts(&parts);
 

@@ -1,19 +1,19 @@
-//! Error detector — main orchestrator for error detection in session messages.
+//! 错误检测器 —— 会话消息中错误检测的主编排器。
 //!
-//! Coordinates between:
-//! - [`ConfigManager`] — provides enabled triggers
-//! - [`ErrorTriggerChecker`] — checks individual triggers against messages
-//! - [`tool_extraction`] — builds tool_use/tool_result maps
+//! 协调以下组件：
+//! - [`ConfigManager`] — 提供已启用的触发器
+//! - [`ErrorTriggerChecker`] — 检查单个触发器是否匹配消息
+//! - [`tool_extraction`] — 构建 tool_use/tool_result 映射
 //!
-//! Detection flow:
-//! 1. Get enabled triggers from `ConfigManager`
-//! 2. Pre-resolve repository IDs (populates cache)
-//! 3. Build tool_use/tool_result maps from messages
-//! 4. For each message x trigger: check scope, route by content_type, collect errors
-//! 5. Deduplicate by tool_use_id
-//! 6. Return deduplicated list
+//! 检测流程：
+//! 1. 从 `ConfigManager` 获取已启用的触发器
+//! 2. 预解析仓库 ID（填充缓存）
+//! 3. 从消息构建 tool_use/tool_result 映射
+//! 4. 对每条消息 x 每个触发器：检查范围、按 content_type 路由、收集错误
+//! 5. 按 tool_use_id 去重
+//! 6. 返回去重后的列表
 //!
-//! Ported from Electron `src/main/services/error/ErrorDetector.ts`.
+//! 从 Electron `src/main/services/error/ErrorDetector.ts` 移植而来。
 
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
@@ -28,31 +28,31 @@ use crate::types::config::{DetectedError, NotificationTrigger, TriggerContentTyp
 use crate::types::messages::ParsedMessage;
 
 // =============================================================================
-// ErrorDetector
+// ErrorDetector（错误检测器）
 // =============================================================================
 
-/// Main orchestrator for error detection in session messages.
+/// 会话消息中错误检测的主编排器。
 ///
-/// Holds a reference to the [`ConfigManager`] for reading enabled triggers.
+/// 持有 [`ConfigManager`] 的引用用于读取已启用的触发器。
 pub struct ErrorDetector {
     config_manager: Arc<RwLock<ConfigManager>>,
 }
 
 impl ErrorDetector {
-    /// Create a new `ErrorDetector` with the given config manager.
+    /// 使用给定的配置管理器创建新的 `ErrorDetector`。
     pub fn new(config_manager: Arc<RwLock<ConfigManager>>) -> Self {
         Self { config_manager }
     }
 
     // ===========================================================================
-    // Main Detection Method
+    // 主要检测方法
     // ===========================================================================
 
-    /// Detect errors in a session's messages using enabled triggers.
+    /// 使用已启用的触发器检测会话消息中的错误。
     ///
-    /// Returns a deduplicated list of [`DetectedError`] instances. Only
-    /// `ToolResult` and `ToolUse` content types are handled; `Thinking` and
-    /// `Text` are skipped (not yet implemented).
+    /// 返回去重后的 [`DetectedError`] 列表。仅处理 `ToolResult` 和 `ToolUse`
+    /// 内容类型；`Thinking` 和 `Text` 被跳过（尚未实现）。
+
     pub async fn detect_errors(
         &self,
         messages: &[ParsedMessage],
@@ -62,7 +62,7 @@ impl ErrorDetector {
     ) -> Vec<DetectedError> {
         let mut errors: Vec<DetectedError> = Vec::new();
 
-        // Get enabled triggers from config
+        // 从配置中获取已启用的触发器
         let triggers = {
             let config = self
                 .config_manager
@@ -75,7 +75,7 @@ impl ErrorDetector {
             return errors;
         }
 
-        // Pre-resolve repository ID for this project to populate cache
+        // 预解析此项目的仓库 ID 以填充缓存
         let cwd_hint = messages
             .iter()
             .find(|m| {
@@ -89,13 +89,13 @@ impl ErrorDetector {
             cwd_hint,
         }]);
 
-        // Build maps for linking results to calls and estimating tokens
+        // 构建映射表用于关联结果与调用、估算 token
         let tool_use_map = build_tool_use_map(messages);
         let tool_result_map = build_tool_result_map(messages);
 
-        // Check each message against each trigger
+        // 对每条消息检查每个触发器
         for (i, message) in messages.iter().enumerate() {
-            let line_number = (i + 1) as u64; // 1-based line numbers
+            let line_number = (i + 1) as u64; // 从 1 开始的行号
 
             for trigger in &triggers {
                 let trigger_errors = Self::check_trigger(
@@ -113,24 +113,24 @@ impl ErrorDetector {
             }
         }
 
-        // Deduplicate by tool_use_id
+        // 按 tool_use_id 去重
         Self::deduplicate_errors(errors)
     }
 
     // ===========================================================================
-    // Trigger Testing (Stub)
+    // 触发器测试（桩实现）
     // ===========================================================================
 
-    /// Test a trigger against historical data across all projects.
+    /// 在所有项目的历史数据上测试触发器。
     ///
-    /// This is a stub that will be implemented in Task 11 via
-    /// `ErrorTriggerTester`.
+    /// 这是一个桩实现，将在 Task 11 中通过
+    /// `ErrorTriggerTester` 实现。
     pub async fn test_trigger(
         &self,
         _trigger: &NotificationTrigger,
         _limit: Option<usize>,
     ) -> TriggerTestResult {
-        // Will be implemented in Task 11 via ErrorTriggerTester
+        // 将在 Task 11 中通过 ErrorTriggerTester 实现
         TriggerTestResult {
             total_count: 0,
             errors: vec![],
@@ -139,11 +139,11 @@ impl ErrorDetector {
     }
 
     // ===========================================================================
-    // Private: Trigger Routing
+    // 私有方法：触发器路由
     // ===========================================================================
 
-    /// Route a message to the appropriate trigger checker based on the trigger
-    /// configuration. Returns zero or more `DetectedError` instances.
+    /// 根据触发器配置将消息路由到相应的触发器检查器。
+    /// 返回零个或多个 `DetectedError` 实例。
     fn check_trigger(
         message: &ParsedMessage,
         trigger: &NotificationTrigger,
@@ -160,12 +160,12 @@ impl ErrorDetector {
         file_path: &str,
         line_number: u64,
     ) -> Vec<DetectedError> {
-        // Check repository scope first
+        // 首先检查仓库范围
         if !matches_repository_scope(project_id, trigger.repository_ids.as_deref()) {
             return vec![];
         }
 
-        // Handle token_threshold mode — checks each tool_use individually
+        // 处理 token_threshold 模式 —— 逐个检查每个 tool_use
         if trigger.mode == crate::types::config::TriggerMode::TokenThreshold {
             return check_token_threshold_trigger(
                 message,
@@ -178,7 +178,7 @@ impl ErrorDetector {
             );
         }
 
-        // Handle tool_result triggers
+        // 处理 tool_result 触发器
         if trigger.content_type == TriggerContentType::ToolResult {
             if let Some(error) = check_tool_result_trigger(
                 message,
@@ -194,7 +194,7 @@ impl ErrorDetector {
             return vec![];
         }
 
-        // Handle tool_use triggers
+        // 处理 tool_use 触发器
         if trigger.content_type == TriggerContentType::ToolUse {
             if let Some(error) = check_tool_use_trigger(
                 message,
@@ -209,16 +209,16 @@ impl ErrorDetector {
             return vec![];
         }
 
-        // Thinking and Text content types not yet implemented
+        // Thinking 和 Text 内容类型尚未实现
         vec![]
     }
 
     // ===========================================================================
-    // Private: Deduplication
+    // 私有方法：去重
     // ===========================================================================
 
-    /// Deduplicate errors by `tool_use_id`. When multiple triggers detect the
-    /// same tool_use, only the first detection is kept.
+    /// 按 `tool_use_id` 去重错误。当多个触发器检测到同一个 tool_use 时，
+    /// 仅保留首次检测的结果。
     fn deduplicate_errors(errors: Vec<DetectedError>) -> Vec<DetectedError> {
         let mut seen: HashSet<String> = HashSet::new();
         let mut result = Vec::with_capacity(errors.len());
@@ -238,7 +238,7 @@ impl ErrorDetector {
 }
 
 // =============================================================================
-// Tests
+// 测试
 // =============================================================================
 
 #[cfg(test)]
@@ -250,10 +250,10 @@ mod tests {
     use serde_json::json;
 
     // ---------------------------------------------------------------------------
-    // Helpers
+    // 辅助函数
     // ---------------------------------------------------------------------------
 
-    /// Create a default error trigger (require_error = true, ToolResult content type).
+    /// 创建默认的错误触发器（require_error = true，ToolResult 内容类型）。
     fn make_error_trigger() -> NotificationTrigger {
         NotificationTrigger {
             id: "error-trigger".to_string(),
@@ -274,7 +274,7 @@ mod tests {
         }
     }
 
-    /// Create a trigger with a non-matching content type (Thinking).
+    /// 创建一个内容类型不匹配的触发器（Thinking）。
     fn make_thinking_trigger() -> NotificationTrigger {
         NotificationTrigger {
             id: "thinking-trigger".to_string(),
@@ -295,7 +295,7 @@ mod tests {
         }
     }
 
-    /// Create a tool_use trigger that matches a specific tool name and pattern.
+    /// 创建一个匹配特定工具名称和模式的 tool_use 触发器。
     fn make_tool_use_trigger(tool_name: &str, pattern: &str) -> NotificationTrigger {
         NotificationTrigger {
             id: "tool-use-trigger".to_string(),
@@ -365,10 +365,10 @@ mod tests {
         }
     }
 
-    /// Create an `ErrorDetector` with a real `ConfigManager` that has the given triggers.
+    /// 创建一个包含给定触发器的 `ErrorDetector`（使用真实的 `ConfigManager`）。
     fn make_detector_with_triggers(triggers: Vec<NotificationTrigger>) -> ErrorDetector {
         let config_manager = Arc::new(RwLock::new(ConfigManager::new()));
-        // Add each trigger to the config
+        // 将每个触发器添加到配置中
         {
             let config = config_manager
                 .read()
@@ -430,7 +430,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_errors_mismatched_content_type_skips_trigger() {
-        // Thinking content type should be skipped (not yet implemented)
+        // Thinking 内容类型应被跳过（尚未实现）
         let detector = make_detector_with_triggers(vec![make_thinking_trigger()]);
 
         let messages = vec![make_assistant_message(
@@ -468,7 +468,7 @@ mod tests {
             .detect_errors(&messages, "session-1", "-Users-test", "/path.jsonl")
             .await;
 
-        // require_error=true but the result is not an error
+        // require_error=true 但结果不是错误
         assert!(errors.is_empty());
     }
 
@@ -495,8 +495,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_errors_deduplicates_by_tool_use_id() {
-        // Two triggers that both match the same tool_use should result in only
-        // one error after deduplication
+        // 两个触发器都匹配同一个 tool_use，去重后应只有一个错误
+
         let trigger1 = NotificationTrigger {
             id: "trigger-1".to_string(),
             name: "Error Trigger 1".to_string(),
@@ -524,7 +524,7 @@ mod tests {
             .detect_errors(&messages, "session-1", "-Users-test", "/path.jsonl")
             .await;
 
-        // Both triggers match the same tool_use_id, so only one should survive
+        // 两个触发器匹配同一个 tool_use_id，因此只保留一个
         assert_eq!(errors.len(), 1);
     }
 
@@ -699,7 +699,7 @@ mod tests {
         ];
 
         let deduped = ErrorDetector::deduplicate_errors(errors);
-        // Errors without tool_use_id are all kept (no dedup key)
+        // 没有 tool_use_id 的错误全部保留（无去重键）
         assert_eq!(deduped.len(), 2);
     }
 

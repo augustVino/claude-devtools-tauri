@@ -1,11 +1,11 @@
-//! Error trigger tester -- tests trigger configurations against historical
-//! session data.
+//! 错误触发器测试器 —— 在历史会话数据上测试触发器配置。
+
 //!
-//! Provides the `test_trigger` function that scans all projects/sessions and
-//! checks each message against a trigger.  Stops early when enough errors are
-//! found or safety limits are hit.
+//! 提供 `test_trigger` 函数，扫描所有项目/会话并检查每条消息是否匹配触发器。
+//! 当找到足够多的错误或触及安全限制时提前停止。
+
 //!
-//! Ported from Electron `src/main/services/error/ErrorTriggerTester.ts`.
+//! 从 Electron `src/main/services/error/ErrorTriggerTester.ts` 移植而来。
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -21,23 +21,23 @@ use crate::parsing::jsonl_parser::parse_jsonl_file;
 use crate::types::config::{DetectedError, NotificationTrigger, TriggerTestError, TriggerTestResult};
 
 // =============================================================================
-// Safety Limits
+// 安全限制
 // =============================================================================
 
-/// Maximum number of errors to return (primary stop condition).
+/// 返回的最大错误数量（主要停止条件）。
 const MAX_ERRORS: usize = 50;
 
-/// Maximum total count to track (prevents indefinite counting).
+/// 追踪的总计数上限（防止无限计数）。
 const MAX_TOTAL_COUNT: u32 = 10_000;
 
-/// Maximum time before aborting (main safety limit).
+/// 超时时间上限（主要安全限制），单位毫秒。
 const TIMEOUT_MS: u128 = 30_000;
 
 // =============================================================================
-// Internal State
+// 内部状态
 // =============================================================================
 
-/// Mutable state tracked during trigger testing.
+/// 触发器测试过程中追踪的可变状态。
 struct TestState {
     errors: Vec<DetectedError>,
     total_count: u32,
@@ -59,13 +59,13 @@ impl TestState {
         }
     }
 
-    /// Returns `true` if we have collected enough errors (success case).
+    /// 是否已收集到足够的错误（成功情况）。
     fn has_enough_errors(&self) -> bool {
         self.errors.len() >= self.effective_limit
     }
 
-    /// Check safety limits.  Returns `Some(reason)` if the test should stop,
-    /// `None` if it should continue.
+    /// 检查安全限制。若测试应停止则返回 `Some(reason)`，
+    /// 若可继续则返回 `None`。
     fn check_safety_limits(&self) -> Option<&'static str> {
         if self.start_time.elapsed().as_millis() > TIMEOUT_MS {
             return Some("Trigger test timed out after 30 seconds");
@@ -78,20 +78,20 @@ impl TestState {
 }
 
 // =============================================================================
-// Public API
+// 公共 API
 // =============================================================================
 
-/// Test a trigger against all projects/sessions.
+/// 在所有项目/会话上测试触发器。
 ///
-/// Scans sessions until enough results are found or safety limits are hit.
+/// 扫描会话直到找到足够的结果或触及安全限制。
 ///
-/// # Arguments
-/// * `trigger` - The trigger configuration to test.
-/// * `project_scanner` - Scanner for discovering projects and sessions.
-/// * `limit` - Maximum number of results to return (capped at `MAX_ERRORS`).
+/// # 参数
+/// * `trigger` - 待测试的触发器配置。
+/// * `project_scanner` - 用于发现项目和会话的扫描器。
+/// * `limit` - 返回的最大结果数量（上限为 `MAX_ERRORS`）。
 ///
-/// # Returns
-/// A [`TriggerTestResult`] containing matched errors and metadata.
+/// # 返回值
+/// 包含匹配错误和元数据的 [`TriggerTestResult`]。
 pub async fn test_trigger(
     trigger: &NotificationTrigger,
     project_scanner: &ProjectScanner,
@@ -121,11 +121,11 @@ pub async fn test_trigger(
 }
 
 // =============================================================================
-// Core Logic
+// 核心逻辑
 // =============================================================================
 
-/// Main test loop: scan projects and sessions, checking each message against
-/// the trigger.
+/// 主测试循环：扫描项目和会话，对每条消息检查触发器。
+
 async fn run_test(
     trigger: &NotificationTrigger,
     project_scanner: &ProjectScanner,
@@ -134,27 +134,27 @@ async fn run_test(
     let projects = project_scanner.scan();
 
     for project in &projects {
-        // Check safety limits before processing each project.
+        // 处理每个项目前检查安全限制。
         if let Some(reason) = state.check_safety_limits() {
             log::warn!("{}", reason);
             state.truncated = true;
             break;
         }
 
-        // Early exit if we have enough errors (success, no truncation).
+        // 已收集足够错误时提前退出（成功，无截断）。
         if state.has_enough_errors() {
             break;
         }
 
         let session_files = project_scanner.list_session_files(&project.id);
 
-        // Pre-resolve repository ID for this project.
+        // 预解析此项目的仓库 ID。
         pre_resolve_repository_ids(&[RepositoryScopeTarget {
             project_id: project.id.clone(),
             cwd_hint: Some(project.path.clone()),
         }]);
 
-        // Process each session file.
+        // 处理每个会话文件。
         let should_break = process_session_files(
             &session_files,
             trigger,
@@ -171,9 +171,9 @@ async fn run_test(
     Ok(())
 }
 
-/// Processes session files for a single project.
+/// 处理单个项目的会话文件。
 ///
-/// Returns `true` if the outer project loop should break.
+/// 返回 `true` 表示外部项目循环应中断。
 async fn process_session_files(
     session_files: &[String],
     trigger: &NotificationTrigger,
@@ -181,36 +181,36 @@ async fn process_session_files(
     state: &mut TestState,
 ) -> bool {
     for file_path in session_files {
-        // Check safety limits.
+        // 检查安全限制。
         if let Some(reason) = state.check_safety_limits() {
             log::warn!("{}", reason);
             state.truncated = true;
             return true;
         }
 
-        // Early exit if we have enough errors.
+        // 已收集足够错误时提前退出。
         if state.has_enough_errors() {
             return false;
         }
 
         state.sessions_scanned += 1;
 
-        // Parse session file.
+        // 解析会话文件。
         let path = Path::new(file_path);
         let messages = parse_jsonl_file(path).await;
 
-        // Extract session ID from file name.
+        // 从文件名提取会话 ID。
         let session_id = Path::new(file_path)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
 
-        // Detect errors in this session.
+        // 检测此会话中的错误。
         let session_errors =
             detect_errors_with_trigger(&messages, trigger, &session_id, project_id, file_path);
 
-        // Update total count (capped).
+        // 更新总计数（带上限）。
         let new_total = state.total_count + session_errors.len() as u32;
         if new_total >= MAX_TOTAL_COUNT {
             state.total_count = MAX_TOTAL_COUNT;
@@ -219,7 +219,7 @@ async fn process_session_files(
             state.total_count = new_total;
         }
 
-        // Add errors up to the effective limit.
+        // 添加错误直到达到有效上限。
         for error in session_errors {
             if state.has_enough_errors() {
                 break;
@@ -231,7 +231,7 @@ async fn process_session_files(
     false
 }
 
-/// Detects errors from messages using a single trigger.
+/// 使用单个触发器从消息中检测错误。
 fn detect_errors_with_trigger(
     messages: &[crate::types::messages::ParsedMessage],
     trigger: &NotificationTrigger,
@@ -241,13 +241,13 @@ fn detect_errors_with_trigger(
 ) -> Vec<DetectedError> {
     let mut errors = Vec::new();
 
-    // Build tool_use map for linking results to calls.
+    // 构建 tool_use 映射表用于关联结果与调用。
     let tool_use_map = build_tool_use_map(messages);
-    // Build tool_result map for estimating output tokens.
+    // 构建 tool_result 映射表用于估算输出 token。
     let tool_result_map = build_tool_result_map(messages);
 
     for (i, message) in messages.iter().enumerate() {
-        let line_number = (i + 1) as u64; // 1-based line numbers for JSONL
+        let line_number = (i + 1) as u64; // JSONL 从 1 开始的行号
 
         let trigger_errors = check_trigger(
             message,
@@ -266,10 +266,10 @@ fn detect_errors_with_trigger(
     errors
 }
 
-/// Checks if a message matches a specific trigger.
+/// 检查消息是否匹配特定触发器。
 ///
-/// Returns a vector of detected errors (can be multiple for
-/// `token_threshold` mode).
+/// 返回检测到的错误向量（`token_threshold` 模式下可能有多条）。
+
 fn check_trigger(
     message: &crate::types::messages::ParsedMessage,
     trigger: &NotificationTrigger,
@@ -280,14 +280,14 @@ fn check_trigger(
     file_path: &str,
     line_number: u64,
 ) -> Vec<DetectedError> {
-    // Check repository scope first.
+    // 首先检查仓库范围。
     if !matches_repository_scope(project_id, trigger.repository_ids.as_deref()) {
         return Vec::new();
     }
 
     use crate::types::config::{TriggerContentType, TriggerMode};
 
-    // Handle token_threshold mode.
+    // 处理 token_threshold 模式。
     if trigger.mode == TriggerMode::TokenThreshold {
         return check_token_threshold_trigger(
             message,
@@ -300,7 +300,7 @@ fn check_trigger(
         );
     }
 
-    // Handle tool_result triggers.
+    // 处理 tool_result 触发器。
     if trigger.content_type == TriggerContentType::ToolResult {
         if let Some(error) = check_tool_result_trigger(
             message,
@@ -316,7 +316,7 @@ fn check_trigger(
         return Vec::new();
     }
 
-    // Handle tool_use triggers.
+    // 处理 tool_use 触发器。
     if trigger.content_type == TriggerContentType::ToolUse {
         if let Some(error) = check_tool_use_trigger(
             message,
@@ -335,11 +335,11 @@ fn check_trigger(
 }
 
 // =============================================================================
-// Conversion
+// 转换
 // =============================================================================
 
-/// Converts a [`DetectedError`] to a [`TriggerTestError`] (stripped version
-/// for the test result).
+/// 将 [`DetectedError`] 转换为 [`TriggerTestError`]（用于测试结果的精简版本）。
+
 fn detected_to_test_error(error: DetectedError) -> TriggerTestError {
     TriggerTestError {
         id: error.id,
@@ -366,7 +366,7 @@ mod tests {
     use std::fs;
 
     // ---------------------------------------------------------------------------
-    // Helpers
+    // 辅助函数
     // ---------------------------------------------------------------------------
 
     fn make_error_trigger() -> NotificationTrigger {
@@ -501,7 +501,7 @@ mod tests {
     async fn test_test_trigger_finds_errors() {
         let (temp_dir, scanner) = setup_test_env();
 
-        // Write the session file manually with compact JSON (no indentation).
+        // 手动写入会话文件，使用紧凑 JSON（无缩进）。
         let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
         fs::create_dir_all(&project_dir).unwrap();
 
@@ -528,7 +528,7 @@ mod tests {
     async fn test_test_trigger_no_matching_errors() {
         let (temp_dir, scanner) = setup_test_env();
 
-        // Create a session without errors (is_error: false)
+        // 创建一个不含错误的会话（is_error: false）
         let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
         fs::create_dir_all(&project_dir).unwrap();
 
@@ -560,7 +560,7 @@ mod tests {
     async fn test_test_trigger_respects_limit() {
         let (temp_dir, scanner) = setup_test_env();
 
-        // Create multiple sessions with errors.
+        // 创建多个包含错误的会话。
         for i in 0..5 {
             create_session_with_error(
                 temp_dir.path().join("projects").as_path(),
@@ -574,7 +574,7 @@ mod tests {
         let result = test_trigger(&trigger, &scanner, Some(2)).await;
 
         assert_eq!(result.errors.len(), 2);
-        // total_count may be >= 2 since we count all session errors
+        // total_count 可能 >= 2，因为会计数所有会话错误
         assert!(result.total_count >= 2);
     }
 
@@ -610,10 +610,10 @@ mod tests {
         let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
         fs::create_dir_all(&project_dir).unwrap();
 
-        // Write invalid JSONL.
+        // 写入无效的 JSONL。
         fs::write(project_dir.join("session-bad.jsonl"), "not valid json\n{{broken").unwrap();
 
-        // Write a valid session alongside it.
+        // 同时写入一个有效的会话。
         create_session_with_error(
             temp_dir.path().join("projects").as_path(),
             "-Users-test-project",
@@ -624,7 +624,7 @@ mod tests {
         let trigger = make_error_trigger();
         let result = test_trigger(&trigger, &scanner, None).await;
 
-        // Should still find the valid session's error.
+        // 仍应找到有效会话的错误。
         assert_eq!(result.total_count, 1);
     }
 

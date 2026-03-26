@@ -1,15 +1,15 @@
-//! Session state detection utilities for determining if sessions are ongoing.
+//! 会话状态检测工具模块，用于判断会话是否仍在进行中。
 //!
-//! A session is considered "ongoing" if there are AI-related activities
-//! (thinking, tool_use, tool_result) AFTER the last "ending" event.
+//! 当最后一个"结束事件"之后存在 AI 相关活动（thinking、tool_use、tool_result）时，
+//! 会话被视为"进行中"。
 //!
-//! Ending events: text_output, interruption, exit_plan_mode.
-//! Ongoing indicators: thinking, tool_use, tool_result.
+//! 结束事件：text_output、interruption、exit_plan_mode。
+//! 进行中指示器：thinking、tool_use、tool_result。
 
 use crate::types::domain::MessageType;
 use crate::types::messages::ParsedMessage;
 
-/// Activity types for tracking session state.
+/// 活动类型枚举，用于跟踪会话状态。
 #[derive(Debug, Clone, PartialEq)]
 enum ActivityType {
     TextOutput,
@@ -20,34 +20,34 @@ enum ActivityType {
     ExitPlanMode,
 }
 
-/// Activity entry with type and order index.
+/// 活动条目，包含类型和顺序索引。
 struct Activity {
     kind: ActivityType,
     index: usize,
 }
 
-/// Check if a toolUseResult value indicates a user-rejected tool use.
+/// 检查 toolUseResult 值是否表示用户拒绝了工具调用。
 fn is_tool_use_rejection(tool_use_result: &serde_json::Value) -> bool {
     tool_use_result.as_str() == Some("User rejected tool use")
 }
 
-/// Check if a tool_use block is a SendMessage shutdown_response with approve: true.
+/// 检查 tool_use 块是否为 SendMessage 的 shutdown_response 且 approve 为 true。
 fn is_shutdown_response(name: &str, input: &serde_json::Value) -> bool {
     name == "SendMessage"
         && input.get("type").and_then(|v| v.as_str()) == Some("shutdown_response")
         && input.get("approve").and_then(|v| v.as_bool()) == Some(true)
 }
 
-/// Check if activities indicate an ongoing session.
+/// 检查活动序列是否表示会话仍在进行中。
 ///
-/// Session is ongoing if any AI activity (thinking, tool_use, tool_result)
-/// appears AFTER the last ending event (text_output, interruption, exit_plan_mode).
+/// 当最后一个结束事件（text_output、interruption、exit_plan_mode）之后
+/// 存在任何 AI 活动（thinking、tool_use、tool_result）时，会话仍在进行中。
 fn is_ongoing_from_activities(activities: &[Activity]) -> bool {
     if activities.is_empty() {
         return false;
     }
 
-    // Find the index of the last "ending" event
+    // 查找最后一个"结束事件"的索引
     let last_ending_index = activities
         .iter()
         .rev()
@@ -63,7 +63,7 @@ fn is_ongoing_from_activities(activities: &[Activity]) -> bool {
 
     match last_ending_index {
         None => {
-            // No ending event found -- ongoing if there is any AI activity at all
+            // 未找到结束事件 — 只要存在任何 AI 活动即视为进行中
             activities.iter().any(|a| {
                 matches!(
                     a.kind,
@@ -72,7 +72,7 @@ fn is_ongoing_from_activities(activities: &[Activity]) -> bool {
             })
         }
         Some(ending_idx) => {
-            // Check if there are any AI activities AFTER the last ending event
+            // 检查最后一个结束事件之后是否存在 AI 活动
             activities.iter().any(|a| {
                 a.index > ending_idx
                     && matches!(
@@ -84,24 +84,25 @@ fn is_ongoing_from_activities(activities: &[Activity]) -> bool {
     }
 }
 
-/// Check if messages indicate an ongoing session (AI response in progress).
+/// 检查消息序列是否表示会话仍在进行中（AI 响应尚未完成）。
 ///
-/// This mirrors the Electron app's `checkMessagesOngoing` logic:
-/// - Tracks ending events and ongoing indicators via sequential index.
-/// - Special handling for ExitPlanMode (treated as ending) and
-///   SendMessage shutdown_response (both the call and its result are endings).
-/// - User-rejected tool uses are treated as interruptions (endings).
-/// - "[Request interrupted by user" messages are interruptions (endings).
+/// 此逻辑镜像 Electron 端的 `checkMessagesOngoing`：
+/// - 通过顺序索引跟踪结束事件和进行中指示器。
+/// - ExitPlanMode 作为特殊结束工具处理，
+///   SendMessage shutdown_response 的调用和结果均为结束事件。
+/// - 用户拒绝的工具调用视为中断（结束事件）。
+/// - "[Request interrupted by user" 消息视为中断（结束事件）。
 pub fn check_messages_ongoing(messages: &[ParsedMessage]) -> bool {
     let mut activities: Vec<Activity> = Vec::new();
     let mut activity_index: usize = 0;
-    // Track tool_use IDs that are shutdown responses so their tool_results are also ending events
+    // 跟踪 shutdown_response 类型的 tool_use ID，
+    // 以便其 tool_result 也被标记为结束事件
     let mut shutdown_tool_ids: std::collections::HashSet<String> =
         std::collections::HashSet::new();
 
     for msg in messages {
         if msg.message_type == MessageType::Assistant {
-            // Process assistant message content blocks
+            // 处理助手消息的内容块
             if let serde_json::Value::Array(ref blocks) = msg.content {
                 for block in blocks {
                     let block_type = block.get("type").and_then(|v| v.as_str());
@@ -127,7 +128,7 @@ pub fn check_messages_ongoing(messages: &[ParsedMessage]) -> bool {
                                 .unwrap_or("");
 
                             if name == "ExitPlanMode" {
-                                // ExitPlanMode is a special ending tool
+                                // ExitPlanMode 是特殊的结束工具
                                 activities.push(Activity {
                                     kind: ActivityType::ExitPlanMode,
                                     index: activity_index,
@@ -171,14 +172,14 @@ pub fn check_messages_ongoing(messages: &[ParsedMessage]) -> bool {
                 }
             }
         } else if msg.message_type == MessageType::User {
-            // Check if this is a user-rejected tool use (ending event)
+            // 检查是否为用户拒绝的工具调用（结束事件）
             let is_rejection = msg
                 .tool_use_result
                 .as_ref()
                 .map(is_tool_use_rejection)
                 .unwrap_or(false);
 
-            // Check for tool results and interruptions in user messages
+            // 检查用户消息中的工具结果和中断
             if let serde_json::Value::Array(ref blocks) = msg.content {
                 for block in blocks {
                     let block_type = block.get("type").and_then(|v| v.as_str());
@@ -191,14 +192,14 @@ pub fn check_messages_ongoing(messages: &[ParsedMessage]) -> bool {
                                 .unwrap_or("");
 
                             if shutdown_tool_ids.contains(tool_use_id) {
-                                // Shutdown tool result = ending event
+                                // Shutdown 工具结果 = 结束事件
                                 activities.push(Activity {
                                     kind: ActivityType::Interruption,
                                     index: activity_index,
                                 });
                                 activity_index += 1;
                             } else if is_rejection {
-                                // User rejection = ending event
+                                // 用户拒绝 = 结束事件
                                 activities.push(Activity {
                                     kind: ActivityType::Interruption,
                                     index: activity_index,
@@ -542,7 +543,7 @@ mod tests {
 
     #[test]
     fn test_send_message_non_shutdown_is_tool_use() {
-        // SendMessage without shutdown_response should be treated as ongoing (tool_use)
+        // 非 shutdown_response 类型的 SendMessage 应视为进行中（tool_use）
         let messages = vec![
             make_assistant_msg(
                 "a1",
@@ -563,7 +564,7 @@ mod tests {
 
     #[test]
     fn test_shutdown_reject_is_ongoing() {
-        // SendMessage shutdown_response with approve=false should be treated as ongoing
+        // approve=false 的 shutdown_response 应视为进行中
         let messages = vec![
             make_assistant_msg(
                 "a1",

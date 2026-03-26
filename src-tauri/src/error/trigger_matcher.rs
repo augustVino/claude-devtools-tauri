@@ -1,10 +1,10 @@
-//! Trigger matcher -- pattern matching for notification triggers.
+//! 触发器模式匹配工具。
 //!
-//! Provides utilities for:
-//! - Case-insensitive regex pattern matching with ReDoS protection
-//! - Ignore pattern checking
-//! - Extracting fields from tool_use blocks
-//! - Getting content blocks from messages
+//! 提供以下功能：
+//! - 大小写不敏感的正则模式匹配（含 ReDoS 防护）
+//! - 忽略模式检查
+//! - 从 tool_use 块中提取字段
+//! - 获取消息的内容块
 
 use std::sync::LazyLock;
 
@@ -15,14 +15,14 @@ use crate::types::messages::{ParsedMessage, ToolCall};
 use crate::utils::regex_validation::create_safe_regex;
 
 // =============================================================================
-// Regex Cache
+// 正则缓存
 // =============================================================================
 
-/// Maximum number of compiled regexes to cache.
+/// 编译后正则表达式的最大缓存数量。
 const MAX_CACHE_SIZE: usize = 500;
 
-/// Thread-safe LRU cache for compiled regex patterns.
-/// Key: original pattern string. Value: compiled regex (None if invalid/dangerous).
+/// 线程安全的 LRU 缓存，用于存储已编译的正则表达式。
+/// 键：原始模式字符串。值：编译后的正则（无效或危险的则为 None）。
 static REGEX_CACHE: LazyLock<Cache<String, Option<Regex>>> = LazyLock::new(|| {
     Cache::builder()
         .max_capacity(MAX_CACHE_SIZE as u64)
@@ -30,11 +30,11 @@ static REGEX_CACHE: LazyLock<Cache<String, Option<Regex>>> = LazyLock::new(|| {
 });
 
 // =============================================================================
-// Pattern Matching
+// 模式匹配
 // =============================================================================
 
-/// Test content against pattern (case-insensitive regex).
-/// Returns false for invalid or dangerous patterns.
+/// 测试内容是否匹配模式（大小写不敏感正则）。
+/// 对无效或危险的 pattern 返回 false。
 pub fn matches_pattern(content: &str, pattern: &str) -> bool {
     if let Some(cached) = REGEX_CACHE.get(pattern) {
         return match cached {
@@ -49,8 +49,8 @@ pub fn matches_pattern(content: &str, pattern: &str) -> bool {
     re.map(|r| r.is_match(content)).unwrap_or(false)
 }
 
-/// Returns true if content matches ANY ignore pattern.
-/// Returns false for empty or missing ignore patterns.
+/// 当内容匹配任意忽略模式时返回 true。
+/// 忽略模式列表为空时返回 false。
 pub fn matches_ignore_patterns(content: &str, ignore_patterns: &[String]) -> bool {
     if ignore_patterns.is_empty() {
         return false;
@@ -60,19 +60,19 @@ pub fn matches_ignore_patterns(content: &str, ignore_patterns: &[String]) -> boo
         if matches_pattern(content, pattern) {
             return true;
         }
-        // Invalid or dangerous patterns are skipped (matches_pattern returns false)
+        // 无效或危险的 pattern 被跳过（matches_pattern 返回 false）
     }
 
     false
 }
 
 // =============================================================================
-// Field Extraction
+// 字段提取
 // =============================================================================
 
-/// Extract a field value from a tool_use input.
-/// `match_field` is optional -- if None, returns None.
-/// Returns the value as a string, or JSON-serialized if it is not a string.
+/// 从 tool_use 的 input 中提取指定字段的值。
+/// `match_field` 为可选参数 -- 若为 None 则返回 None。
+/// 返回字符串值；若原始值不是字符串，则返回其 JSON 序列化结果。
 pub fn extract_tool_use_field(tool_use: &ToolCall, match_field: Option<&str>) -> Option<String> {
     let field = match_field?;
     let value = tool_use.input.get(field)?;
@@ -86,8 +86,8 @@ pub fn extract_tool_use_field(tool_use: &ToolCall, match_field: Option<&str>) ->
     }
 }
 
-/// Get content blocks from a message as JSON array.
-/// Returns empty array if content is not an array.
+/// 获取消息的内容块（JSON 数组形式）。
+/// 若 content 不是数组，则返回空数组。
 pub fn get_content_blocks(message: &ParsedMessage) -> Vec<serde_json::Value> {
     match &message.content {
         serde_json::Value::Array(blocks) => blocks.clone(),
@@ -96,7 +96,7 @@ pub fn get_content_blocks(message: &ParsedMessage) -> Vec<serde_json::Value> {
 }
 
 // =============================================================================
-// Tests
+// 测试
 // =============================================================================
 
 #[cfg(test)]
@@ -104,7 +104,7 @@ mod tests {
     use super::*;
     use serde_json::{json, Value};
 
-    // -- helpers --
+    // -- 辅助函数 --
 
     fn make_tool_call(input: Value) -> ToolCall {
         ToolCall {
@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn test_matches_pattern_cache_hit() {
-        // Call twice with same pattern to exercise cache path
+        // 使用相同 pattern 调用两次以触发缓存路径
         assert!(matches_pattern("hello", "hel+"));
         assert!(matches_pattern("hello", "hel+"));
     }
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_matches_ignore_patterns_skips_invalid() {
-        // Invalid patterns are silently skipped (same as Electron behavior)
+        // 无效的 pattern 被静默跳过（与 Electron 行为一致）
         let patterns = vec![r"(?P<bad".to_string(), "valid".to_string()];
         assert!(matches_ignore_patterns("valid match", &patterns));
     }

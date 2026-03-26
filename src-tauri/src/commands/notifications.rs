@@ -8,10 +8,10 @@ use crate::types::config::{
 };
 
 // =============================================================================
-// Notification Commands
+// 通知命令
 // =============================================================================
 
-/// Returns a paginated list of notifications (newest first).
+/// 获取分页通知列表（按时间降序）。
 #[command]
 pub async fn get_notifications(
     options: Option<GetNotificationsOptions>,

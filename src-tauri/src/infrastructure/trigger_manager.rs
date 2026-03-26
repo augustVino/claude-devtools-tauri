@@ -1,10 +1,10 @@
-//! TriggerManager - Manages notification triggers.
+//! 触发器管理器 — 管理通知触发器。
 //!
-//! Handles CRUD operations for notification triggers including:
-//! - Adding, updating, and removing triggers
-//! - Validating trigger configurations (with ReDoS protection)
-//! - Managing builtin vs custom triggers
-//! - Merging loaded triggers with defaults
+//! 处理通知触发器的 CRUD 操作，包括:
+//! - 添加、更新和删除触发器
+//! - 验证触发器配置（含 ReDoS 防护）
+//! - 管理内置触发器与自定义触发器
+//! - 将已加载的触发器与默认值合并
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -16,10 +16,10 @@ use crate::types::config::{
 use crate::utils::regex_validation::validate_regex_pattern;
 
 // =============================================================================
-// Default Triggers
+// 默认触发器
 // =============================================================================
 
-/// Returns the three default built-in notification triggers.
+/// 返回三个默认的内置通知触发器。
 pub fn default_triggers() -> Vec<NotificationTrigger> {
     vec![
         NotificationTrigger {
@@ -83,6 +83,8 @@ pub fn default_triggers() -> Vec<NotificationTrigger> {
 // TriggerManager
 // =============================================================================
 
+/// 通知触发器管理器，负责触发器的增删改查与验证。
+
 pub struct TriggerManager {
     triggers: Vec<NotificationTrigger>,
     on_save: Arc<dyn Fn() + Send + Sync>,
@@ -97,30 +99,30 @@ impl TriggerManager {
     }
 
     // =========================================================================
-    // Read Operations
+    // 读取操作
     // =========================================================================
 
-    /// Gets all notification triggers.
+    /// 获取所有通知触发器。
     pub fn get_all(&self) -> Vec<NotificationTrigger> {
         self.triggers.clone()
     }
 
-    /// Gets enabled notification triggers only.
+    /// 仅获取已启用的通知触发器。
     pub fn get_enabled(&self) -> Vec<NotificationTrigger> {
         self.triggers.iter().filter(|t| t.enabled).cloned().collect()
     }
 
-    /// Gets a trigger by ID.
+    /// 按 ID 获取触发器。
     pub fn get_by_id(&self, trigger_id: &str) -> Option<NotificationTrigger> {
         self.triggers.iter().find(|t| t.id == trigger_id).cloned()
     }
 
     // =========================================================================
-    // Write Operations
+    // 写入操作
     // =========================================================================
 
-    /// Adds a new notification trigger.
-    /// Returns an error if a trigger with the same ID already exists or validation fails.
+    /// 添加新的通知触发器。
+    /// 若存在相同 ID 的触发器或验证失败则返回错误。
     pub fn add(
         &mut self,
         trigger: NotificationTrigger,
@@ -139,9 +141,9 @@ impl TriggerManager {
         Ok(self.get_all())
     }
 
-    /// Updates an existing notification trigger.
-    /// Prevents changing isBuiltin on builtin triggers.
-    /// Returns an error if the trigger is not found or validation fails.
+    /// 更新已有的通知触发器。
+    /// 禁止修改内置触发器的 isBuiltin 属性。
+    /// 若触发器不存在或验证失败则返回错误。
     pub fn update(
         &mut self,
         trigger_id: &str,
@@ -155,10 +157,10 @@ impl TriggerManager {
 
         let mut updated = self.triggers[index].clone();
 
-        // Apply field updates from the JSON value, filtering out isBuiltin.
+        // 从 JSON 值中应用字段更新，过滤掉 isBuiltin 字段。
         apply_updates(&mut updated, &updates);
 
-        // Infer mode if not set (backward compatibility).
+        // 若未设置 mode 则自动推断（向后兼容）。
         if should_infer_mode(&updates) {
             updated.mode = infer_mode(&updated);
         }
@@ -176,9 +178,9 @@ impl TriggerManager {
         Ok(self.get_all())
     }
 
-    /// Removes a notification trigger.
-    /// Built-in triggers cannot be removed.
-    /// Returns an error if the trigger is not found or is builtin.
+    /// 删除通知触发器。
+    /// 内置触发器不可删除。
+    /// 若触发器不存在或是内置触发器则返回错误。
     pub fn remove(
         &mut self,
         trigger_id: &str,
@@ -199,14 +201,14 @@ impl TriggerManager {
     }
 
     // =========================================================================
-    // Validation
+    // 验证
     // =========================================================================
 
-    /// Validates a trigger configuration without modifying state.
+    /// 验证触发器配置，不修改状态。
     pub fn validate(&self, trigger: &NotificationTrigger) -> TriggerValidationResult {
         let mut errors = Vec::new();
 
-        // Required fields.
+        // 必填字段检查。
         if trigger.id.trim().is_empty() {
             errors.push("Trigger ID is required".to_string());
         }
@@ -215,17 +217,17 @@ impl TriggerManager {
             errors.push("Trigger name is required".to_string());
         }
 
-        // Mode-specific validation.
+        // 模式特定的验证。
         match &trigger.mode {
             TriggerMode::ContentMatch => {
-                // match_field is required unless it's tool_use with "Any Tool" (no toolName).
+                // match_field 为必填，除非是 tool_use 且无指定工具名（匹配任意工具）。
                 if trigger.match_field.is_none()
                     && !(trigger.content_type == TriggerContentType::ToolUse
                         && trigger.tool_name.is_none())
                 {
                     errors.push("Match field is required for content_match mode".to_string());
                 }
-                // Validate regex pattern if provided (with ReDoS protection).
+                // 验证正则模式（含 ReDoS 防护）。
                 if let Some(pattern) = &trigger.match_pattern {
                     let validation = validate_regex_pattern(pattern);
                     if !validation.valid {
@@ -253,11 +255,11 @@ impl TriggerManager {
                 }
             }
             TriggerMode::ErrorStatus => {
-                // No extra requirements for error_status mode.
+                // error_status 模式无额外要求。
             }
         }
 
-        // Validate ignore patterns (with ReDoS protection).
+        // 验证忽略模式（含 ReDoS 防护）。
         if let Some(patterns) = &trigger.ignore_patterns {
             for pattern in patterns {
                 let validation = validate_regex_pattern(pattern);
@@ -281,18 +283,18 @@ impl TriggerManager {
     }
 
     // =========================================================================
-    // Trigger Management
+    // 触发器管理
     // =========================================================================
 
-    /// Replaces all triggers (used by ConfigManager on load).
+    /// 替换所有触发器（由 ConfigManager 在加载时使用）。
     pub fn set_triggers(&mut self, triggers: Vec<NotificationTrigger>) {
         self.triggers = triggers;
     }
 
-    /// Merges loaded triggers with defaults.
-    /// - Preserves all existing triggers (including user-modified builtin triggers).
-    /// - Adds any missing builtin triggers from defaults.
-    /// - Removes deprecated builtin triggers that are no longer in defaults.
+    /// 将已加载的触发器与默认值合并。
+    /// - 保留所有现有触发器（包括用户修改过的内置触发器）。
+    /// - 添加默认值中缺失的内置触发器。
+    /// - 移除已废弃且不在当前默认值中的内置触发器。
     pub fn merge_triggers(
         loaded: Vec<NotificationTrigger>,
         defaults: &[NotificationTrigger],
@@ -303,13 +305,13 @@ impl TriggerManager {
             .map(|t| t.id.as_str())
             .collect();
 
-        // Filter out deprecated builtin triggers (those not in current defaults).
+        // 过滤掉已废弃的内置触发器（不在当前默认值中的）。
         let mut merged: Vec<NotificationTrigger> = loaded
             .into_iter()
             .filter(|t| t.is_builtin != Some(true) || builtin_ids.contains(t.id.as_str()))
             .collect();
 
-        // Add any missing builtin triggers from defaults.
+        // 添加默认值中缺失的内置触发器。
         for default_trigger in defaults {
             if default_trigger.is_builtin == Some(true)
                 && !merged.iter().any(|t| t.id == default_trigger.id)
@@ -323,10 +325,10 @@ impl TriggerManager {
 }
 
 // =============================================================================
-// Internal Helpers
+// 内部辅助函数
 // =============================================================================
 
-/// Applies field updates from a JSON value to a trigger, filtering out `isBuiltin`.
+/// 将 JSON 值中的字段更新应用到触发器，过滤掉 `isBuiltin` 字段。
 fn apply_updates(trigger: &mut NotificationTrigger, updates: &serde_json::Value) {
     if let Some(name) = updates.get("name").and_then(|v| v.as_str()) {
         trigger.name = name.to_string();
@@ -370,15 +372,15 @@ fn apply_updates(trigger: &mut NotificationTrigger, updates: &serde_json::Value)
             trigger.mode = m;
         }
     }
-    // Note: `isBuiltin` is intentionally NOT applied — builtin status cannot be changed.
+    // 注意: `isBuiltin` 被有意忽略 — 内置状态不可更改。
 }
 
-/// Determines whether mode inference is needed (mode not present in updates).
+/// 判断是否需要进行模式推断（更新中未包含 mode 字段）。
 fn should_infer_mode(updates: &serde_json::Value) -> bool {
     !updates.get("mode").map_or(false, |v| v.is_string())
 }
 
-/// Infers trigger mode from trigger properties for backward compatibility.
+/// 根据触发器属性推断模式，用于向后兼容。
 fn infer_mode(trigger: &NotificationTrigger) -> TriggerMode {
     if trigger.require_error == Some(true) {
         return TriggerMode::ErrorStatus;
@@ -389,11 +391,11 @@ fn infer_mode(trigger: &NotificationTrigger) -> TriggerMode {
     if trigger.token_threshold.is_some() {
         return TriggerMode::TokenThreshold;
     }
-    TriggerMode::ErrorStatus // default fallback
+    TriggerMode::ErrorStatus // 默认回退
 }
 
 // =============================================================================
-// Tests
+// 测试
 // =============================================================================
 
 #[cfg(test)]
@@ -561,7 +563,7 @@ mod tests {
         let mut manager = make_manager(default_triggers());
         let trigger = NotificationTrigger {
             id: "bad-trigger".to_string(),
-            name: "".to_string(), // empty name
+            name: "".to_string(), // 空名称
             enabled: true,
             content_type: TriggerContentType::ToolResult,
             mode: TriggerMode::ErrorStatus,
@@ -591,7 +593,7 @@ mod tests {
             content_type: TriggerContentType::ToolResult,
             mode: TriggerMode::ContentMatch,
             match_pattern: Some("test".to_string()),
-            match_field: None, // missing for tool_result content_match
+            match_field: None, // tool_result 的 content_match 模式缺少此字段
             tool_name: None,
             require_error: None,
             token_threshold: None,
@@ -623,7 +625,7 @@ mod tests {
         let mut manager = make_manager(default_triggers());
         let updates = serde_json::json!({"isBuiltin": false});
         let result = manager.update("builtin-bash-command", updates).unwrap();
-        // isBuiltin should remain true — the field is ignored by apply_updates.
+        // isBuiltin 应保持 true — 该字段被 apply_updates 忽略。
         assert_eq!(result[0].is_builtin, Some(true));
     }
 
@@ -740,7 +742,7 @@ mod tests {
     #[test]
     fn test_validate_content_match_tool_use_without_tool_name_ok() {
         let manager = make_manager(default_triggers());
-        // ToolUse without toolName should be OK (matches any tool).
+        // ToolUse 无 toolName 应合法（匹配任意工具）。
         let trigger = NotificationTrigger {
             id: "test-cm-tu".to_string(),
             name: "CM ToolUse Any".to_string(),
@@ -781,7 +783,7 @@ mod tests {
             content_type: TriggerContentType::ToolResult,
             mode: TriggerMode::TokenThreshold,
             token_threshold: Some(1000),
-            token_type: None, // missing
+            token_type: None, // 缺失
             tool_name: None,
             match_field: None,
             match_pattern: None,
@@ -835,11 +837,11 @@ mod tests {
     #[test]
     fn test_merge_triggers_preserves_existing() {
         let mut loaded = default_triggers();
-        loaded[0].enabled = true; // user enabled the first builtin
+        loaded[0].enabled = true; // 用户启用了第一个内置触发器
         let defaults = default_triggers();
         let merged = TriggerManager::merge_triggers(loaded, &defaults);
         assert_eq!(merged.len(), 3);
-        assert!(merged[0].enabled); // user preference preserved
+        assert!(merged[0].enabled); // 用户偏好被保留
     }
 
     #[test]

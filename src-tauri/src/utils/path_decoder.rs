@@ -1,7 +1,13 @@
+//! 路径编解码工具模块。
+//!
+//! 处理 Claude Code 项目目录名与绝对路径之间的编解码转换。
+//! 编码规则：将路径分隔符 `/` 或 `\` 替换为 `-`，并在开头添加 `-` 前缀。
+//! 注意：含 `-` 的路径在编解码过程中会有信息丢失。
+
 use std::path::PathBuf;
 
-/// Encode absolute path to Claude Code directory name. Lossy for paths with dashes.
-/// "/Users/name/project" -> "-Users-name-project"
+/// 将绝对路径编码为 Claude Code 目录名。对含 `-` 的路径有损。
+/// 示例：`"/Users/name/project"` -> `"-Users-name-project"`
 pub fn encode_path(absolute_path: &str) -> String {
     if absolute_path.is_empty() {
         return String::new();
@@ -10,7 +16,7 @@ pub fn encode_path(absolute_path: &str) -> String {
     if encoded.starts_with('-') { encoded } else { format!("-{encoded}") }
 }
 
-/// Decode directory name back to path (best-effort; lossy for dashes).
+/// 将目录名解码回路径（尽力而为；对含 `-` 的路径有损）。
 pub fn decode_path(encoded_name: &str) -> String {
     if encoded_name.is_empty() { return String::new(); }
     if let Some(rest) = legacy_windows_drive(encoded_name) { return rest; }
@@ -21,7 +27,7 @@ pub fn decode_path(encoded_name: &str) -> String {
     translate_wsl_mount(&absolute)
 }
 
-/// Extract project name (last path segment). Prefers `cwd_hint` to avoid lossy decode.
+/// 提取项目名称（路径最后一段）。优先使用 `cwd_hint` 以避免有损解码。
 pub fn extract_project_name(encoded_name: &str, cwd_hint: Option<&str>) -> String {
     if let Some(hint) = cwd_hint {
         if let Some(name) = hint.split(&['/', '\\']).filter(|s| !s.is_empty()).next_back() {
@@ -32,7 +38,7 @@ pub fn extract_project_name(encoded_name: &str, cwd_hint: Option<&str>) -> Strin
     decoded.split('/').filter(|s| !s.is_empty()).next_back().unwrap_or(encoded_name).to_string()
 }
 
-/// Validate encoded path format (POSIX, Windows drive, or legacy Windows).
+/// 验证编码路径格式（POSIX、Windows 盘符或旧版 Windows 格式）。
 pub fn is_valid_encoded_path(encoded_name: &str) -> bool {
     if encoded_name.is_empty() { return false; }
     let legacy_re = regex::Regex::new(r"^[a-zA-Z]--[a-zA-Z0-9_.\s-]+$").unwrap();
@@ -48,7 +54,7 @@ pub fn is_valid_encoded_path(encoded_name: &str) -> bool {
     true
 }
 
-/// Validate project ID (plain encoded path or composite `{encoded}::{8-hex}`).
+/// 验证项目 ID 格式（纯编码路径或复合格式 `{编码路径}::{8位十六进制}`）。
 pub fn is_valid_project_id(project_id: &str) -> bool {
     if project_id.is_empty() { return false; }
     match project_id.find("::") {
@@ -57,7 +63,7 @@ pub fn is_valid_project_id(project_id: &str) -> bool {
     }
 }
 
-/// Extract base directory from project ID (strips composite `::{hash}` suffix).
+/// 从项目 ID 中提取基础目录（去除复合格式的 `::{hash}` 后缀）。
 pub fn extract_base_dir(project_id: &str) -> &str {
     match project_id.find("::") {
         Some(sep) => &project_id[..sep],
@@ -65,46 +71,47 @@ pub fn extract_base_dir(project_id: &str) -> &str {
     }
 }
 
-/// Extract session ID from filename, stripping `.jsonl` extension.
+/// 从文件名中提取会话 ID，去除 `.jsonl` 扩展名。
 pub fn extract_session_id(filename: &str) -> String {
     filename.strip_suffix(".jsonl").unwrap_or(filename).to_string()
 }
 
-/// Build session file path: `{claude_base}/projects/{project_id}/{session_id}.jsonl`.
+/// 构建会话文件路径：`{claude_base}/projects/{project_id}/{session_id}.jsonl`。
 pub fn build_session_path(claude_base: &str, project_id: &str, session_id: &str) -> PathBuf {
     PathBuf::from(claude_base).join("projects").join(extract_base_dir(project_id)).join(format!("{session_id}.jsonl"))
 }
 
-/// Build subagents directory: `{claude_base}/projects/{project_id}/{session_id}/subagents`.
+/// 构建子 Agent 目录路径：`{claude_base}/projects/{project_id}/{session_id}/subagents`。
 pub fn build_subagents_path(claude_base: &str, project_id: &str, session_id: &str) -> PathBuf {
     PathBuf::from(claude_base).join("projects").join(extract_base_dir(project_id)).join(session_id).join("subagents")
 }
 
-/// Build todo file path: `{claude_base}/todos/{session_id}.json`.
+/// 构建待办事项文件路径：`{claude_base}/todos/{session_id}.json`。
 pub fn build_todo_path(claude_base: &str, session_id: &str) -> PathBuf {
     PathBuf::from(claude_base).join("todos").join(format!("{session_id}.json"))
 }
 
-/// Return default `~/.claude` path.
+/// 返回默认的 `~/.claude` 路径。
 pub fn get_default_claude_base_path() -> PathBuf {
     dirs::home_dir().map(|h| h.join(".claude")).unwrap_or_else(|| PathBuf::from("/.claude"))
 }
 
-/// Return `~/.claude/projects`.
+/// 返回 `~/.claude/projects` 路径。
 pub fn get_projects_base_path() -> PathBuf { get_default_claude_base_path().join("projects") }
 
-/// Return `~/.claude/todos`.
+/// 返回 `~/.claude/todos` 路径。
 pub fn get_todos_base_path() -> PathBuf { get_default_claude_base_path().join("todos") }
 
-/// Check if path is a subagent file (contains `/subagents/`).
+/// 检查路径是否为子 Agent 文件（路径包含 `/subagents/`）。
 pub fn is_subagent_file(path: &str) -> bool { path.contains("/subagents/") }
 
-/// Extract project ID from a relative path within `~/.claude/projects/`.
+/// 从 `~/.claude/projects/` 下的相对路径中提取项目 ID。
 pub fn extract_project_id_from_path(relative_path: &str) -> Option<String> {
     let stripped = relative_path.strip_prefix("projects/")?;
     Some(stripped[..stripped.find('/')?].to_string())
 }
 
+/// 处理旧版 Windows 盘符编码格式（如 `C--Users-name` -> `C:/Users/name`）。
 fn legacy_windows_drive(encoded_name: &str) -> Option<String> {
     let b = encoded_name.as_bytes();
     if b.len() < 4 || !b[0].is_ascii_alphabetic() || b[1] != b'-' || b[2] != b'-' { return None; }
@@ -112,11 +119,13 @@ fn legacy_windows_drive(encoded_name: &str) -> Option<String> {
     Some(format!("{}:/{rest}", (b[0] as char).to_ascii_uppercase()))
 }
 
+/// 检查路径是否形如 Windows 盘符格式（如 `C:/`）。
 fn looks_like_windows_drive(d: &str) -> bool {
     let b = d.as_bytes();
     b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'/'
 }
 
+/// 在 Windows 平台上将 WSL 挂载路径（如 `/mnt/c/`）转换为 Windows 路径（如 `C:/`）。
 fn translate_wsl_mount(posix_path: &str) -> String {
     if cfg!(target_os = "windows") {
         if let Some(rest) = posix_path.strip_prefix("/mnt/") {
@@ -130,11 +139,13 @@ fn translate_wsl_mount(posix_path: &str) -> String {
     posix_path.to_string()
 }
 
+/// 检查冒号是否出现在盘符位置（格式 `-X:`，其中 X 为字母）。
 fn is_drive_colon_at_start(s: &str, pos: usize) -> bool {
     let b = s.as_bytes();
     s.len() >= 3 && b[0] == b'-' && b[1].is_ascii_alphabetic() && pos == 2 && b[2] == b':'
 }
 
+/// 检查字符串是否为 8 位十六进制值（项目 ID 后缀格式）。
 fn is_hex8(s: &str) -> bool { s.len() == 8 && s.chars().all(|c| c.is_ascii_hexdigit()) }
 
 #[cfg(test)]

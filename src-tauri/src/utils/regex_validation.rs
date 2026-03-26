@@ -1,30 +1,31 @@
-//! Safe regex creation with ReDoS protection.
+//! 正则表达式安全创建与验证模块，提供 ReDoS（正则拒绝服务）防护。
 
 use regex::Regex;
 use std::time::Instant;
 
-/// Maximum time allowed for regex compilation (prevents ReDoS).
+/// 正则编译最大允许耗时（毫秒），防止 ReDoS 攻击。
 const REGEX_COMPILE_TIMEOUT_MS: u64 = 500;
 
-/// Maximum regex pattern length.
+/// 正则表达式模式的最大长度。
 const MAX_PATTERN_LENGTH: usize = 10_000;
 
-/// Error returned when a regex pattern is rejected.
+/// 正则模式被拒绝时返回的错误信息。
 #[derive(Debug, Clone)]
 pub struct RegexValidationError {
     pub pattern: String,
     pub reason: String,
 }
 
-/// Result of regex validation.
+/// 正则验证结果。
 #[derive(Debug, Clone)]
 pub struct RegexValidationResult {
     pub valid: bool,
     pub error: Option<RegexValidationError>,
 }
 
-/// Create a safe regex, returning None if the pattern is dangerous or invalid.
-/// Protects against ReDoS by limiting compilation time and pattern length.
+/// 安全地创建正则表达式。若模式危险或无效则返回 `None`。
+///
+/// 通过限制编译时间和模式长度来防御 ReDoS 攻击。
 pub fn create_safe_regex(pattern: &str) -> Option<Regex> {
     if pattern.len() > MAX_PATTERN_LENGTH {
         return None;
@@ -43,8 +44,8 @@ pub fn create_safe_regex(pattern: &str) -> Option<Regex> {
     }
 }
 
-/// Validate a regex pattern without compiling it (lighter check).
-/// Used by TriggerManager for trigger validation.
+/// 验证正则模式的有效性（轻量检查，不创建安全正则）。
+/// 由 TriggerManager 用于触发器验证。
 pub fn validate_regex_pattern(pattern: &str) -> RegexValidationResult {
     if pattern.is_empty() {
         return RegexValidationResult {

@@ -26,51 +26,49 @@ use crate::types::config::{
 use crate::infrastructure::ConfigManager;
 
 // =============================================================================
-// Constants
+// 常量
 // =============================================================================
 
-/// Maximum number of notifications to store.
+/// 通知存储最大数量。
 const MAX_NOTIFICATIONS: usize = 100;
 
-/// Throttle window in milliseconds (5 seconds).
+/// 节流窗口时长（毫秒，5 秒）。
 const THROTTLE_MS: u64 = 5000;
 
-/// Notification file name (stored in ~/.claude/).
+/// 通知持久化文件名（存储于 ~/.claude/）。
 const NOTIFICATION_FILE: &str = "claude-devtools-notifications.json";
 
 // =============================================================================
 // NotificationManager
 // =============================================================================
 
-/// Central module for the notification system.
+/// 通知系统的核心模块。
 ///
-/// Receives detected errors from the error detection pipeline, manages notification
-/// state (CRUD, read status), persists to disk, throttles duplicate notifications,
-/// and emits events to the frontend.
+/// 接收错误检测管道发现的错误，管理通知状态（增删改查、已读状态），
+/// 持久化到磁盘，对重复通知进行节流，并向前端发出事件。
 pub struct NotificationManager {
-    /// Tauri app handle for emitting events and showing native notifications.
+    /// Tauri 应用句柄，用于发出事件和显示原生通知。
     app_handle: Option<tauri::AppHandle>,
-    /// Reference to the config manager for reading notification settings.
+    /// 配置管理器引用，用于读取通知设置。
     config_manager: Arc<ConfigManager>,
-    /// In-memory notification store (newest first).
+    /// 内存中的通知存储（最新的在前）。
     notifications: Arc<RwLock<Vec<StoredNotification>>>,
-    /// Throttle map: `${projectId}:${message}` -> last-seen timestamp.
+    /// 节流映射表: `${projectId}:${message}` -> 上次出现的时间戳。
     throttle_map: Arc<Mutex<HashMap<String, u64>>>,
-    /// Path to the persistence file.
+    /// 持久化文件路径。
     persistence_path: PathBuf,
-    /// Whether initialization has completed.
+    /// 初始化是否已完成。
     is_initialized: bool,
 }
 
 impl NotificationManager {
     // =========================================================================
-    // Construction
+    // 构造
     // =========================================================================
 
-    /// Creates a new NotificationManager.
+    /// 创建新的 NotificationManager。
     ///
-    /// Call [`initialize`](Self::initialize) after construction to load persisted
-    /// notifications from disk.
+    /// 构造后需调用 [`initialize`](Self::initialize) 从磁盘加载已持久化的通知。
     pub fn new(
         app_handle: tauri::AppHandle,
         config_manager: Arc<ConfigManager>,
@@ -90,7 +88,7 @@ impl NotificationManager {
         }
     }
 
-    /// Creates a NotificationManager without a Tauri app handle (for testing).
+    /// 创建无 Tauri 应用句柄的 NotificationManager（用于测试）。
     #[cfg(test)]
     pub fn new_for_test(config_manager: Arc<ConfigManager>) -> Self {
         let persistence_path = std::env::temp_dir()
@@ -109,17 +107,17 @@ impl NotificationManager {
         }
     }
 
-    /// Returns the persistence path (for testing cleanup).
+    /// 返回持久化文件路径（用于测试清理）。
     #[cfg(test)]
     pub fn persistence_path(&self) -> &PathBuf {
         &self.persistence_path
     }
 
     // =========================================================================
-    // Initialization
+    // 初始化
     // =========================================================================
 
-    /// Loads notifications from disk and prunes if needed. Idempotent.
+    /// 从磁盘加载通知并在需要时进行裁剪。幂等操作。
     pub async fn initialize(&mut self) {
         if self.is_initialized {
             return;
@@ -138,20 +136,20 @@ impl NotificationManager {
     }
 
     // =========================================================================
-    // Public API
+    // 公共 API
     // =========================================================================
 
-    /// Main entry point. Adds an error as a stored notification.
+    /// 主入口。将检测到的错误添加为已存储的通知。
     ///
-    /// Performs deduplication by `toolUseId`, then persists, emits events,
-    /// and optionally shows a native OS notification.
+    /// 按 `toolUseId` 进行去重，然后持久化、发出事件，
+    /// 并可选地显示原生操作系统通知。
     ///
-    /// Returns `Some(StoredNotification)` if the error was accepted, or `None`
-    /// if it was filtered by deduplication.
+    /// 返回 `Some(StoredNotification)` 表示错误被接受，
+    /// 或 `None` 表示被去重过滤掉。
     pub async fn add_error(&self, error: DetectedError) -> Option<StoredNotification> {
-        // --- Deduplication by toolUseId ---
-        // The same tool call can appear in both the subagent JSONL and the
-        // parent session JSONL. Keep the subagent-annotated version when possible.
+        // --- 按 toolUseId 去重 ---
+        // 同一个工具调用可能同时出现在子代理 JSONL 和父会话 JSONL 中。
+        // 优先保留带有子代理标注的版本。
         if let Some(ref tool_use_id) = error.tool_use_id {
             let existing_index = {
                 let notifications = self.notifications.read().ok()?;
@@ -164,7 +162,7 @@ impl NotificationManager {
                 let should_replace = {
                     let notifications = self.notifications.read().ok()?;
                     let existing = notifications.get(idx)?;
-                    // Replace only if existing has no subagentId but new error does
+                    // 仅当已有条目无 subagentId 而新错误有时才替换
                     existing.error.subagent_id.is_none() && error.subagent_id.is_some()
                 };
 
@@ -172,13 +170,13 @@ impl NotificationManager {
                     let mut notifications = self.notifications.write().ok()?;
                     notifications.remove(idx);
                 } else {
-                    // Already have a (better or equal) version — skip
+                    // 已有（更好或等同的）版本 — 跳过
                     return None;
                 }
             }
         }
 
-        // --- Build stored notification ---
+        // --- 构建已存储通知 ---
         let created_at = now_millis();
         let stored = StoredNotification {
             error,
@@ -186,7 +184,7 @@ impl NotificationManager {
             created_at,
         };
 
-        // --- Insert at front (newest first) ---
+        // --- 插入到头部（最新的在前） ---
         {
             let mut notifications = self.notifications.write().map_err(|e| {
                 error!("Failed to acquire write lock: {e}");
@@ -196,17 +194,17 @@ impl NotificationManager {
             notifications.insert(0, stored.clone());
         }
 
-        // --- Prune if needed ---
+        // --- 需要时裁剪 ---
         self.prune_notifications();
 
-        // --- Persist ---
+        // --- 持久化 ---
         self.save_notifications().await;
 
-        // --- Emit events ---
+        // --- 发出事件 ---
         self.emit_new_notification(&stored);
         self.emit_notification_updated();
 
-        // --- Native toast (only if not filtered/throttled) ---
+        // --- 原生通知（仅当未被过滤/节流时） ---
         if self.should_notify(&stored.error).await {
             self.show_native_notification(&stored.error);
         }
@@ -214,7 +212,7 @@ impl NotificationManager {
         Some(stored)
     }
 
-    /// Returns a paginated list of notifications (newest first).
+    /// 返回分页的通知列表（最新的在前）。
     pub async fn get_notifications(
         &self,
         options: GetNotificationsOptions,
@@ -247,9 +245,9 @@ impl NotificationManager {
         }
     }
 
-    /// Marks a single notification as read by ID.
+    /// 按 ID 将单条通知标记为已读。
     ///
-    /// Returns `true` if the notification was found.
+    /// 如果找到通知则返回 `true`。
     pub async fn mark_read(&self, id: &str) -> bool {
         let found = {
             let mut notifications = match self.notifications.write() {
@@ -269,7 +267,7 @@ impl NotificationManager {
                 }
             })
         };
-        // Guard is dropped here (end of block scope)
+        // 写锁守卫在此处释放（块作用域结束）
 
         if found {
             self.save_notifications().await;
@@ -279,9 +277,9 @@ impl NotificationManager {
         found
     }
 
-    /// Marks all notifications as read.
+    /// 将所有通知标记为已读。
     ///
-    /// Returns `true` on success.
+    /// 成功时返回 `true`。
     pub async fn mark_all_read(&self) -> bool {
         let changed = {
             let mut notifications = match self.notifications.write() {
@@ -301,7 +299,7 @@ impl NotificationManager {
             }
             changed
         };
-        // Guard is dropped here (end of block scope)
+        // 写锁守卫在此处释放（块作用域结束）
 
         if changed {
             self.save_notifications().await;
@@ -311,9 +309,9 @@ impl NotificationManager {
         true
     }
 
-    /// Removes all notifications.
+    /// 移除所有通知。
     ///
-    /// Returns `true` on success.
+    /// 成功时返回 `true`。
     pub async fn clear_all(&self) -> bool {
         {
             let mut notifications = match self.notifications.write() {
@@ -326,16 +324,16 @@ impl NotificationManager {
 
             notifications.clear();
         }
-        // Guard is dropped here (end of block scope)
+        // 写锁守卫在此处释放（块作用域结束）
 
         self.save_notifications().await;
         self.emit_notification_updated();
         true
     }
 
-    /// Deletes a single notification by ID.
+    /// 按 ID 删除单条通知。
     ///
-    /// Returns `true` if found and deleted.
+    /// 如果找到并删除则返回 `true`。
     pub async fn delete_notification(&self, id: &str) -> bool {
         let found = {
             let mut notifications = match self.notifications.write() {
@@ -350,7 +348,7 @@ impl NotificationManager {
             notifications.retain(|n| n.error.id != id);
             notifications.len() != len_before
         };
-        // Guard is dropped here (end of block scope)
+        // 写锁守卫在此处释放（块作用域结束）
 
         if found {
             self.save_notifications().await;
@@ -361,7 +359,7 @@ impl NotificationManager {
         }
     }
 
-    /// Returns the count of unread notifications.
+    /// 返回未读通知数量。
     pub async fn get_unread_count(&self) -> usize {
         self.notifications
             .read()
@@ -369,7 +367,7 @@ impl NotificationManager {
             .unwrap_or(0)
     }
 
-    /// Returns statistics about the notification store.
+    /// 返回通知存储的统计信息。
     pub fn get_stats(&self) -> NotificationStats {
         let notifications = self
             .notifications
@@ -397,10 +395,10 @@ impl NotificationManager {
     }
 
     // =========================================================================
-    // Persistence
+    // 持久化
     // =========================================================================
 
-    /// Loads notifications from the JSON file on disk.
+    /// 从磁盘 JSON 文件加载通知。
     async fn load_notifications(&self) {
         if !self.persistence_path.exists() {
             return;
@@ -431,7 +429,7 @@ impl NotificationManager {
         }
     }
 
-    /// Saves the current notification list to disk.
+    /// 将当前通知列表保存到磁盘。
     async fn save_notifications(&self) {
         let notifications = self
             .notifications
@@ -459,11 +457,11 @@ impl NotificationManager {
         }
     }
 
-    /// Prunes notifications to [`MAX_NOTIFICATIONS`] entries, removing oldest first.
+    /// 将通知裁剪至 [`MAX_NOTIFICATIONS`] 条，优先移除最旧的。
     fn prune_notifications(&self) {
         if let Ok(mut notifications) = self.notifications.write() {
             if notifications.len() > MAX_NOTIFICATIONS {
-                // Sort by createdAt descending (newest first), keep top N
+                // 按 createdAt 降序排列（最新的在前），保留前 N 条
                 notifications.sort_by(|a, b| b.created_at.cmp(&a.created_at));
                 let removed = notifications.len() - MAX_NOTIFICATIONS;
                 notifications.truncate(MAX_NOTIFICATIONS);
@@ -474,18 +472,18 @@ impl NotificationManager {
     }
 
     // =========================================================================
-    // Filtering & Throttling
+    // 过滤与节流
     // =========================================================================
 
-    /// Generates a throttle key from projectId + message.
+    /// 从 projectId + message 生成节流键。
     fn generate_error_hash(error: &DetectedError) -> String {
         format!("{}:{}", error.project_id, error.message)
     }
 
-    /// Checks whether a native toast should be suppressed due to throttling.
+    /// 检查是否因节流而抑制原生通知。
     ///
-    /// This does NOT affect storage — only the native OS notification.
-    /// Updates the throttle map timestamp on cache-miss.
+    /// 此检查不影响存储 — 仅影响原生操作系统通知。
+    /// 缓存未命中时更新节流映射的时间戳。
     fn is_throttled(&self, error: &DetectedError) -> bool {
         let hash = Self::generate_error_hash(error);
         let now = now_millis();
@@ -504,17 +502,17 @@ impl NotificationManager {
             }
         }
 
-        // Update throttle map
+        // 更新节流映射
         throttle_map.insert(hash, now);
 
-        // Periodic cleanup
+        // 定期清理过期条目
         let expired_threshold = now.saturating_sub(THROTTLE_MS * 2);
         throttle_map.retain(|_, ts| *ts >= expired_threshold);
 
         false
     }
 
-    /// Checks if an error message matches any configured ignored regex patterns.
+    /// 检查错误消息是否匹配任何已配置的忽略正则模式。
     fn matches_ignored_regex(&self, error: &DetectedError) -> bool {
         let config = self.config_manager.get_config();
 
@@ -535,7 +533,7 @@ impl NotificationManager {
         false
     }
 
-    /// Checks whether notifications are currently enabled (not snoozed, not disabled).
+    /// 检查通知当前是否启用（未暂停、未禁用）。
     fn are_notifications_enabled(&self) -> bool {
         let config = self.config_manager.get_config();
 
@@ -548,7 +546,7 @@ impl NotificationManager {
             if now < snoozed_until {
                 return false;
             }
-            // Snooze has expired — clear it
+            // 暂停已过期 — 清除暂停状态
             self.config_manager.clear_snooze();
             return true;
         }
@@ -556,9 +554,9 @@ impl NotificationManager {
         true
     }
 
-    /// Determines whether a native toast should be shown for this error.
+    /// 判断是否应为该错误显示原生通知。
     ///
-    /// This controls the OS notification only; storage is unconditional.
+    /// 此方法仅控制操作系统通知；存储不受条件限制。
     async fn should_notify(&self, error: &DetectedError) -> bool {
         if !self.are_notifications_enabled() {
             return false;
@@ -576,10 +574,10 @@ impl NotificationManager {
     }
 
     // =========================================================================
-    // Native Notifications & Events
+    // 原生通知与事件
     // =========================================================================
 
-    /// Shows a native OS notification for an error.
+    /// 为错误显示原生操作系统通知。
     fn show_native_notification(&self, error: &DetectedError) {
         let Some(ref app_handle) = self.app_handle else {
             return;
@@ -614,7 +612,7 @@ impl NotificationManager {
         let _ = (sound_enabled, body);
     }
 
-    /// Emits `notification:new` to the frontend.
+    /// 向前端发出 `notification:new` 事件。
     fn emit_new_notification(&self, notification: &StoredNotification) {
         let Some(ref app_handle) = self.app_handle else {
             return;
@@ -625,7 +623,7 @@ impl NotificationManager {
         }
     }
 
-    /// Emits `notification:updated` with total/unread counts.
+    /// 向前端发出 `notification:updated` 事件，携带总数/未读数。
     fn emit_notification_updated(&self) {
         let Some(ref app_handle) = self.app_handle else {
             return;
@@ -660,10 +658,10 @@ impl NotificationManager {
 }
 
 // =============================================================================
-// Helpers
+// 辅助函数
 // =============================================================================
 
-/// Returns the current time in milliseconds since UNIX epoch.
+/// 返回自 UNIX 纪元以来的当前时间（毫秒）。
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -671,7 +669,7 @@ fn now_millis() -> u64 {
         .as_millis() as u64
 }
 
-/// Truncates a string to `max_len` characters.
+/// 将字符串截断至 `max_len` 个字符。
 fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
@@ -686,7 +684,7 @@ fn truncate_str(s: &str, max_len: usize) -> String {
 }
 
 // =============================================================================
-// Tests
+// 测试
 // =============================================================================
 
 #[cfg(test)]
@@ -694,7 +692,7 @@ mod tests {
     use super::*;
     use crate::types::config::{ErrorContext, NotificationConfig, AppConfig, GeneralConfig, DisplayConfig, SessionConfig};
 
-    /// Creates a default AppConfig for testing.
+    /// 创建用于测试的默认 AppConfig。
     fn default_app_config() -> AppConfig {
         AppConfig {
             notifications: NotificationConfig {
@@ -730,7 +728,7 @@ mod tests {
         }
     }
 
-    /// Creates a DetectedError for testing.
+    /// 创建用于测试的 DetectedError。
     fn make_error(id: &str, project_id: &str, message: &str) -> DetectedError {
         DetectedError {
             id: id.to_string(),
@@ -753,7 +751,7 @@ mod tests {
         }
     }
 
-    /// Creates a DetectedError with tool_use_id for testing.
+    /// 创建带 tool_use_id 的 DetectedError（用于测试）。
     fn make_error_with_tool(
         id: &str,
         project_id: &str,
@@ -767,7 +765,7 @@ mod tests {
         error
     }
 
-    /// Creates a test NotificationManager.
+    /// 创建用于测试的 NotificationManager。
     async fn make_manager() -> NotificationManager {
         let cm = Arc::new(ConfigManager::with_path(
             std::env::temp_dir().join(format!(
@@ -783,7 +781,7 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_missing_file() {
         let mut mgr = make_manager().await;
-        // Missing file should not panic, notifications should be empty
+        // 缺失文件不应 panic，通知列表应为空
         mgr.initialize().await;
         assert_eq!(
             mgr.notifications.read().unwrap().len(),
@@ -796,7 +794,7 @@ mod tests {
         let mut mgr = make_manager().await;
         let path = mgr.persistence_path().clone();
 
-        // Write a notification to the file
+        // 向文件写入一条通知
         let stored = StoredNotification {
             error: make_error("n1", "proj-1", "test error"),
             is_read: false,
@@ -811,7 +809,7 @@ mod tests {
         mgr.initialize().await;
         assert_eq!(mgr.notifications.read().unwrap().len(), 1);
 
-        // Cleanup
+        // 清理
         let _ = tokio::fs::remove_file(&path).await;
     }
 
@@ -836,7 +834,7 @@ mod tests {
         let mut mgr = make_manager().await;
         let path = mgr.persistence_path().clone();
 
-        // Create more than MAX_NOTIFICATIONS
+        // 创建超过 MAX_NOTIFICATIONS 的条目
         let many: Vec<StoredNotification> = (0..150)
             .map(|i| StoredNotification {
                 error: make_error(&format!("n{i}"), "proj", &format!("error {i}")),
@@ -887,7 +885,7 @@ mod tests {
         let result1 = mgr.add_error(error1).await;
         assert!(result1.is_some());
 
-        // Same toolUseId, no subagent — should be deduped (skip)
+        // 相同 toolUseId，无子代理 — 应被去重（跳过）
         let error2 = make_error_with_tool("e2", "proj-1", "different msg", "tool-1", None);
         let result2 = mgr.add_error(error2).await;
         assert!(result2.is_none());
@@ -900,12 +898,12 @@ mod tests {
         let mut mgr = make_manager().await;
         mgr.initialize().await;
 
-        // First: no subagent
+        // 第一个: 无子代理
         let error1 = make_error_with_tool("e1", "proj-1", "error msg", "tool-1", None);
         let result1 = mgr.add_error(error1).await;
         assert!(result1.is_some());
 
-        // Second: has subagent — should replace
+        // 第二个: 有子代理 — 应替换
         let error2 =
             make_error_with_tool("e2", "proj-1", "error msg v2", "tool-1", Some("sub-1"));
         let result2 = mgr.add_error(error2).await;
@@ -920,13 +918,13 @@ mod tests {
         let mut mgr = make_manager().await;
         mgr.initialize().await;
 
-        // First: has subagent
+        // 第一个: 有子代理
         let error1 =
             make_error_with_tool("e1", "proj-1", "error msg", "tool-1", Some("sub-1"));
         let result1 = mgr.add_error(error1).await;
         assert!(result1.is_some());
 
-        // Second: no subagent — existing is better, skip
+        // 第二个: 无子代理 — 已有条目更优，跳过
         let error2 = make_error_with_tool("e2", "proj-1", "error msg v2", "tool-1", None);
         let result2 = mgr.add_error(error2).await;
         assert!(result2.is_none());
@@ -958,14 +956,14 @@ mod tests {
         let mut mgr = make_manager().await;
         mgr.initialize().await;
 
-        // Add same error twice quickly — both should store (no dedup, different IDs)
-        // but the second should be throttled for native notification.
-        // Since we can't easily test native notifications in unit tests,
-        // we verify the throttle map state.
+        // 快速添加两次相同错误 — 两者都应存储（无去重，ID 不同）
+        // 但第二次的原生通知应被节流。
+        // 由于无法在单元测试中直接测试原生通知，
+        // 因此验证节流映射的状态。
         let error = make_error("e1", "proj-1", "throttle test");
         mgr.add_error(error.clone()).await;
 
-        // Check throttle map has an entry
+        // 检查节流映射中是否有条目
         let hash = NotificationManager::generate_error_hash(&error);
         let throttle_map = mgr.throttle_map.lock().unwrap();
         assert!(throttle_map.contains_key(&hash));
@@ -1007,7 +1005,7 @@ mod tests {
             mgr.add_error(error).await;
         }
 
-        // Newest first, so e9 is first
+        // 最新的在前，所以 e9 排第一
         let page1 = mgr
             .get_notifications(GetNotificationsOptions {
                 limit: Some(3),
@@ -1055,7 +1053,7 @@ mod tests {
         assert!(result);
         assert_eq!(mgr.get_unread_count().await, 0);
 
-        // Marking already-read is still "found"
+        // 标记已读的条目仍视为"找到"
         let result2 = mgr.mark_read("e1").await;
         assert!(result2);
     }
@@ -1198,17 +1196,17 @@ mod tests {
         mgr.initialize().await;
 
         let error = make_error("e1", "proj", "Permission denied: access forbidden");
-        // The error should still be stored (storage is unconditional)
+        // 错误仍应被存储（存储不受条件限制）
         let result = mgr.add_error(error).await;
         assert!(result.is_some());
 
-        // But should_notify should return false due to ignored regex
-        // (we can't directly test should_notify since it's private,
-        // but we can verify the error was stored despite the filter)
+        // 但 should_notify 应因忽略正则返回 false
+        //（无法直接测试 should_notify 因为它是私有方法，
+        // 但可以验证错误虽被过滤但仍已存储）
         assert_eq!(mgr.notifications.read().unwrap().len(), 1);
     }
 
-    // --- truncate helper ---
+    // --- 截断辅助函数 ---
 
     #[test]
     fn test_truncate_str_short() {

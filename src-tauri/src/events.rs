@@ -1,42 +1,42 @@
-//! Event emission helpers for Tauri.
+//! Tauri 事件通知工具模块。
 //!
-//! Provides typed event emission for file changes, todo changes,
-//! notifications, and error detection events.
+//! 提供面向前端的事件通知函数，覆盖文件变更、待办事项变更、
+//! 通知管理和错误检测等事件类型。
 
 use tauri::{AppHandle, Emitter};
 
 use crate::types::config::{DetectedError, StoredNotification};
 use crate::types::domain::FileChangeEvent;
 
-/// Emit a file change event to the frontend.
+/// 通知前端文件变更事件。
 pub fn emit_file_change(app: &AppHandle, event: FileChangeEvent) {
     if let Err(e) = app.emit("file-change", &event) {
         log::error!("Failed to emit file-change event: {}", e);
     }
 }
 
-/// Todo change event payload.
+/// 待办事项变更事件载荷。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TodoChangeEvent {
     pub session_id: String,
 }
 
-/// Emit a todo change event to the frontend.
+/// 通知前端待办事项变更事件。
 pub fn emit_todo_change(app: &AppHandle, event: TodoChangeEvent) {
     if let Err(e) = app.emit("todo-change", &event) {
         log::error!("Failed to emit todo-change event: {}", e);
     }
 }
 
-/// Emit a new notification event to the frontend.
+/// 通知前端新通知事件。
 pub fn emit_notification_new(app: &AppHandle, notification: &StoredNotification) {
     if let Err(e) = app.emit("notification:new", notification) {
         log::error!("Failed to emit notification:new event: {}", e);
     }
 }
 
-/// Notification updated event payload.
+/// 通知状态更新事件载荷。
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NotificationUpdatedPayload {
@@ -44,7 +44,7 @@ pub struct NotificationUpdatedPayload {
     pub unread_count: usize,
 }
 
-/// Emit a notification state change to the frontend.
+/// 通知前端通知状态变更事件（包含总数和未读数）。
 pub fn emit_notification_updated(
     app: &AppHandle,
     total: usize,
@@ -56,7 +56,7 @@ pub fn emit_notification_updated(
     }
 }
 
-/// Emit an error detected event.
+/// 通知前端错误检测事件。
 pub fn emit_error_detected(app: &AppHandle, error: &DetectedError) {
     if let Err(e) = app.emit("error:detected", error) {
         log::error!("Failed to emit error:detected event: {}", e);

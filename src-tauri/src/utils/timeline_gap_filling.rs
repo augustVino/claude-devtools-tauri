@@ -1,35 +1,32 @@
-//! Timeline gap filling for semantic steps.
+//! 语义步骤的时间线间隙填充模块。
 //!
-//! Extends `effective_end_time` on steps so that the visual timeline has no
-//! dead gaps between consecutive operations.  Subagents with duration above
-//! `MEANINGFUL_SUBAGENT_DURATION_MS` keep their original timing since they
-//! represent real, measurable work.
+//! 扩展步骤的 `effective_end_time`，使可视化时间线在连续操作之间没有
+//! 死区间隙。持续时间超过 `MEANINGFUL_SUBAGENT_DURATION_MS` 的子 Agent
+//! 保留其原始时间，因为它们代表真实的、可测量的工作。
 
 use crate::types::messages::{SemanticStep, SemanticStepType};
 
-/// Steps starting within this window (ms) of each other are considered parallel.
+/// 步骤之间的启动间隔在此窗口（毫秒）内视为并行执行。
 const PARALLEL_WINDOW_MS: u64 = 100;
 
-/// Subagents whose original duration exceeds this threshold retain their real
-/// timing instead of being gap-filled.
+/// 子 Agent 原始持续时间超过此阈值时保留真实时间，不进行间隙填充。
 const MEANINGFUL_SUBAGENT_DURATION_MS: u64 = 100;
 
-/// Input bundle for [`fill_timeline_gaps`].
+/// [`fill_timeline_gaps`] 的输入参数包。
 pub struct GapFillingInput<'a> {
-    /// The semantic steps to mutate in-place.
+    /// 待原地修改的语义步骤切片。
     pub steps: &'a mut [SemanticStep],
-    /// Chunk start time in epoch milliseconds.
+    /// 块起始时间（epoch 毫秒）。
     pub chunk_start_time_ms: u64,
-    /// Chunk end time in epoch milliseconds.
+    /// 块结束时间（epoch 毫秒）。
     pub chunk_end_time_ms: u64,
 }
 
-/// Fill timeline gaps between consecutive semantic steps.
+/// 填充连续语义步骤之间的时间线间隙。
 ///
-/// For each step (except subagents with meaningful duration), the
-/// `effective_end_time` is extended to the start time of the next step
-/// when the inter-step gap exceeds `PARALLEL_WINDOW_MS`.  The last step
-/// is extended to `chunk_end_time_ms`.
+/// 对每个步骤（持续时间有意义的子 Agent 除外），当步骤间间隙超过
+/// `PARALLEL_WINDOW_MS` 时，将 `effective_end_time` 延伸到下一个步骤的
+/// 起始时间。最后一个步骤延伸到 `chunk_end_time_ms`。
 pub fn fill_timeline_gaps(input: GapFillingInput<'_>) {
     let steps = input.steps;
     if steps.is_empty() {
@@ -41,7 +38,7 @@ pub fn fill_timeline_gaps(input: GapFillingInput<'_>) {
     for i in 0..steps.len() {
         let step = &steps[i];
 
-        // Subagents with meaningful duration keep their original timing.
+        // 持续时间有意义的子 Agent 保留其原始时间
         if step.step_type == SemanticStepType::Subagent
             && step.duration_ms > MEANINGFUL_SUBAGENT_DURATION_MS
         {
@@ -69,14 +66,14 @@ pub fn fill_timeline_gaps(input: GapFillingInput<'_>) {
             let time_diff = next_start_ms.saturating_sub(current_start_ms);
 
             if time_diff <= PARALLEL_WINDOW_MS {
-                // Parallel — keep original duration, don't extend.
+                // 并行 — 保持原始时长，不延伸
                 current_start_ms + step.duration_ms
             } else {
-                // Gap — extend to the next step's start.
+                // 有间隙 — 延伸到下一个步骤的起始时间
                 next_start_ms
             }
         } else {
-            // Last step — extend to chunk end.
+            // 最后一个步骤 — 延伸到块结束时间
             chunk_end
         };
 
@@ -88,14 +85,14 @@ pub fn fill_timeline_gaps(input: GapFillingInput<'_>) {
     }
 }
 
-/// Parse an RFC 3339 timestamp string into epoch milliseconds.
+/// 将 RFC 3339 时间戳字符串解析为 epoch 毫秒。
 pub fn parse_ts_ms(ts: &str) -> Option<u64> {
     chrono::DateTime::parse_from_rfc3339(ts)
         .ok()
         .map(|dt| dt.timestamp_millis() as u64)
 }
 
-/// Format epoch milliseconds as an RFC 3339 timestamp string.
+/// 将 epoch 毫秒格式化为 RFC 3339 时间戳字符串。
 pub fn format_ts_ms(ms: u64) -> String {
     chrono::DateTime::from_timestamp_millis(ms as i64)
         .map(|dt| dt.to_rfc3339())
@@ -103,7 +100,7 @@ pub fn format_ts_ms(ms: u64) -> String {
 }
 
 // =============================================================================
-// Tests
+// 单元测试
 // =============================================================================
 
 #[cfg(test)]
@@ -144,12 +141,12 @@ mod tests {
         }
     }
 
-    // -- Timestamp helpers ----------------------------------------------------
+    // -- 时间戳辅助函数 --------------------------------------------------------
 
     #[test]
     fn parse_ts_ms_valid() {
         let ms = parse_ts_ms("2026-03-25T10:00:00.000Z").unwrap();
-        // Verify the value round-trips through format -> parse.
+        // 验证值通过 格式化 -> 解析 的往返一致性
         let formatted = format_ts_ms(ms);
         let roundtrip = parse_ts_ms(&formatted).unwrap();
         assert_eq!(ms, roundtrip);
@@ -177,7 +174,7 @@ mod tests {
         assert!(result.starts_with("1970-01-01"));
     }
 
-    // -- Gap filling -----------------------------------------------------------
+    // -- 间隙填充 --------------------------------------------------------------
 
     #[test]
     fn fill_gaps_empty_steps() {
@@ -247,10 +244,10 @@ mod tests {
             chunk_end_time_ms: chunk_end,
         });
 
-        // s1: time_diff = 50ms <= 100ms => parallel, keep original 50ms
+        // s1: time_diff = 50ms <= 100ms => 并行，保持原始 50ms
         assert_eq!(steps[0].effective_duration_ms, Some(50));
 
-        // s2: last step, extends to chunk end
+        // s2: 最后一个步骤，延伸到块结束时间
         assert_eq!(steps[1].effective_duration_ms, Some(9950));
     }
 
@@ -281,10 +278,10 @@ mod tests {
             chunk_end_time_ms: chunk_end,
         });
 
-        // s1: time_diff = 1000ms > 100ms => extend to next step start
+        // s1: time_diff = 1000ms > 100ms => 延伸到下一个步骤起始
         assert_eq!(steps[0].effective_duration_ms, Some(1000));
 
-        // s2: last step, extends to chunk end
+        // s2: 最后一个步骤，延伸到块结束时间
         assert_eq!(steps[1].effective_duration_ms, Some(9000));
     }
 
@@ -306,7 +303,7 @@ mod tests {
             chunk_end_time_ms: chunk_end,
         });
 
-        // Subagent with duration > 100ms keeps its original 5000ms
+        // 持续时间 > 100ms 的子 Agent 保留原始 5000ms
         assert_eq!(steps[0].effective_duration_ms, Some(5000));
         assert_eq!(
             steps[0].effective_end_time.as_deref(),
@@ -332,7 +329,7 @@ mod tests {
             chunk_end_time_ms: chunk_end,
         });
 
-        // Subagent with duration <= 100ms gets gap-filled to chunk end
+        // 持续时间 <= 100ms 的子 Agent 进行间隙填充到块结束
         assert_eq!(steps[0].effective_duration_ms, Some(5000));
     }
 

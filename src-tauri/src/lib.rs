@@ -1,3 +1,8 @@
+//! Tauri 应用库入口模块。
+//!
+//! 初始化应用状态、注册插件和 IPC 命令、启动后台文件监听器，
+//! 并构建 Tauri 应用实例。
+
 mod analysis;
 mod commands;
 mod constants;
@@ -18,6 +23,11 @@ use error::error_detector::ErrorDetector;
 use infrastructure::{ConfigManager, FileWatcher, NotificationManager};
 use utils::{get_projects_base_path, is_subagent_file};
 
+/// 运行 Tauri 应用。
+///
+/// 初始化配置管理器、应用状态、通知管理器，
+/// 启动三个并发文件监听器（主监听器、错误检测管道、Todo 监听器），
+/// 并注册所有 IPC 命令处理函数。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let config_manager = Arc::new(ConfigManager::new());
@@ -35,7 +45,7 @@ pub fn run() {
     .setup(move |app| {
       let state = app_state.clone();
 
-      // If not launched via autostart (--minimized), show the window
+      // 非自动启动（无 --minimized 参数）时显示窗口
       let args: Vec<String> = std::env::args().collect();
       if !args.contains(&"--minimized".to_string()) {
         if let Some(window) = app.get_webview_window("main") {
@@ -43,7 +53,7 @@ pub fn run() {
         }
       }
 
-      // macOS: Hide Dock icon if config says so
+      // macOS: 根据配置隐藏 Dock 图标
       #[cfg(target_os = "macos")]
       {
         let hide_dock = {
@@ -62,14 +72,14 @@ pub fn run() {
         }
       }
 
-      // Initialize state asynchronously
+      // 异步初始化应用状态
       tauri::async_runtime::spawn(async move {
         if let Err(e) = state.read().await.initialize().await {
           log::error!("Failed to initialize app state: {}", e);
         }
       });
 
-      // Create and register NotificationManager
+      // 创建并注册 NotificationManager
       let notification_manager = NotificationManager::new(
         app.handle().clone(),
         config_manager.clone(),
@@ -77,20 +87,20 @@ pub fn run() {
       let notification_manager = Arc::new(RwLock::new(notification_manager));
       app.manage(notification_manager.clone());
 
-      // Initialize NotificationManager asynchronously
+      // 异步初始化 NotificationManager
       let init_notification_mgr = notification_manager.clone();
       tauri::async_runtime::spawn(async move {
         init_notification_mgr.write().await.initialize().await;
         log::info!("NotificationManager initialized");
       });
 
-      // Start FileWatcher and connect to events
+      // ========== 主文件监听器：监听 JSONL/JSON 文件变更 ==========
       let watcher_app_handle = app.handle().clone();
       tauri::async_runtime::spawn(async move {
         let mut watcher = FileWatcher::new();
         let projects_path = get_projects_base_path();
 
-        // Create directory if it doesn't exist
+        // 目录不存在时自动创建
         if !projects_path.exists() {
           if let Err(e) = tokio::fs::create_dir_all(&projects_path).await {
             log::error!("Failed to create projects directory: {}", e);
@@ -98,13 +108,13 @@ pub fn run() {
           }
         }
 
-        // Start watching
+        // 启动文件监听
         match watcher.watch(&projects_path).await {
           Ok(()) => {
             log::info!("FileWatcher started successfully");
             let mut receiver = watcher.receiver();
 
-            // Process file change events
+            // 处理文件变更事件
             while let Ok(event) = receiver.recv().await {
               events::emit_file_change(&watcher_app_handle, event);
             }
@@ -115,7 +125,7 @@ pub fn run() {
         }
       });
 
-      // Error detection pipeline — second FileWatcher for .jsonl changes
+      // ========== 错误检测管道：第二个 FileWatcher 监听 .jsonl 变更 ==========
       let pipeline_handle = app.handle().clone();
       let pipeline_notification_mgr = notification_manager.clone();
       tauri::async_runtime::spawn(async move {
@@ -129,7 +139,7 @@ pub fn run() {
         let projects_path = get_projects_base_path();
 
         if !projects_path.exists() {
-          // Directory may not exist yet; skip silently (main watcher handles creation)
+          // 目录可能尚未创建；静默跳过（主监听器负责创建）
           return;
         }
 
@@ -141,7 +151,7 @@ pub fn run() {
             while let Ok(event) = receiver.recv().await {
               let path = Path::new(&event.path);
 
-              // Only process .jsonl files, skip subagent files (handled by parent session)
+              // 仅处理 .jsonl 文件，跳过子 Agent 文件（由父会话处理）
               if path.extension().map(|e| e != "jsonl").unwrap_or(true) {
                 continue;
               }
@@ -158,7 +168,7 @@ pub fn run() {
                 .clone()
                 .unwrap_or_default();
 
-              // Parse session file and run error detection
+              // 解析会话文件并执行错误检测
               let messages =
                 crate::parsing::jsonl_parser::parse_jsonl_file(path).await;
 
@@ -175,11 +185,11 @@ pub fn run() {
                 )
                 .await;
 
-              // Feed detected errors to NotificationManager
+              // 将检测到的错误发送给 NotificationManager
               let mgr = pipeline_notification_mgr.read().await;
               for detected_error in errors {
                 events::emit_error_detected(&pipeline_handle, &detected_error);
-                // add_error internally emits notification:new and notification:updated
+                // add_error 内部会发射 notification:new 和 notification:updated 事件
                 let _ = mgr.add_error(detected_error).await;
               }
             }
@@ -190,7 +200,7 @@ pub fn run() {
         }
       });
 
-      // Todo file watcher — watches ~/.claude/todos/ for checklist changes
+      // ========== Todo 文件监听器：监听 ~/.claude/todos/ 的清单变更 ==========
       let todo_app_handle = app.handle().clone();
       tauri::async_runtime::spawn(async move {
         let mut todo_watcher = FileWatcher::new();
@@ -230,6 +240,7 @@ pub fn run() {
         }
       });
 
+      // Debug 模式下启用日志插件
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()

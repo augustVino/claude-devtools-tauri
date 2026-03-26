@@ -1,7 +1,7 @@
-//! LRU cache for parsed session data with TTL-based expiration.
+//! 数据缓存 — 基于 LRU 策略缓存已解析的会话数据，支持 TTL 过期自动淘汰。
 //!
-//! Port of the Electron `DataCache.ts` service. Uses `moka` for built-in
-//! LRU eviction and TTL expiry so we do not manage timers manually.
+//! 从 Electron `DataCache.ts` 移植而来。使用 `moka` 库内置的
+//! LRU 淘汰与 TTL 过期机制，无需手动管理定时器。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,36 +10,36 @@ use moka::future::Cache;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型定义
 // ---------------------------------------------------------------------------
 
-/// Wrapped cache payload carrying a schema version for bulk invalidation.
+/// 缓存条目包装结构，携带模式版本号用于批量失效。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheEntry {
     value: serde_json::Value,
     version: u32,
 }
 
-/// Current cache schema version. Bump when the cached structure changes
-/// to force re-parsing after an upgrade.
+/// 当前缓存模式版本号。当缓存结构发生变更时递增此值，
+/// 以强制升级后重新解析。
 const CURRENT_VERSION: u32 = 2;
 
 // ---------------------------------------------------------------------------
 // DataCache
 // ---------------------------------------------------------------------------
 
-/// LRU cache backed by `moka` with configurable capacity and TTL.
+/// 基于 `moka` 的 LRU 缓存，支持可配置容量与 TTL。
 pub struct DataCache {
     cache: Arc<Cache<String, CacheEntry>>,
 }
 
 impl DataCache {
-    /// Creates a new cache with default settings (50 entries, 10 min TTL).
+    /// 创建默认配置的缓存（50 条容量，10 分钟 TTL）。
     pub fn new() -> Self {
         Self::with_options(50, 10)
     }
 
-    /// Creates a cache with custom capacity and TTL.
+    /// 创建指定容量与 TTL 的缓存。
     pub fn with_options(max_size: u64, ttl_minutes: u64) -> Self {
         let cache = Cache::builder()
             .max_capacity(max_size)
@@ -50,10 +50,9 @@ impl DataCache {
         }
     }
 
-    // ---- Session cache ----------------------------------------------------
+    // ---- 会话缓存 ---------------------------------------------------------
 
-    /// Retrieves a cached session, returning `None` on miss, expiry, or
-    /// version mismatch.
+    /// 获取已缓存的会话数据。未命中、过期或版本不匹配时返回 `None`。
     pub async fn get_session(
         &self,
         project_id: &str,
@@ -62,7 +61,7 @@ impl DataCache {
         self.get(&Self::build_key(project_id, session_id)).await
     }
 
-    /// Stores a session in the cache.
+    /// 将会话数据存入缓存。
     pub async fn set_session(
         &self,
         project_id: &str,
@@ -72,10 +71,9 @@ impl DataCache {
         self.set(&Self::build_key(project_id, session_id), value).await;
     }
 
-    // ---- Subagent cache --------------------------------------------------
+    // ---- 子代理缓存 -------------------------------------------------------
 
-    /// Retrieves a cached subagent, returning `None` on miss, expiry, or
-    /// version mismatch.
+    /// 获取已缓存的子代理数据。未命中、过期或版本不匹配时返回 `None`。
     pub async fn get_subagent(
         &self,
         project_id: &str,
@@ -86,7 +84,7 @@ impl DataCache {
             .await
     }
 
-    /// Stores a subagent in the cache.
+    /// 将子代理数据存入缓存。
     pub async fn set_subagent(
         &self,
         project_id: &str,
@@ -101,24 +99,24 @@ impl DataCache {
         .await;
     }
 
-    // ---- Invalidation ----------------------------------------------------
+    // ---- 失效管理 ---------------------------------------------------------
 
-    /// Invalidates a single session entry.
+    /// 使单条会话缓存条目失效。
     pub async fn invalidate_session(&self, project_id: &str, session_id: &str) {
         let key = Self::build_key(project_id, session_id);
         self.cache.invalidate(&key).await;
 
-        // Also remove any subagent entries for this session.
+        // 同时移除该会话关联的所有子代理缓存条目
         self.invalidate_matching(&format!("-{session_id}-"), Some(project_id))
             .await;
     }
 
-    /// Invalidates all entries belonging to a project.
+    /// 使指定项目下的所有缓存条目失效。
     pub async fn invalidate_project(&self, project_id: &str) {
-        // Session entries: key starts with "{projectId}/"
+        // 会话条目的键格式为 "{projectId}/"
         self.cache
             .run_pending_tasks()
-            .await; // ensure iteration sees latest state
+            .await; // 确保迭代时能看到最新状态
 
         let keys: Vec<String> = self
             .cache
@@ -137,17 +135,17 @@ impl DataCache {
         }
     }
 
-    /// Clears the entire cache.
+    /// 清空整个缓存。
     pub async fn clear(&self) {
         self.cache.invalidate_all();
     }
 
-    /// Returns the number of entries currently in the cache.
+    /// 返回缓存中当前条目数。
     pub async fn entry_count(&self) -> u64 {
         self.cache.entry_count()
     }
 
-    // ---- Key helpers -----------------------------------------------------
+    // ---- 键构建辅助方法 ---------------------------------------------------
 
     fn build_key(project_id: &str, session_id: &str) -> String {
         format!("{project_id}/{session_id}")
@@ -157,7 +155,7 @@ impl DataCache {
         format!("subagent-{project_id}-{session_id}-{subagent_id}")
     }
 
-    // ---- Internals -------------------------------------------------------
+    // ---- 内部实现 ---------------------------------------------------------
 
     async fn get(&self, key: &str) -> Option<serde_json::Value> {
         let entry = self.cache.get(key).await?;
@@ -176,8 +174,7 @@ impl DataCache {
         self.cache.insert(key.to_string(), entry).await;
     }
 
-    /// Removes entries whose key contains `token` and optionally matches a
-    /// project prefix (for subagent keys).
+    /// 移除键中包含指定标记的条目，可额外匹配项目前缀（用于子代理键）。
     async fn invalidate_matching(&self, token: &str, project_id: Option<&str>) {
         let keys: Vec<String> = self
             .cache
@@ -205,15 +202,15 @@ impl DataCache {
         }
     }
 
-    /// Returns `true` when `key` belongs to `project_id` (session or subagent).
+    /// 判断 `key` 是否属于指定项目（会话或子代理）。
     fn key_belongs_to_project(key: &str, project_id: &str) -> bool {
-        // Session key: "{projectId}/{sessionId}"
+        // 会话键格式: "{projectId}/{sessionId}"
         if let Some(rest) = key.strip_prefix(project_id) {
             if rest.starts_with('/') || rest.starts_with("::") {
                 return true;
             }
         }
-        // Subagent key: "subagent-{projectId}-..."
+        // 子代理键格式: "subagent-{projectId}-..."
         if let Some(rest) = key.strip_prefix("subagent-") {
             if let Some(after) = rest.strip_prefix(project_id) {
                 if after.starts_with('-') || after.starts_with("::") {
@@ -232,7 +229,7 @@ impl Default for DataCache {
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -243,7 +240,7 @@ mod tests {
         serde_json::json!({ "n": n })
     }
 
-    // -- set & get ---------------------------------------------------------
+    // -- 设置与读取 --------------------------------------------------------
 
     #[tokio::test]
     async fn set_and_get_session() {
@@ -278,51 +275,50 @@ mod tests {
         assert_eq!(got, Some(val));
     }
 
-    // -- TTL expiry --------------------------------------------------------
+    // -- TTL 过期 -----------------------------------------------------------
 
     #[tokio::test]
     async fn ttl_expiry_returns_none() {
-        // 1 ms TTL so entries expire immediately
+        // TTL 设为 0 分钟，使条目立即过期
         let cache = DataCache::with_options(50, 0);
         let val = json_val(99);
 
         cache.set_session("proj-a", "sess-ttl", val).await;
 
-        // Brief sleep to let moka's async expiry run
+        // 短暂等待，让 moka 的异步过期机制执行
         tokio::time::sleep(Duration::from_millis(5)).await;
 
         let got = cache.get_session("proj-a", "sess-ttl").await;
         assert!(got.is_none());
     }
 
-    // -- max size eviction -------------------------------------------------
+    // -- 最大容量淘汰 -------------------------------------------------------
 
     #[tokio::test]
     async fn max_size_eviction() {
         let cache = DataCache::with_options(3, 10);
 
-        // Insert 4 entries into a capacity-3 cache
+        // 向容量为 3 的缓存中插入 4 条数据
         for i in 0..4 {
             cache
                 .set_session("proj", &format!("sess-{i}"), json_val(i))
                 .await;
         }
 
-        // At least one of the earlier entries should have been evicted.
-        // The first inserted (sess-0) is the LRU candidate.
+        // 至少应有一条较早的条目被淘汰。
+        // 最先插入的 (sess-0) 是 LRU 淘汰候选。
         let _first = cache.get_session("proj", "sess-0").await;
-        // We cannot guarantee which was evicted due to moka's internal
-        // batching, but we *can* verify the cache did not grow beyond
-        // capacity.
+        // 由于 moka 内部批处理机制，无法确定具体哪条被淘汰，
+        // 但可以验证缓存数量未超过最大容量。
         let count = cache.entry_count().await;
         assert!(count <= 3, "cache should not exceed max_capacity, got {count}");
 
-        // The most recent entry must still be present.
+        // 最近写入的条目必须仍在缓存中。
         let last = cache.get_session("proj", "sess-3").await;
         assert!(last.is_some(), "most-recent entry should survive eviction");
     }
 
-    // -- invalidation ------------------------------------------------------
+    // -- 失效操作 -----------------------------------------------------------
 
     #[tokio::test]
     async fn invalidate_session() {
@@ -334,7 +330,7 @@ mod tests {
         cache
             .set_subagent("proj-a", "sess-inv", "sub-1", json_val(2))
             .await;
-        // unrelated entry
+        // 无关联条目
         cache
             .set_session("proj-b", "sess-other", json_val(3))
             .await;

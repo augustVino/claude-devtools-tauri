@@ -1,21 +1,21 @@
-//! Context accumulation for semantic steps.
+//! 语义步骤的上下文累积计算模块。
 //!
-//! Calculates the `accumulated_context` token count for each step, representing
-//! the total context window tokens consumed at that point in the session.
+//! 为每个步骤计算 `accumulated_context` token 计数，表示
+//! 该步骤在会话中消耗的总上下文窗口 token 数。
 //!
-//! - **Subagent steps**: use their own `tokens.input + tokens.cached`.
-//! - **Other steps**: look up the source assistant message by `source_message_id`
-//!   and sum `input_tokens + cache_read + cache_creation`.
+//! - **子 Agent 步骤**：使用自身的 `tokens.input + tokens.cached`。
+//! - **其他步骤**：通过 `source_message_id` 查找源助手消息，
+//!   累加 `input_tokens + cache_read + cache_creation`。
 
 use std::collections::HashMap;
 
 use crate::types::messages::{ParsedMessage, SemanticStep, SemanticStepType};
 
-/// Calculate and set `accumulated_context` on each semantic step.
+/// 计算并设置每个语义步骤的 `accumulated_context`。
 ///
-/// Builds a lookup from message UUID to `ParsedMessage`, then for each step:
-/// - Subagent steps use their own token data.
-/// - All other steps resolve their source message and accumulate from its usage.
+/// 构建消息 UUID 到 `ParsedMessage` 的查找表，然后对每个步骤：
+/// - 子 Agent 步骤使用自身的 token 数据。
+/// - 其他步骤解析其源消息，从 usage 中累积 token 消耗。
 pub fn calculate_step_context(steps: &mut [SemanticStep], messages: &[ParsedMessage]) {
     let msg_by_uuid: HashMap<&str, &ParsedMessage> =
         messages.iter().map(|m| (m.uuid.as_str(), m)).collect();
@@ -51,7 +51,7 @@ pub fn calculate_step_context(steps: &mut [SemanticStep], messages: &[ParsedMess
 }
 
 // =============================================================================
-// Tests
+// 单元测试
 // =============================================================================
 
 #[cfg(test)]
