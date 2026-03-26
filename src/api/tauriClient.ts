@@ -144,13 +144,19 @@ export class TauriAPIClient implements ElectronAPI {
     maximize: (): Promise<void> => invoke("maximize"),
     close: (): Promise<void> => invoke("close"),
     isMaximized: (): Promise<boolean> => invoke<boolean>("is_maximized"),
-    relaunch: async (): Promise<void> => {
-      try {
-        await invoke("process_relaunch");
-      } catch {
-        window.location.reload();
-      }
-    },
+    relaunch: (): Promise<void> => invoke("relaunch"),
+  };
+
+  readonly autoStart = {
+    enable: (): Promise<void> => invoke("plugin:autostart|enable"),
+    disable: (): Promise<void> => invoke("plugin:autostart|disable"),
+    isEnabled: (): Promise<boolean> =>
+      invoke<boolean>("plugin:autostart|is_enabled"),
+  };
+
+  readonly platform = {
+    setDockVisible: (visible: boolean): Promise<void> =>
+      invoke("set_dock_visible", { visible }),
   };
 
   readonly getZoomFactor = async (): Promise<number> => {

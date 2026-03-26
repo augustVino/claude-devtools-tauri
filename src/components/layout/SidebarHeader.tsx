@@ -11,20 +11,23 @@
  * - Row 2 is a full-width button with no side margins
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from "react";
 
-import { isElectronMode } from '@renderer/api';
-import { HEADER_ROW1_HEIGHT, HEADER_ROW2_HEIGHT } from '@renderer/constants/layout';
-import { useStore } from '@renderer/store';
-import { formatShortcut, truncateMiddle } from '@renderer/utils/stringUtils';
-import { Check, ChevronDown, GitBranch, PanelLeft } from 'lucide-react';
-import { useShallow } from 'zustand/react/shallow';
+import { isDesktopMode } from "@renderer/api";
+import {
+  HEADER_ROW1_HEIGHT,
+  HEADER_ROW2_HEIGHT,
+} from "@renderer/constants/layout";
+import { useStore } from "@renderer/store";
+import { formatShortcut, truncateMiddle } from "@renderer/utils/stringUtils";
+import { Check, ChevronDown, GitBranch, PanelLeft } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 
-import { useWindowDrag } from '@renderer/hooks/useWindowDrag';
+import { useWindowDrag } from "@renderer/hooks/useWindowDrag";
 
-import { WorktreeBadge } from '../common/WorktreeBadge';
+import { WorktreeBadge } from "../common/WorktreeBadge";
 
-import type { Worktree, WorktreeSource } from '@renderer/types/data';
+import type { Worktree, WorktreeSource } from "@renderer/types/data";
 
 /**
  * Group worktrees by source for organized dropdown display.
@@ -38,14 +41,14 @@ interface WorktreeGroup {
 }
 
 const SOURCE_LABELS: Record<WorktreeSource, string> = {
-  'vibe-kanban': 'Vibe Kanban',
-  conductor: 'Conductor',
-  'auto-claude': 'Auto Claude',
-  '21st': '21st',
-  'claude-desktop': 'Claude Desktop',
-  ccswitch: 'ccswitch',
-  git: 'Git',
-  unknown: 'Other',
+  "vibe-kanban": "Vibe Kanban",
+  conductor: "Conductor",
+  "auto-claude": "Auto Claude",
+  "21st": "21st",
+  "claude-desktop": "Claude Desktop",
+  ccswitch: "ccswitch",
+  git: "Git",
+  unknown: "Other",
 };
 
 function groupWorktreesBySource(worktrees: Worktree[]): {
@@ -71,7 +74,9 @@ function groupWorktreesBySource(worktrees: Worktree[]): {
 
   for (const [source, wts] of groupMap) {
     // Sort worktrees within group by most recent
-    const sorted = [...wts].sort((a, b) => (b.mostRecentSession ?? 0) - (a.mostRecentSession ?? 0));
+    const sorted = [...wts].sort(
+      (a, b) => (b.mostRecentSession ?? 0) - (a.mostRecentSession ?? 0),
+    );
 
     const mostRecent = Math.max(...sorted.map((w) => w.mostRecentSession ?? 0));
 
@@ -106,9 +111,14 @@ const WorktreeItem = ({
   const [isHovered, setIsHovered] = useState(false);
 
   const buttonStyle: React.CSSProperties = isSelected
-    ? { backgroundColor: 'var(--color-surface-raised)', color: 'var(--color-text)' }
+    ? {
+        backgroundColor: "var(--color-surface-raised)",
+        color: "var(--color-text)",
+      }
     : {
-        backgroundColor: isHovered ? 'var(--color-surface-raised)' : 'transparent',
+        backgroundColor: isHovered
+          ? "var(--color-surface-raised)"
+          : "transparent",
         opacity: isHovered ? 0.5 : 1,
       };
 
@@ -122,17 +132,24 @@ const WorktreeItem = ({
     >
       <GitBranch
         className="size-3.5 shrink-0"
-        style={{ color: isSelected ? '#34d399' : 'var(--color-text-muted)' }}
+        style={{ color: isSelected ? "#34d399" : "var(--color-text-muted)" }}
       />
       {/* Only show badge for main worktree - others are grouped by header */}
-      {worktree.isMainWorktree && <WorktreeBadge source={worktree.source} isMain />}
+      {worktree.isMainWorktree && (
+        <WorktreeBadge source={worktree.source} isMain />
+      )}
       <span
         className="flex-1 truncate font-mono text-xs"
-        style={{ color: isSelected ? 'var(--color-text)' : 'var(--color-text-muted)' }}
+        style={{
+          color: isSelected ? "var(--color-text)" : "var(--color-text-muted)",
+        }}
       >
         {truncateMiddle(worktree.name, 28)}
       </span>
-      <span className="shrink-0 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+      <span
+        className="shrink-0 text-[10px]"
+        style={{ color: "var(--color-text-muted)" }}
+      >
         {worktree.sessions.length}
       </span>
       {isSelected && <Check className="size-3.5 shrink-0 text-indigo-400" />}
@@ -161,9 +178,14 @@ const ProjectDropdownItem = ({
   const [isHovered, setIsHovered] = useState(false);
 
   const buttonStyle: React.CSSProperties = isSelected
-    ? { backgroundColor: 'var(--color-surface-raised)', color: 'var(--color-text)' }
+    ? {
+        backgroundColor: "var(--color-surface-raised)",
+        color: "var(--color-text)",
+      }
     : {
-        backgroundColor: isHovered ? 'var(--color-surface-raised)' : 'transparent',
+        backgroundColor: isHovered
+          ? "var(--color-surface-raised)"
+          : "transparent",
         opacity: isHovered ? 0.5 : 1,
       };
 
@@ -177,18 +199,26 @@ const ProjectDropdownItem = ({
     >
       <div className="min-w-0 flex-1">
         <span
-          className={`block truncate text-sm ${isSelected ? 'font-medium' : ''}`}
-          style={{ color: isSelected ? 'var(--color-text)' : 'var(--color-text-muted)' }}
+          className={`block truncate text-sm ${isSelected ? "font-medium" : ""}`}
+          style={{
+            color: isSelected ? "var(--color-text)" : "var(--color-text-muted)",
+          }}
         >
           {name}
         </span>
         {path && (
-          <span className="block truncate text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+          <span
+            className="block truncate text-[10px]"
+            style={{ color: "var(--color-text-muted)" }}
+          >
             {path}
           </span>
         )}
       </div>
-      <span className="shrink-0 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+      <span
+        className="shrink-0 text-[10px]"
+        style={{ color: "var(--color-text-muted)" }}
+      >
         {sessionCount}
       </span>
       {isSelected && <Check className="size-3.5 shrink-0 text-indigo-400" />}
@@ -197,8 +227,8 @@ const ProjectDropdownItem = ({
 };
 
 export const SidebarHeader = (): React.JSX.Element => {
-  const isMacElectron =
-    isElectronMode() && window.navigator.userAgent.toLowerCase().includes('mac');
+  const isMacDesktop =
+    isDesktopMode() && window.navigator.userAgent.toLowerCase().includes("mac");
   const dragRef = useWindowDrag<HTMLDivElement>();
 
   const {
@@ -228,17 +258,23 @@ export const SidebarHeader = (): React.JSX.Element => {
       fetchRepositoryGroups: s.fetchRepositoryGroups,
       fetchProjects: s.fetchProjects,
       toggleSidebar: s.toggleSidebar,
-    }))
+    })),
   );
 
   // Fetch data on mount based on view mode
   useEffect(() => {
-    if (viewMode === 'grouped' && repositoryGroups.length === 0) {
+    if (viewMode === "grouped" && repositoryGroups.length === 0) {
       void fetchRepositoryGroups();
-    } else if (viewMode === 'flat' && projects.length === 0) {
+    } else if (viewMode === "flat" && projects.length === 0) {
       void fetchProjects();
     }
-  }, [viewMode, repositoryGroups.length, projects.length, fetchRepositoryGroups, fetchProjects]);
+  }, [
+    viewMode,
+    repositoryGroups.length,
+    projects.length,
+    fetchRepositoryGroups,
+    fetchProjects,
+  ]);
 
   const [isWorktreeDropdownOpen, setIsWorktreeDropdownOpen] = useState(false);
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
@@ -246,10 +282,16 @@ export const SidebarHeader = (): React.JSX.Element => {
   const projectDropdownRef = useRef<HTMLDivElement>(null);
 
   // Find the active repository and worktree
-  const activeRepo = repositoryGroups.find((r) => r.id === selectedRepositoryId);
-  const activeWorktree = activeRepo?.worktrees.find((w) => w.id === selectedWorktreeId);
+  const activeRepo = repositoryGroups.find(
+    (r) => r.id === selectedRepositoryId,
+  );
+  const activeWorktree = activeRepo?.worktrees.find(
+    (w) => w.id === selectedWorktreeId,
+  );
   // Filter worktrees to only show those with sessions
-  const worktrees = (activeRepo?.worktrees ?? []).filter((w) => w.sessions.length > 0);
+  const worktrees = (activeRepo?.worktrees ?? []).filter(
+    (w) => w.sessions.length > 0,
+  );
   const hasMultipleWorktrees = worktrees.length > 1;
 
   // Group worktrees by source for organized dropdown
@@ -262,12 +304,12 @@ export const SidebarHeader = (): React.JSX.Element => {
 
   // Get display name
   const projectName =
-    viewMode === 'grouped'
-      ? (activeRepo?.name ?? 'Select Project')
-      : (activeProject?.name ?? 'Select Project');
+    viewMode === "grouped"
+      ? (activeRepo?.name ?? "Select Project")
+      : (activeProject?.name ?? "Select Project");
 
-  const worktreeName = activeWorktree?.name ?? 'main';
-  const hasSelection = viewMode === 'grouped' ? !!activeRepo : !!activeProject;
+  const worktreeName = activeWorktree?.name ?? "main";
+  const hasSelection = viewMode === "grouped" ? !!activeRepo : !!activeProject;
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -285,20 +327,20 @@ export const SidebarHeader = (): React.JSX.Element => {
         setIsProjectDropdownOpen(false);
       }
     }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   // Close on escape
   useEffect(() => {
     function handleEscape(event: KeyboardEvent): void {
-      if (event.key === 'Escape') {
+      if (event.key === "Escape") {
         setIsWorktreeDropdownOpen(false);
         setIsProjectDropdownOpen(false);
       }
     }
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
   }, []);
 
   const handleSelectWorktree = (worktree: Worktree): void => {
@@ -318,7 +360,7 @@ export const SidebarHeader = (): React.JSX.Element => {
 
   // Items for project dropdown - filter out repositories/projects with 0 sessions
   const projectItems =
-    viewMode === 'grouped'
+    viewMode === "grouped"
       ? repositoryGroups.filter((r) => r.totalSessions > 0)
       : projects.filter((p) => p.sessions.length > 0);
 
@@ -327,7 +369,7 @@ export const SidebarHeader = (): React.JSX.Element => {
   return (
     <div
       className="flex w-full flex-col"
-      style={{ backgroundColor: 'var(--color-surface-sidebar)' }}
+      style={{ backgroundColor: "var(--color-surface-sidebar)" }}
     >
       {/* ROW 1: Project Identity (Title Bar / Drag Region) */}
       <div
@@ -339,8 +381,10 @@ export const SidebarHeader = (): React.JSX.Element => {
         style={
           {
             height: `${HEADER_ROW1_HEIGHT}px`,
-            paddingLeft: isMacElectron ? 'var(--macos-traffic-light-padding-left, 72px)' : '16px',
-            WebkitAppRegion: isMacElectron ? 'drag' : undefined,
+            paddingLeft: isMacDesktop
+              ? "var(--macos-traffic-light-padding-left, 72px)"
+              : "16px",
+            WebkitAppRegion: isMacDesktop ? "drag" : undefined,
           } as React.CSSProperties
         }
       >
@@ -348,17 +392,21 @@ export const SidebarHeader = (): React.JSX.Element => {
         <button
           onClick={() => setIsProjectDropdownOpen(!isProjectDropdownOpen)}
           className="flex min-w-0 items-center gap-2 transition-opacity hover:opacity-80"
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
         >
           <span
             className="min-w-0 truncate text-sm font-bold tracking-tight"
-            style={{ color: hasSelection ? 'var(--color-text)' : 'var(--color-text-muted)' }}
+            style={{
+              color: hasSelection
+                ? "var(--color-text)"
+                : "var(--color-text-muted)",
+            }}
           >
             {projectName}
           </span>
           <ChevronDown
-            className={`size-3.5 shrink-0 transition-transform ${isProjectDropdownOpen ? 'rotate-180' : ''}`}
-            style={{ color: 'var(--color-text-muted)' }}
+            className={`size-3.5 shrink-0 transition-transform ${isProjectDropdownOpen ? "rotate-180" : ""}`}
+            style={{ color: "var(--color-text-muted)" }}
           />
         </button>
 
@@ -370,12 +418,16 @@ export const SidebarHeader = (): React.JSX.Element => {
           className="ml-auto shrink-0 rounded-md p-1.5 transition-colors"
           style={
             {
-              WebkitAppRegion: 'no-drag',
-              color: isCollapseHovered ? 'var(--color-text-secondary)' : 'var(--color-text-muted)',
-              backgroundColor: isCollapseHovered ? 'var(--color-surface-raised)' : 'transparent',
+              WebkitAppRegion: "no-drag",
+              color: isCollapseHovered
+                ? "var(--color-text-secondary)"
+                : "var(--color-text-muted)",
+              backgroundColor: isCollapseHovered
+                ? "var(--color-surface-raised)"
+                : "transparent",
             } as React.CSSProperties
           }
-          title={`Collapse sidebar (${formatShortcut('B')})`}
+          title={`Collapse sidebar (${formatShortcut("B")})`}
         >
           <PanelLeft className="size-4" />
         </button>
@@ -391,37 +443,42 @@ export const SidebarHeader = (): React.JSX.Element => {
             <div
               className="absolute inset-x-4 top-full z-20 mt-1 max-h-[350px] overflow-y-auto rounded-lg py-1 shadow-xl"
               style={{
-                backgroundColor: 'var(--color-surface-sidebar)',
-                borderWidth: '1px',
-                borderStyle: 'solid',
-                borderColor: 'var(--color-border)',
+                backgroundColor: "var(--color-surface-sidebar)",
+                borderWidth: "1px",
+                borderStyle: "solid",
+                borderColor: "var(--color-border)",
               }}
             >
               <div
                 className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider"
-                style={{ color: 'var(--color-text-muted)' }}
+                style={{ color: "var(--color-text-muted)" }}
               >
-                Switch {viewMode === 'grouped' ? 'Repository' : 'Project'}
+                Switch {viewMode === "grouped" ? "Repository" : "Project"}
               </div>
 
               {projectItems.length === 0 ? (
-                <div className="p-3 text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                  No {viewMode === 'grouped' ? 'repositories' : 'projects'} found
+                <div
+                  className="p-3 text-sm"
+                  style={{ color: "var(--color-text-muted)" }}
+                >
+                  No {viewMode === "grouped" ? "repositories" : "projects"}{" "}
+                  found
                 </div>
               ) : (
                 projectItems.map((item) => {
                   const isSelected =
-                    viewMode === 'grouped'
+                    viewMode === "grouped"
                       ? item.id === selectedRepositoryId
                       : item.id === activeProjectId;
                   const itemSessions =
-                    viewMode === 'grouped'
+                    viewMode === "grouped"
                       ? (item as (typeof repositoryGroups)[0]).totalSessions
                       : (item as (typeof projects)[0]).sessions.length;
                   // Get path for display
                   const itemPath =
-                    viewMode === 'grouped'
-                      ? (item as (typeof repositoryGroups)[0]).worktrees[0]?.path
+                    viewMode === "grouped"
+                      ? (item as (typeof repositoryGroups)[0]).worktrees[0]
+                          ?.path
                       : (item as (typeof projects)[0]).path;
 
                   return (
@@ -432,7 +489,7 @@ export const SidebarHeader = (): React.JSX.Element => {
                       sessionCount={itemSessions}
                       isSelected={isSelected}
                       onSelect={() =>
-                        viewMode === 'grouped'
+                        viewMode === "grouped"
                           ? handleSelectRepo(item.id)
                           : handleSelectProject(item.id)
                       }
@@ -446,38 +503,49 @@ export const SidebarHeader = (): React.JSX.Element => {
       </div>
 
       {/* ROW 2: Worktree Selector (Full Width) */}
-      {viewMode === 'grouped' && activeRepo && (
+      {viewMode === "grouped" && activeRepo && (
         <div ref={worktreeDropdownRef} className="relative w-full">
           <button
             onClick={() =>
-              hasMultipleWorktrees && setIsWorktreeDropdownOpen(!isWorktreeDropdownOpen)
+              hasMultipleWorktrees &&
+              setIsWorktreeDropdownOpen(!isWorktreeDropdownOpen)
             }
             disabled={!hasMultipleWorktrees}
-            className={`flex w-full items-center justify-between px-4 text-left transition-colors ${hasMultipleWorktrees ? 'cursor-pointer' : 'cursor-default'}`}
+            className={`flex w-full items-center justify-between px-4 text-left transition-colors ${hasMultipleWorktrees ? "cursor-pointer" : "cursor-default"}`}
             style={{
               height: `${HEADER_ROW2_HEIGHT}px`,
               backgroundColor: isWorktreeDropdownOpen
-                ? 'var(--color-surface-raised)'
-                : 'var(--color-surface-sidebar)',
-              color: isWorktreeDropdownOpen ? 'var(--color-text)' : 'var(--color-text-muted)',
+                ? "var(--color-surface-raised)"
+                : "var(--color-surface-sidebar)",
+              color: isWorktreeDropdownOpen
+                ? "var(--color-text)"
+                : "var(--color-text-muted)",
             }}
           >
             <div className="flex flex-1 items-center gap-1.5 overflow-hidden">
               <GitBranch
                 className="size-4 shrink-0"
-                style={{ color: isWorktreeDropdownOpen ? '#34d399' : 'rgba(52, 211, 153, 0.7)' }}
+                style={{
+                  color: isWorktreeDropdownOpen
+                    ? "#34d399"
+                    : "rgba(52, 211, 153, 0.7)",
+                }}
               />
               {activeWorktree?.isMainWorktree ? (
                 <WorktreeBadge source={activeWorktree.source} isMain />
               ) : (
-                activeWorktree?.source && <WorktreeBadge source={activeWorktree.source} />
+                activeWorktree?.source && (
+                  <WorktreeBadge source={activeWorktree.source} />
+                )
               )}
-              <span className="truncate font-mono text-xs">{truncateMiddle(worktreeName, 28)}</span>
+              <span className="truncate font-mono text-xs">
+                {truncateMiddle(worktreeName, 28)}
+              </span>
             </div>
             {hasMultipleWorktrees && (
               <ChevronDown
-                className={`size-4 shrink-0 transition-transform ${isWorktreeDropdownOpen ? 'rotate-180' : ''}`}
-                style={{ color: 'var(--color-text-muted)' }}
+                className={`size-4 shrink-0 transition-transform ${isWorktreeDropdownOpen ? "rotate-180" : ""}`}
+                style={{ color: "var(--color-text-muted)" }}
               />
             )}
           </button>
@@ -493,16 +561,16 @@ export const SidebarHeader = (): React.JSX.Element => {
               <div
                 className="absolute inset-x-0 top-full z-20 mt-0 max-h-[400px] overflow-y-auto py-1 shadow-xl"
                 style={{
-                  backgroundColor: 'var(--color-surface-sidebar)',
-                  borderWidth: '1px',
-                  borderTopWidth: '0',
-                  borderStyle: 'solid',
-                  borderColor: 'var(--color-border)',
+                  backgroundColor: "var(--color-surface-sidebar)",
+                  borderWidth: "1px",
+                  borderTopWidth: "0",
+                  borderStyle: "solid",
+                  borderColor: "var(--color-border)",
                 }}
               >
                 <div
                   className="px-4 py-2 text-[10px] font-semibold uppercase tracking-wider"
-                  style={{ color: 'var(--color-text-muted)' }}
+                  style={{ color: "var(--color-text-muted)" }}
                 >
                   Switch Worktree
                 </div>
@@ -523,10 +591,10 @@ export const SidebarHeader = (): React.JSX.Element => {
                     <div
                       className="mt-1 px-4 py-1.5 text-[9px] font-medium uppercase tracking-wider"
                       style={{
-                        borderTopWidth: '1px',
-                        borderTopStyle: 'solid',
-                        borderTopColor: 'var(--color-border)',
-                        color: 'var(--color-text-muted)',
+                        borderTopWidth: "1px",
+                        borderTopStyle: "solid",
+                        borderTopColor: "var(--color-border)",
+                        color: "var(--color-text-muted)",
                       }}
                     >
                       {group.label}

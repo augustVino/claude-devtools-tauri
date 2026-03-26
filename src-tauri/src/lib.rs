@@ -31,10 +31,40 @@ pub fn run() {
     .plugin(tauri_plugin_notification::init())
     .plugin(tauri_plugin_process::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
+    .plugin(tauri_plugin_autostart::Builder::new()
+      .args(["--minimized"])
+      .build())
     .manage(commands::PendingUpdate(std::sync::Mutex::new(None)))
     .manage(app_state.clone())
     .setup(move |app| {
       let state = app_state.clone();
+
+      // If not launched via autostart (--minimized), show the window
+      let args: Vec<String> = std::env::args().collect();
+      if !args.contains(&"--minimized".to_string()) {
+        if let Some(window) = app.get_webview_window("main") {
+          window.show().map_err(|e| e.to_string())?;
+        }
+      }
+
+      // macOS: Hide Dock icon if config says so
+      #[cfg(target_os = "macos")]
+      {
+        let hide_dock = {
+          let state_guard = state.blocking_read();
+          !state_guard.config_manager.get_config().general.show_dock_icon
+        };
+        if hide_dock {
+          use cocoa::appkit::{NSApplication, NSApplicationActivationPolicy};
+          use cocoa::base::nil;
+          unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            app.setActivationPolicy_(
+              NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
+            );
+          }
+        }
+      }
 
       // Initialize state asynchronously
       tauri::async_runtime::spawn(async move {
@@ -245,6 +275,7 @@ pub fn run() {
       commands::window::close,
       commands::window::is_maximized,
       commands::window::relaunch,
+      commands::window::set_dock_visible,
       commands::version::get_app_version,
       commands::sessions::get_sessions,
       commands::sessions::get_session_detail,

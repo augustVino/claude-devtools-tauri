@@ -19,6 +19,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:macos": "tauri build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -27,6 +28,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@tanstack/react-virtual": "^3.13.23",
+    "@tauri-apps/plugin-autostart": "^2.5.1",
     "date-fns": "^4.1.0",
     "idb-keyval": "^6.2.2",
     "lucide-react": "^1.6.0",
