@@ -144,13 +144,7 @@ export class TauriAPIClient implements ElectronAPI {
     maximize: (): Promise<void> => invoke("maximize"),
     close: (): Promise<void> => invoke("close"),
     isMaximized: (): Promise<boolean> => invoke<boolean>("is_maximized"),
-    relaunch: async (): Promise<void> => {
-      try {
-        await invoke("process_relaunch");
-      } catch {
-        window.location.reload();
-      }
-    },
+    relaunch: (): Promise<void> => invoke("relaunch"),
   };
 
   readonly getZoomFactor = async (): Promise<number> => {
