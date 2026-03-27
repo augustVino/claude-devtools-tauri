@@ -15,7 +15,7 @@ mod types;
 mod utils;
 
 use std::path::Path;
-use std::sync::{Arc, RwLock as StdRwLock};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use tauri::{Emitter, Manager};
 use commands::AppState;
@@ -164,12 +164,9 @@ pub fn run() {
       // ========== 错误检测管道：第二个 FileWatcher 监听 .jsonl 变更 ==========
       let pipeline_handle = app.handle().clone();
       let pipeline_notification_mgr = notification_manager.clone();
+      let pipeline_config = config_manager.clone(); // 共享同一个 ConfigManager 实例（已由命令层初始化）
       tauri::async_runtime::spawn(async move {
-        let pipeline_config = ConfigManager::new();
-        if let Err(e) = pipeline_config.initialize().await {
-          log::error!("Failed to initialize error detection config: {}", e);
-        }
-        let detector = ErrorDetector::new(Arc::new(StdRwLock::new(pipeline_config)));
+        let detector = ErrorDetector::new(pipeline_config);
 
         let mut pipeline_watcher = FileWatcher::new();
         let projects_path = get_projects_base_path();

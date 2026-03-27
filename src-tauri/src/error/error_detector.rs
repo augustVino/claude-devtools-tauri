@@ -16,7 +16,7 @@
 //! 从 Electron `src/main/services/error/ErrorDetector.ts` 移植而来。
 
 use std::collections::HashSet;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use crate::analysis::tool_extraction::{build_tool_result_map, build_tool_use_map};
 use crate::error::error_trigger_checker::{
@@ -34,13 +34,15 @@ use crate::types::messages::ParsedMessage;
 /// 会话消息中错误检测的主编排器。
 ///
 /// 持有 [`ConfigManager`] 的引用用于读取已启用的触发器。
+/// 与命令层共享同一个 `Arc<ConfigManager>` 实例，
+/// 确保触发器变更（启用/禁用/增删）立即对管道生效。
 pub struct ErrorDetector {
-    config_manager: Arc<RwLock<ConfigManager>>,
+    config_manager: Arc<ConfigManager>,
 }
 
 impl ErrorDetector {
     /// 使用给定的配置管理器创建新的 `ErrorDetector`。
-    pub fn new(config_manager: Arc<RwLock<ConfigManager>>) -> Self {
+    pub fn new(config_manager: Arc<ConfigManager>) -> Self {
         Self { config_manager }
     }
 
@@ -62,14 +64,8 @@ impl ErrorDetector {
     ) -> Vec<DetectedError> {
         let mut errors: Vec<DetectedError> = Vec::new();
 
-        // 从配置中获取已启用的触发器
-        let triggers = {
-            let config = self
-                .config_manager
-                .read()
-                .expect("config_manager lock poisoned");
-            config.get_enabled_triggers()
-        };
+        // 从配置中获取已启用的触发器（ConfigManager 内部有 RwLock 保护）
+        let triggers = self.config_manager.get_enabled_triggers();
 
         if triggers.is_empty() {
             return errors;
@@ -367,15 +363,10 @@ mod tests {
 
     /// 创建一个包含给定触发器的 `ErrorDetector`（使用真实的 `ConfigManager`）。
     fn make_detector_with_triggers(triggers: Vec<NotificationTrigger>) -> ErrorDetector {
-        let config_manager = Arc::new(RwLock::new(ConfigManager::new()));
+        let config_manager = Arc::new(ConfigManager::new());
         // 将每个触发器添加到配置中
-        {
-            let config = config_manager
-                .read()
-                .expect("config_manager lock poisoned");
-            for trigger in triggers {
-                let _ = config.add_trigger(trigger);
-            }
+        for trigger in triggers {
+            let _ = config_manager.add_trigger(trigger);
         }
         ErrorDetector::new(config_manager)
     }
@@ -707,5 +698,35 @@ mod tests {
     fn test_deduplicate_errors_empty() {
         let deduped = ErrorDetector::deduplicate_errors(vec![]);
         assert!(deduped.is_empty());
+    }
+
+    // ---------------------------------------------------------------------------
+    // Shared ConfigManager tests
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_shared_config_manager_reflects_runtime_changes() {
+        // 验证 ErrorDetector 使用的共享 ConfigManager 能反映运行时变更
+        let config_manager = Arc::new(ConfigManager::new());
+        let detector = ErrorDetector::new(config_manager.clone());
+
+        // 初始无触发器 → 不应检测到错误
+        let messages = vec![make_assistant_message(
+            json!("test"),
+            vec![make_tool_call("tc1", "Bash", json!({"command": "rm -rf /"}))],
+            vec![make_tool_result("tc1", json!("Permission denied"), true)],
+        )];
+        let errors = detector.detect_errors(&messages, "s1", "-test", "/f.jsonl").await;
+        assert!(errors.is_empty(), "no triggers → no errors");
+
+        // 运行时添加触发器 → 下次检测应生效
+        config_manager.add_trigger(make_error_trigger()).unwrap();
+        let errors = detector.detect_errors(&messages, "s1", "-test", "/f.jsonl").await;
+        assert_eq!(errors.len(), 1, "trigger added at runtime → should detect error");
+
+        // 运行时禁用触发器 → 下次检测不应产生错误
+        let _ = config_manager.update_trigger("error-trigger", serde_json::json!({"enabled": false}));
+        let errors = detector.detect_errors(&messages, "s1", "-test", "/f.jsonl").await;
+        assert!(errors.is_empty(), "trigger disabled at runtime → no errors");
     }
 }

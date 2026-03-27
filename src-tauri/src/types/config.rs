@@ -45,7 +45,11 @@ pub struct NotificationTrigger {
     pub tool_name: Option<String>,
     #[serde(rename = "isBuiltin", skip_serializing_if = "Option::is_none")]
     pub is_builtin: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "ignorePatterns",
+        alias = "ignore_patterns",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub ignore_patterns: Option<Vec<String>>,
     pub mode: TriggerMode,
     #[serde(rename = "requireError", skip_serializing_if = "Option::is_none")]

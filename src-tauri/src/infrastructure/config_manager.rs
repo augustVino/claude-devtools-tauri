@@ -109,8 +109,14 @@ impl ConfigManager {
 
     /// 初始化：从磁盘加载配置并与默认值深度合并。
     /// 如果配置文件不存在则使用默认值。
+    /// 同时将内置触发器合并到配置中（与 Electron 的 TriggerManager.mergeTriggers 一致）。
     pub async fn initialize(&self) -> Result<(), String> {
-        let loaded = self.load_config().await?;
+        let mut loaded = self.load_config().await?;
+        // 合并内置触发器：保留用户修改过的内置触发器，添加缺失的，移除废弃的
+        loaded.notifications.triggers = crate::infrastructure::trigger_manager::TriggerManager::merge_triggers(
+            loaded.notifications.triggers,
+            &crate::infrastructure::trigger_manager::default_triggers(),
+        );
         let mut config = self
             .config
             .write()
@@ -604,6 +610,57 @@ mod tests {
         let c = m.get_config();
         assert_eq!(c.general.theme, "light");
         assert!(c.general.show_dock_icon && c.notifications.enabled);
+        cleanup(&p);
+    }
+
+    #[tokio::test]
+    async fn test_initialize_seeds_builtin_triggers() {
+        // 首次初始化（无配置文件）应注入 3 个内置触发器
+        let p = temp_path(); cleanup(&p);
+        let m = ConfigManager::with_path(p.clone());
+        m.initialize().await.unwrap();
+        let triggers = m.get_triggers();
+        assert_eq!(triggers.len(), 3, "should have 3 built-in triggers");
+        let ids: Vec<&str> = triggers.iter().map(|t| t.id.as_str()).collect();
+        assert!(ids.contains(&"builtin-bash-command"));
+        assert!(ids.contains(&"builtin-tool-result-error"));
+        assert!(ids.contains(&"builtin-high-token-usage"));
+        // 所有内置触发器默认禁用
+        for t in &triggers {
+            assert!(!t.enabled, "builtin trigger '{}' should be disabled by default", t.id);
+            assert_eq!(t.is_builtin, Some(true));
+        }
+        cleanup(&p);
+    }
+
+    #[tokio::test]
+    async fn test_initialize_preserves_user_triggers_and_merges_builtins() {
+        // 配置文件中有用户触发器 + 修改过的内置触发器
+        let p = temp_path(); cleanup(&p);
+        let config_json = serde_json::json!({
+            "notifications": {
+                "triggers": [
+                    { "id": "my-custom", "name": "My Trigger", "enabled": true, "contentType": "tool_result", "mode": "error_status" },
+                    { "id": "builtin-tool-result-error", "name": "Modified Name", "enabled": true, "contentType": "tool_result", "mode": "error_status" }
+                ]
+            }
+        });
+        fs::write(&p, serde_json::to_string(&config_json).unwrap()).unwrap();
+        let m = ConfigManager::with_path(p.clone());
+        m.initialize().await.unwrap();
+        let triggers = m.get_triggers();
+        assert_eq!(triggers.len(), 4, "should have 1 user + 1 modified builtin + 2 missing builtins");
+        // 用户触发器保留
+        let custom = triggers.iter().find(|t| t.id == "my-custom").unwrap();
+        assert_eq!(custom.name, "My Trigger");
+        assert!(custom.enabled);
+        // 修改过的内置触发器保留用户修改
+        let modified = triggers.iter().find(|t| t.id == "builtin-tool-result-error").unwrap();
+        assert_eq!(modified.name, "Modified Name");
+        assert!(modified.enabled);
+        // 缺失的内置触发器被补齐
+        assert!(triggers.iter().any(|t| t.id == "builtin-bash-command"));
+        assert!(triggers.iter().any(|t| t.id == "builtin-high-token-usage"));
         cleanup(&p);
     }
 }
