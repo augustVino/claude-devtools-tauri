@@ -126,6 +126,7 @@ pub fn run() {
 
       // ========== 主文件监听器：监听 JSONL/JSON 文件变更 ==========
       let watcher_app_handle = app.handle().clone();
+      let watcher_state = app_state.clone();
       tauri::async_runtime::spawn(async move {
         let mut watcher = FileWatcher::new();
         let projects_path = get_projects_base_path();
@@ -146,6 +147,11 @@ pub fn run() {
 
             // 处理文件变更事件
             while let Ok(event) = receiver.recv().await {
+              // 失效缓存，确保后续 getSessionDetail 重新解析文件
+              if let (Some(pid), Some(sid)) = (&event.project_id, &event.session_id) {
+                let app_state = watcher_state.read().await;
+                app_state.cache.invalidate_session(pid, sid).await;
+              }
               events::emit_file_change(&watcher_app_handle, event);
             }
           }
