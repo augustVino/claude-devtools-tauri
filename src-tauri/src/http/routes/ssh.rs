@@ -1,0 +1,285 @@
+//! SSH HTTP routes — REST endpoints for SSH connection lifecycle.
+//!
+//! Aligns response formats with `httpClient.ts` expectations:
+//! - connect/disconnect/state: `Json<SshConnectionStatus>` direct
+//! - test: `Json<SshTestResult>` direct
+//! - config-hosts/resolve-host/last-connection: `{ success: true, data: T }` wrapped
+//! - save-last-connection: `{ success: true }` wrapped
+//!
+//! Context switching in HTTP routes follows the same pattern as `contexts.rs`:
+//! register/switch contexts and emit SSE events, but cannot start watcher tasks
+//! (no AppHandle available). Watcher lifecycle is managed by Tauri IPC commands.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use axum::{
+    Json,
+    extract::State,
+    http::StatusCode,
+    routing::{get, post},
+};
+use serde::Deserialize;
+
+use crate::http::sse::BackendEvent;
+use crate::http::state::HttpState;
+use crate::infrastructure::context_manager::ContextInfo;
+use crate::infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
+use crate::infrastructure::SshFsProvider;
+use crate::types::ssh::{
+    SshConnectionConfig, SshConnectionState, SshConnectionStatus, SshLastConnection, SshTestResult,
+};
+
+use super::{ErrorResponse, error_json, success_json};
+
+/// SSH context ID (single-connection model).
+const SSH_CONTEXT_ID: &str = "ssh";
+
+/// Resolve host request body.
+#[derive(Deserialize)]
+pub struct ResolveHostRequest {
+    pub alias: String,
+}
+
+// ---------------------------------------------------------------------------
+// Direct Json<T> response routes
+// ---------------------------------------------------------------------------
+
+/// POST /api/ssh/connect — Connect to SSH and switch context.
+///
+/// Establishes SSH connection, registers SSH context, performs context switch,
+/// and emits context:changed via SSE. Cannot start watcher tasks (no AppHandle).
+pub async fn ssh_connect(
+    State(state): State<HttpState>,
+    Json(body): Json<SshConnectionConfig>,
+) -> Result<Json<SshConnectionStatus>, (StatusCode, Json<ErrorResponse>)> {
+    // 1. Establish SSH connection
+    let status = state
+        .ssh_manager
+        .write()
+        .await
+        .connect(body)
+        .await
+        .map_err(error_json)?;
+
+    // If connection failed, return error status without switching context
+    if matches!(status.state, SshConnectionState::Error) {
+        return Ok(Json(status));
+    }
+
+    // 2. Build SSH ServiceContext
+    let host = status.host.clone().unwrap_or_default();
+    let remote_projects_path = status
+        .remote_projects_path
+        .clone()
+        .unwrap_or_else(|| format!("/home/{}", host));
+    let remote_todos_path = PathBuf::from(&remote_projects_path)
+        .parent()
+        .map(|p| p.join("todos"))
+        .unwrap_or_else(|| PathBuf::from("/tmp/claude-todos-ssh"));
+
+    let fs_provider: Arc<dyn crate::infrastructure::FsProvider> = {
+        let mgr = state.ssh_manager.read().await;
+        match mgr.get_provider().await {
+            Some(provider) => provider,
+            None => {
+                // Phase 1: use placeholder SshFsProvider since SFTP is not yet implemented
+                let port = 22;
+                Arc::new(SshFsProvider::new(host.clone(), port, "ssh".to_string()))
+            }
+        }
+    };
+
+    let ssh_context = ServiceContext::new(ServiceContextConfig {
+        id: SSH_CONTEXT_ID.to_string(),
+        context_type: ContextType::Ssh,
+        projects_dir: PathBuf::from(&remote_projects_path),
+        todos_dir: remote_todos_path,
+        fs_provider,
+    });
+
+    // 3. Register (or replace) SSH context and switch
+    {
+        let mut mgr = state.context_manager.write().await;
+
+        if mgr.has(SSH_CONTEXT_ID) {
+            mgr.replace_context(SSH_CONTEXT_ID, ssh_context)
+                .await
+                .map_err(error_json)?;
+        } else {
+            mgr.register_context(ssh_context).map_err(error_json)?;
+        }
+
+        // Perform context switch
+        let result = mgr.switch(SSH_CONTEXT_ID).map_err(error_json)?;
+        log::info!(
+            "SSH connect (HTTP): context switched {} -> {}",
+            result.previous_id,
+            result.current_id
+        );
+
+        // Stop old context's watcher tasks
+        if let Some(old_ctx) = mgr.get(&result.previous_id) {
+            old_ctx.read().await.stop_watcher_tasks();
+        }
+
+        // Note: HTTP routes don't have AppHandle, so we can't spawn watcher tasks here.
+        // Watcher lifecycle is managed by Tauri IPC commands.
+
+        // Emit context:changed via SSE
+        let ctx_arc = mgr
+            .get(&result.current_id)
+            .ok_or_else(|| error_json("SSH context not found after switch"))
+            .map_err(|(s, j)| (s, j))?;
+        let info = ContextInfo::from_context(&*ctx_arc.read().await);
+
+        state.broadcaster.send(BackendEvent::ContextChanged(info));
+    }
+
+    Ok(Json(status))
+}
+
+/// POST /api/ssh/disconnect — Disconnect SSH and switch back to local.
+pub async fn ssh_disconnect(
+    State(state): State<HttpState>,
+) -> Result<Json<SshConnectionStatus>, (StatusCode, Json<ErrorResponse>)> {
+    // Check if SSH context is currently active
+    let is_ssh_active = {
+        let mgr = state.context_manager.read().await;
+        mgr.get_active_id() == SSH_CONTEXT_ID
+    };
+
+    if is_ssh_active {
+        // Perform context switch lifecycle
+        {
+            let mut mgr = state.context_manager.write().await;
+
+            let result = mgr.switch("local").map_err(error_json)?;
+            log::info!(
+                "SSH disconnect (HTTP): context switched {} -> {}",
+                result.previous_id,
+                result.current_id
+            );
+
+            // Stop old context's (SSH) watcher tasks
+            if let Some(old_ctx) = mgr.get(&result.previous_id) {
+                old_ctx.read().await.stop_watcher_tasks();
+            }
+
+            // Note: HTTP routes don't have AppHandle, so we can't spawn watcher tasks here.
+
+            // Emit context:changed via SSE
+            let ctx_arc = mgr
+                .get(&result.current_id)
+                .ok_or_else(|| error_json("Local context not found after switch"))
+                .map_err(|(s, j)| (s, j))?;
+            let info = ContextInfo::from_context(&*ctx_arc.read().await);
+
+            // Destroy SSH context
+            mgr.destroy_context(SSH_CONTEXT_ID)
+                .await
+                .map_err(error_json)?;
+
+            state.broadcaster.send(BackendEvent::ContextChanged(info));
+        }
+    }
+
+    // Disconnect SSH connection
+    let status = state
+        .ssh_manager
+        .write()
+        .await
+        .disconnect()
+        .await
+        .map_err(error_json)?;
+
+    Ok(Json(status))
+}
+
+/// GET /api/ssh/state — Get current SSH connection state.
+pub async fn ssh_get_state(State(state): State<HttpState>) -> Json<SshConnectionStatus> {
+    Json(state.ssh_manager.read().await.get_active_state().await)
+}
+
+/// POST /api/ssh/test — Test SSH connection configuration.
+pub async fn ssh_test(
+    State(state): State<HttpState>,
+    Json(body): Json<SshConnectionConfig>,
+) -> Json<SshTestResult> {
+    let result = state.ssh_manager.read().await.test(&body);
+    match result {
+        Ok(test_result) => Json(test_result),
+        Err(_) => Json(SshTestResult {
+            success: false,
+            error: Some("Test failed".to_string()),
+        }),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Wrapped { success, data } response routes
+// ---------------------------------------------------------------------------
+
+/// GET /api/ssh/config-hosts — Get all SSH config host entries.
+pub async fn ssh_get_config_hosts(
+    State(state): State<HttpState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let hosts = state.ssh_manager.read().await.get_config_hosts();
+    success_json(hosts)
+}
+
+/// POST /api/ssh/resolve-host — Resolve a host alias from SSH config.
+pub async fn ssh_resolve_host(
+    State(state): State<HttpState>,
+    Json(body): Json<ResolveHostRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let entry = state
+        .ssh_manager
+        .read()
+        .await
+        .resolve_host_config(&body.alias);
+    success_json(entry)
+}
+
+// ---------------------------------------------------------------------------
+// Stub routes (not yet persisted to disk)
+// ---------------------------------------------------------------------------
+
+/// POST /api/ssh/save-last-connection — Save last SSH connection (stub).
+pub async fn ssh_save_last_connection(
+    State(_state): State<HttpState>,
+    Json(_body): Json<SshLastConnection>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    // TODO: Persist to disk
+    log::info!("ssh_save_last_connection (HTTP): stub (not yet implemented)");
+    success_json(serde_json::Value::Null)
+}
+
+/// GET /api/ssh/last-connection — Get last SSH connection (stub).
+pub async fn ssh_get_last_connection(
+    State(_state): State<HttpState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    // TODO: Load from disk
+    log::info!("ssh_get_last_connection (HTTP): stub (not yet implemented)");
+    success_json(Option::<SshLastConnection>::None)
+}
+
+// ---------------------------------------------------------------------------
+// Router builder
+// ---------------------------------------------------------------------------
+
+/// Build SSH routes.
+pub fn routes() -> axum::Router<HttpState> {
+    axum::Router::new()
+        .route("/api/ssh/connect", post(ssh_connect))
+        .route("/api/ssh/disconnect", post(ssh_disconnect))
+        .route("/api/ssh/state", get(ssh_get_state))
+        .route("/api/ssh/test", post(ssh_test))
+        .route("/api/ssh/config-hosts", get(ssh_get_config_hosts))
+        .route("/api/ssh/resolve-host", post(ssh_resolve_host))
+        .route(
+            "/api/ssh/save-last-connection",
+            post(ssh_save_last_connection),
+        )
+        .route("/api/ssh/last-connection", get(ssh_get_last_connection))
+}

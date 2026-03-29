@@ -21,6 +21,7 @@ pub mod notifications;
 pub mod projects;
 pub mod search;
 pub mod sessions;
+pub mod ssh;
 pub mod subagents;
 pub mod utility;
 pub mod validation;
@@ -203,15 +204,8 @@ pub fn build_routes() -> Router<HttpState> {
         .route("/api/events", get(events::sse_handler))
         // Context Switch
         .merge(contexts::routes())
-        // Deferred: SSH
-        .route("/api/ssh/connect", post(deferred_not_implemented))
-        .route("/api/ssh/disconnect", post(deferred_not_implemented))
-        .route("/api/ssh/state", get(deferred_not_implemented))
-        .route("/api/ssh/test", post(deferred_not_implemented))
-        .route("/api/ssh/config-hosts", get(deferred_not_implemented))
-        .route("/api/ssh/resolve-host", post(deferred_not_implemented))
-        .route("/api/ssh/save-last-connection", post(deferred_not_implemented))
-        .route("/api/ssh/last-connection", get(deferred_not_implemented))
+        // SSH
+        .merge(ssh::routes())
         // Deferred: Updater
         .route("/api/updater/check", post(deferred_not_implemented))
         .route("/api/updater/download", post(deferred_not_implemented))
