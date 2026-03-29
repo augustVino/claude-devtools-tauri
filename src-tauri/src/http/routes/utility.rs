@@ -32,6 +32,7 @@ pub async fn get_version(
 
 /// 请求体：读取 CLAUDE.md 文件。
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReadClaudeMdRequest {
     pub project_root: String,
 }
@@ -150,6 +151,7 @@ pub struct AgentConfig {
 
 /// 请求体：读取 agent 配置。
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReadAgentConfigsRequest {
     pub project_root: String,
 }
