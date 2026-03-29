@@ -146,8 +146,11 @@ pub fn extract_semantic_steps(chunk: &AiChunk) -> Vec<SemanticStep> {
             for result in &msg.tool_results {
                 let result_text = match &result.content {
                     serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Null => String::new(),
                     other => other.to_string(),
                 };
+                // Use chars().count() (not bytes) to align with Electron's text.length / 4
+                let token_count = ((result_text.chars().count() as f64) / 4.0).ceil() as u64;
                 steps.push(SemanticStep {
                     id: result.tool_use_id.clone(),
                     step_type: SemanticStepType::ToolResult,
@@ -159,6 +162,7 @@ pub fn extract_semantic_steps(chunk: &AiChunk) -> Vec<SemanticStep> {
                         tool_result_id: Some(result.tool_use_id.clone()),
                         tool_use_result: msg.tool_use_result.clone(),
                         text: Some(result_text),
+                        token_count: Some(token_count),
                         ..Default::default()
                     },
                     tokens: None,
@@ -766,6 +770,41 @@ mod tests {
             step.content.tool_result_id.as_deref(),
             Some("tu-abc-123")
         );
+        // Verify tokenCount is pre-computed for tool_result
+        assert!(
+            step.content.token_count.is_some(),
+            "tool_result step should have token_count"
+        );
+        // "file contents here" = 19 chars -> ceil(19/4) = 5
+        assert_eq!(step.content.token_count, Some(5));
+    }
+
+    #[test]
+    fn tool_result_token_count_uses_chars_not_bytes() {
+        // Chinese text: 6 characters but 18 bytes in UTF-8
+        let chinese = "你好世界测试一下";
+        let mut user_msg = make_user_msg(
+            "user-cn",
+            "2026-03-25T10:00:03.000Z",
+            serde_json::json!([]),
+            true,
+        );
+        user_msg.tool_results = vec![ToolResult {
+            tool_use_id: "tu-cn".to_string(),
+            content: serde_json::Value::String(chinese.to_string()),
+            is_error: false,
+        }];
+
+        let chunk = AiChunk {
+            responses: vec![user_msg],
+            ..empty_chunk()
+        };
+
+        let steps = extract_semantic_steps(&chunk);
+        let step = steps.iter().find(|s| s.step_type == SemanticStepType::ToolResult).unwrap();
+
+        // chars().count() = 6, ceil(6/4) = 2 (aligned with Electron's text.length/4)
+        assert_eq!(step.content.token_count, Some(2));
     }
 
     // =========================================================================

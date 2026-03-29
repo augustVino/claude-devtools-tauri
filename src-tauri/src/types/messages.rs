@@ -159,6 +159,10 @@ pub struct SemanticStepContent {
     pub subagent_description: Option<String>,
     #[serde(rename = "toolUseResult", skip_serializing_if = "Option::is_none")]
     pub tool_use_result: Option<ToolUseResultData>,
+    /// Pre-computed token count for tool_result content.
+    /// Aligned with Electron's `countContentTokens(result.content)`.
+    #[serde(rename = "tokenCount", skip_serializing_if = "Option::is_none")]
+    pub token_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
