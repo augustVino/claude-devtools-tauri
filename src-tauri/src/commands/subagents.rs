@@ -52,7 +52,7 @@ pub async fn get_subagent_detail(
     let parsed = parse_session_file(&subagent_path).await;
 
     // Resolve subagent to get timing/parallel info
-    let resolver = SubagentResolver::new(projects_dir);
+    let resolver = SubagentResolver::new(projects_dir, std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()));
     let processes = resolver.resolve_subagents(&project_id, &session_id);
 
     // Find matching process

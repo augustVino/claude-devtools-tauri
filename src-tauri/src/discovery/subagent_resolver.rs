@@ -6,9 +6,10 @@
 //! - Calculate start/end times and metrics
 //! - Detect parallel execution (100ms overlap threshold)
 
+use crate::infrastructure::fs_provider::FsProvider;
 use crate::types::domain::SessionMetrics;
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Process represents a subagent execution.
 #[derive(Debug, Clone)]
@@ -27,6 +28,7 @@ pub struct Process {
 /// SubagentResolver resolves subagent files and links them to Task calls.
 pub struct SubagentResolver {
     projects_dir: PathBuf,
+    fs_provider: Arc<dyn FsProvider>,
 }
 
 /// Parallel detection window in milliseconds
@@ -34,8 +36,8 @@ const PARALLEL_WINDOW_MS: u64 = 100;
 
 impl SubagentResolver {
     /// Create a new SubagentResolver.
-    pub fn new(projects_dir: PathBuf) -> Self {
-        Self { projects_dir }
+    pub fn new(projects_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Self {
+        Self { projects_dir, fs_provider }
     }
 
     /// Resolve all subagents for a session.
@@ -70,23 +72,21 @@ impl SubagentResolver {
             .join(session_id)
             .join("subagents");
 
-        if !subagents_dir.exists() {
+        if !self.fs_provider.exists(&subagents_dir).unwrap_or(false) {
             return Vec::new();
         }
 
-        let entries = match fs::read_dir(&subagents_dir) {
+        let entries = match self.fs_provider.read_dir(&subagents_dir) {
             Ok(entries) => entries,
             Err(_) => return Vec::new(),
         };
 
         entries
-            .flatten()
-            .filter_map(|entry| {
-                let path = entry.path();
-                if path.is_file() && path.extension().map_or(false, |ext| ext == "jsonl") {
-                    let filename = path.file_name()?.to_str()?;
-                    if filename.starts_with("agent-") && !filename.contains("acompact") {
-                        return Some(path);
+            .into_iter()
+            .filter_map(|dirent| {
+                if dirent.is_file && dirent.name.ends_with(".jsonl") {
+                    if dirent.name.starts_with("agent-") && !dirent.name.contains("acompact") {
+                        return Some(subagents_dir.join(&dirent.name));
                     }
                 }
                 None
@@ -101,7 +101,7 @@ impl SubagentResolver {
 
     /// Parse a single subagent file.
     fn parse_subagent_file(&self, file_path: &Path) -> Option<Process> {
-        let content = fs::read_to_string(file_path).ok()?;
+        let content = self.fs_provider.read_file(file_path).ok()?;
         let messages = parse_jsonl_lines(&content);
 
         if messages.is_empty() {
@@ -295,7 +295,9 @@ fn parse_jsonl_lines(content: &str) -> Vec<SimpleMessage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::infrastructure::fs_provider::LocalFsProvider;
     use std::fs;
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     fn setup_test_env() -> (TempDir, SubagentResolver) {
@@ -303,7 +305,7 @@ mod tests {
         let projects_dir = temp_dir.path().join("projects");
         fs::create_dir_all(&projects_dir).unwrap();
 
-        let resolver = SubagentResolver::new(projects_dir);
+        let resolver = SubagentResolver::new(projects_dir, Arc::new(LocalFsProvider::new()));
         (temp_dir, resolver)
     }
 

@@ -284,7 +284,7 @@ pub async fn get_session_groups(
 
     let subagents: Vec<crate::types::chunks::Process> = {
         let resolver =
-            crate::discovery::subagent_resolver::SubagentResolver::new(get_projects_base_path());
+            crate::discovery::subagent_resolver::SubagentResolver::new(get_projects_base_path(), std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()));
         resolver
             .resolve_subagents(&project_id, &session_id)
             .into_iter()
@@ -375,7 +375,7 @@ pub async fn get_waterfall_data(
 
     let subagents: Vec<crate::types::chunks::Process> = {
         let resolver =
-            crate::discovery::subagent_resolver::SubagentResolver::new(get_projects_base_path());
+            crate::discovery::subagent_resolver::SubagentResolver::new(get_projects_base_path(), std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()));
         resolver
             .resolve_subagents(&project_id, &session_id)
             .into_iter()
