@@ -100,7 +100,7 @@ impl ServiceContext {
             let app = app_handle.clone();
             let projects_dir = projects_dir.clone();
 
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 let mut watcher = file_watcher.lock().await;
                 if !projects_dir.exists() {
                     if let Err(e) = tokio::fs::create_dir_all(&projects_dir).await {
@@ -151,7 +151,7 @@ impl ServiceContext {
             let app = app_handle.clone();
             let projects_dir = projects_dir.clone();
 
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 let detector = crate::error::error_detector::ErrorDetector::new(config_manager);
                 let mut pipeline_watcher = crate::infrastructure::file_watcher::FileWatcher::new();
                 if !projects_dir.exists() {
@@ -209,7 +209,7 @@ impl ServiceContext {
             let cancel = cancel_token.clone();
             let app = app_handle;
 
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 let mut todo_watcher_guard = todo_watcher.lock().await;
                 if !todos_dir.exists() {
                     if let Err(e) = tokio::fs::create_dir_all(&todos_dir).await {
