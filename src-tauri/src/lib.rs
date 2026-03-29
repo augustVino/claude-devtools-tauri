@@ -9,6 +9,7 @@ mod constants;
 mod discovery;
 mod error;
 mod events;
+mod http;
 mod infrastructure;
 mod parsing;
 mod types;
