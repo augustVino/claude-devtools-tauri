@@ -180,8 +180,8 @@ impl From<crate::discovery::subagent_resolver::Process> for Process {
         Self {
             id: p.id,
             file_path: p.file_path,
-            description: None,
-            subagent_type: None,
+            description: p.description,
+            subagent_type: p.subagent_type,
             messages: vec![],
             start_time: p.start_time_ms,
             end_time: p.end_time_ms,
@@ -191,7 +191,7 @@ impl From<crate::discovery::subagent_resolver::Process> for Process {
             parent_task_id: p.task_id,
             is_ongoing: Some(p.is_ongoing),
             main_session_impact: None,
-            team: None,
+            team: p.team,
         }
     }
 }
