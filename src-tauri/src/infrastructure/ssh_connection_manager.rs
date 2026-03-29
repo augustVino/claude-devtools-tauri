@@ -317,11 +317,11 @@ impl SshConnectionManager {
 
     /// Resolve the remote home directory for a user.
     ///
-    /// Phase 1: stub that returns `/home/{username}`.
+    /// Phase 1: stub that returns `/home/{username}/.claude/projects`.
     /// Phase 2: query the remote filesystem for the actual home directory.
     fn resolve_remote_home(&self, username: &str) -> String {
         // TODO: Phase 2 — query remote filesystem for actual home dir
-        format!("/home/{}", username)
+        format!("/home/{}/.claude/projects", username)
     }
 }
 
@@ -560,7 +560,7 @@ mod tests {
         let _ = manager.connect(config).await.unwrap();
         let path = manager.get_remote_projects_path().await;
         assert!(path.is_some());
-        assert_eq!(path.unwrap(), "/home/root");
+        assert_eq!(path.unwrap(), "/home/root/.claude/projects");
     }
 
     #[tokio::test]
@@ -605,8 +605,8 @@ mod tests {
     #[test]
     fn test_resolve_remote_home() {
         let manager = SshConnectionManager::new();
-        assert_eq!(manager.resolve_remote_home("admin"), "/home/admin");
-        assert_eq!(manager.resolve_remote_home("deploy"), "/home/deploy");
+        assert_eq!(manager.resolve_remote_home("admin"), "/home/admin/.claude/projects");
+        assert_eq!(manager.resolve_remote_home("deploy"), "/home/deploy/.claude/projects");
     }
 
     #[test]

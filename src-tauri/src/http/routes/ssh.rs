@@ -72,7 +72,7 @@ pub async fn ssh_connect(
     let remote_projects_path = status
         .remote_projects_path
         .clone()
-        .unwrap_or_else(|| format!("/home/{}", host));
+        .unwrap_or_else(|| format!("/home/{}/.claude/projects", host));
     let remote_todos_path = PathBuf::from(&remote_projects_path)
         .parent()
         .map(|p| p.join("todos"))
@@ -98,17 +98,25 @@ pub async fn ssh_connect(
         fs_provider,
     });
 
-    // 3. Register (or replace) SSH context and switch
+    // 3. If already on SSH context, tear down and switch back to local first
+    // (mirrors Electron: destroy existing SSH context before creating new one)
+    {
+        let mut mgr = state.context_manager.write().await;
+        if mgr.get_active_id() == SSH_CONTEXT_ID {
+            log::info!("SSH connect (HTTP): already on SSH context, tearing down before reconnect");
+            if let Some(ssh_ctx) = mgr.get(SSH_CONTEXT_ID) {
+                ssh_ctx.read().await.stop_watcher_tasks();
+            }
+            let _ = mgr.switch("local");
+            let _ = mgr.destroy_context(SSH_CONTEXT_ID).await;
+        }
+    }
+
+    // 4. Register SSH context and switch
     {
         let mut mgr = state.context_manager.write().await;
 
-        if mgr.has(SSH_CONTEXT_ID) {
-            mgr.replace_context(SSH_CONTEXT_ID, ssh_context)
-                .await
-                .map_err(error_json)?;
-        } else {
-            mgr.register_context(ssh_context).map_err(error_json)?;
-        }
+        mgr.register_context(ssh_context).map_err(error_json)?;
 
         // Perform context switch
         let result = mgr.switch(SSH_CONTEXT_ID).map_err(error_json)?;

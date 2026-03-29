@@ -48,7 +48,7 @@ pub async fn ssh_connect(
     let remote_projects_path = status
         .remote_projects_path
         .clone()
-        .unwrap_or_else(|| format!("/home/{}", host));
+        .unwrap_or_else(|| format!("/home/{}/.claude/projects", host));
     let remote_todos_path = PathBuf::from(&remote_projects_path)
         .parent()
         .map(|p| p.join("todos"))
@@ -76,16 +76,42 @@ pub async fn ssh_connect(
         fs_provider,
     });
 
-    // 3. Register (or replace) SSH context and switch
+    // 3. If already on SSH context, tear down and switch back to local first
+    // (mirrors Electron: destroy existing SSH context before creating new one)
+    {
+        let mut mgr = context_manager.write().await;
+        if mgr.get_active_id() == SSH_CONTEXT_ID {
+            log::info!("SSH connect: already on SSH context, tearing down before reconnect");
+            // Stop SSH watcher tasks
+            if let Some(ssh_ctx) = mgr.get(SSH_CONTEXT_ID) {
+                ssh_ctx.read().await.stop_watcher_tasks();
+            }
+            // Switch back to local
+            if let Ok(result) = mgr.switch("local") {
+                // Start local watcher tasks
+                if let Some(local_ctx) = mgr.get(&result.current_id) {
+                    let local = local_ctx.read().await;
+                    let config_manager = app
+                        .state::<Arc<crate::infrastructure::ConfigManager>>()
+                        .inner()
+                        .clone();
+                    let notification_manager = app
+                        .state::<Arc<RwLock<crate::infrastructure::NotificationManager>>>()
+                        .inner()
+                        .clone();
+                    local.spawn_watcher_tasks(app.clone(), config_manager, notification_manager);
+                }
+            }
+            // Destroy old SSH context
+            let _ = mgr.destroy_context(SSH_CONTEXT_ID).await;
+        }
+    }
+
+    // 4. Register SSH context and switch
     {
         let mut mgr = context_manager.write().await;
 
-        if mgr.has(SSH_CONTEXT_ID) {
-            // Reconnecting: replace existing SSH context
-            mgr.replace_context(SSH_CONTEXT_ID, ssh_context).await?;
-        } else {
-            mgr.register_context(ssh_context)?;
-        }
+        mgr.register_context(ssh_context)?;
 
         // Perform context switch
         let result = mgr.switch(SSH_CONTEXT_ID)?;
