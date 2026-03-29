@@ -249,6 +249,30 @@ impl ConfigManager {
         self.get_config()
     }
 
+    /// Snooze notifications until midnight tomorrow (local time).
+    ///
+    /// This is the backend handler for the "Until tomorrow" UI option (sent as minutes = -1).
+    pub fn snooze_until_tomorrow(&self) -> AppConfig {
+        let tomorrow_midnight = chrono::Local::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(chrono::Local)
+            .single()
+            .unwrap()
+            + chrono::Duration::days(1);
+
+        let snoozed_until = tomorrow_midnight.timestamp_millis() as u64;
+
+        if let Ok(mut config) = self.config.write() {
+            config.notifications.snoozed_until = Some(snoozed_until);
+            drop(config);
+            let _ = self.persist();
+            info!("Notifications snoozed until tomorrow midnight");
+        }
+        self.get_config()
+    }
+
     /// 清除通知暂停状态，恢复通知
     pub fn clear_snooze(&self) -> AppConfig {
         if let Ok(mut config) = self.config.write() {

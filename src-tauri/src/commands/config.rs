@@ -112,13 +112,23 @@ pub async fn unhide_session(
 // =============================================================================
 
 /// 暂停通知推送指定分钟数。
+///
+/// `minutes = -1` 表示"暂停到明天午夜"。
 #[command]
 pub async fn snooze(
     state: State<'_, Arc<RwLock<AppState>>>,
-    minutes: u32,
+    minutes: i32,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.snooze(minutes))
+    if minutes == -1 {
+        Ok(app_state.config_manager.snooze_until_tomorrow())
+    } else if minutes <= 0 {
+        Err("Minutes must be a positive number".to_string())
+    } else if minutes > 24 * 60 {
+        Err("Minutes must be 1440 or less (24 hours)".to_string())
+    } else {
+        Ok(app_state.config_manager.snooze(minutes as u32))
+    }
 }
 
 /// 清除通知暂停设置，恢复通知推送。
