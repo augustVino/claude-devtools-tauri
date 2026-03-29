@@ -296,6 +296,19 @@ fn enrich_team_colors(subagents: &mut [Process], messages: &[ParsedMessage]) {
     }
 }
 
+/// Check if a JSONL file belongs to a specific session (for OLD directory structure).
+fn subagent_belongs_to_session(file_content: &str, target_session_id: &str) -> bool {
+    let first_line = file_content.lines().next().unwrap_or("");
+    let json: serde_json::Value = match serde_json::from_str(first_line) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    json.get("sessionId")
+        .and_then(|v| v.as_str())
+        .map(|s| s == target_session_id)
+        .unwrap_or(false)
+}
+
 impl SubagentResolver {
     /// Create a new SubagentResolver.
     pub fn new(projects_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Self {
@@ -346,33 +359,63 @@ impl SubagentResolver {
     }
 
     /// List subagent files for a session.
+    ///
+    /// Scans two directory structures:
+    /// - **Phase 1 (NEW)**: `{projectId}/{sessionId}/subagents/agent-{id}.jsonl`
+    /// - **Phase 2 (OLD)**: `{projectId}/agent-{id}.jsonl` (matched by sessionId in first line)
     pub fn list_subagent_files(&self, project_id: &str, session_id: &str) -> Vec<PathBuf> {
+        let mut files = Vec::new();
         let base_dir = crate::utils::path_decoder::extract_base_dir(project_id);
+
+        // Phase 1: NEW structure scan
         let subagents_dir = self.projects_dir
             .join(&base_dir)
             .join(session_id)
             .join("subagents");
 
-        if !self.fs_provider.exists(&subagents_dir).unwrap_or(false) {
-            return Vec::new();
+        if let Ok(entries) = self.fs_provider.read_dir(&subagents_dir) {
+            files.extend(entries.into_iter().filter_map(|dirent| {
+                if dirent.is_file
+                    && dirent.name.ends_with(".jsonl")
+                    && dirent.name.starts_with("agent-")
+                    && !dirent.name.contains("acompact")
+                {
+                    Some(subagents_dir.join(&dirent.name))
+                } else {
+                    None
+                }
+            }));
         }
 
-        let entries = match self.fs_provider.read_dir(&subagents_dir) {
-            Ok(entries) => entries,
-            Err(_) => return Vec::new(),
-        };
+        // Phase 2: OLD structure scan (fallback)
+        let project_root = self.projects_dir.join(&base_dir);
+        if let Ok(entries) = self.fs_provider.read_dir(&project_root) {
+            for dirent in entries {
+                if dirent.is_file
+                    && dirent.name.starts_with("agent-")
+                    && dirent.name.ends_with(".jsonl")
+                    && !dirent.name.contains("acompact")
+                {
+                    // Skip if already found in NEW structure
+                    if files.iter().any(|f| {
+                        f.file_name()
+                            .map(|n| n == dirent.name.as_str())
+                            .unwrap_or(false)
+                    }) {
+                        continue;
+                    }
 
-        entries
-            .into_iter()
-            .filter_map(|dirent| {
-                if dirent.is_file && dirent.name.ends_with(".jsonl") {
-                    if dirent.name.starts_with("agent-") && !dirent.name.contains("acompact") {
-                        return Some(subagents_dir.join(&dirent.name));
+                    let file_path = project_root.join(&dirent.name);
+                    if let Ok(content) = self.fs_provider.read_file(&file_path) {
+                        if subagent_belongs_to_session(&content, session_id) {
+                            files.push(file_path);
+                        }
                     }
                 }
-                None
-            })
-            .collect()
+            }
+        }
+
+        files
     }
 
     /// Check if a session has subagents.
@@ -989,6 +1032,117 @@ mod tests {
         assert_eq!(team.member_name, "researcher");
         assert_eq!(subagents[1].description, Some("Main task".to_string()));
         assert_eq!(subagents[1].subagent_type, Some("Explore".to_string()));
+    }
+
+    // =========================================================================
+    // Task 11: OLD directory structure scanning
+    // =========================================================================
+
+    #[test]
+    fn test_list_subagent_files_old_structure() {
+        let (temp_dir, resolver) = setup_test_env();
+
+        // Create OLD structure: agent file in project root (no session subdirectory)
+        let old_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&old_dir).unwrap();
+
+        // File with sessionId matching in first line
+        fs::write(
+            old_dir.join("agent-old123.jsonl"),
+            r#"{"type":"user","message":"Hello","sessionId":"session-456","uuid":"u1"}"#,
+        )
+        .unwrap();
+
+        // Also a file for a different session (should be filtered out)
+        fs::write(
+            old_dir.join("agent-other.jsonl"),
+            r#"{"type":"user","message":"Other","sessionId":"session-999","uuid":"u2"}"#,
+        )
+        .unwrap();
+
+        let files = resolver.list_subagent_files("-Users-test-project", "session-456");
+        assert_eq!(files.len(), 1);
+        assert!(files[0].to_string_lossy().contains("agent-old123.jsonl"));
+    }
+
+    #[test]
+    fn test_list_subagent_files_old_and_new_combined() {
+        let (temp_dir, resolver) = setup_test_env();
+
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+
+        // NEW structure file
+        let subagents_dir = project_dir.join("session-456").join("subagents");
+        fs::create_dir_all(&subagents_dir).unwrap();
+        fs::write(
+            subagents_dir.join("agent-new1.jsonl"),
+            r#"{"type":"user","message":"New"}"#,
+        )
+        .unwrap();
+
+        // OLD structure file (different name, matching sessionId)
+        fs::write(
+            project_dir.join("agent-old123.jsonl"),
+            r#"{"type":"user","message":"Old","sessionId":"session-456","uuid":"u1"}"#,
+        )
+        .unwrap();
+
+        // OLD structure file (different session, should be excluded)
+        fs::write(
+            project_dir.join("agent-other.jsonl"),
+            r#"{"type":"user","message":"Other","sessionId":"session-999","uuid":"u2"}"#,
+        )
+        .unwrap();
+
+        let files = resolver.list_subagent_files("-Users-test-project", "session-456");
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn test_subagent_belongs_to_session() {
+        // Matching sessionId
+        assert!(subagent_belongs_to_session(
+            r#"{"type":"user","sessionId":"session-456"}"#,
+            "session-456"
+        ));
+
+        // Non-matching sessionId
+        assert!(!subagent_belongs_to_session(
+            r#"{"type":"user","sessionId":"session-999"}"#,
+            "session-456"
+        ));
+
+        // Missing sessionId field
+        assert!(!subagent_belongs_to_session(
+            r#"{"type":"user","message":"hello"}"#,
+            "session-456"
+        ));
+
+        // Invalid JSON
+        assert!(!subagent_belongs_to_session(
+            "not valid json",
+            "session-456"
+        ));
+
+        // Empty content
+        assert!(!subagent_belongs_to_session("", "session-456"));
+    }
+
+    #[test]
+    fn test_list_subagent_files_old_structure_skips_acompact() {
+        let (temp_dir, resolver) = setup_test_env();
+
+        let old_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&old_dir).unwrap();
+
+        fs::write(
+            old_dir.join("agent-acompact-abc.jsonl"),
+            r#"{"type":"user","sessionId":"session-456"}"#,
+        )
+        .unwrap();
+
+        let files = resolver.list_subagent_files("-Users-test-project", "session-456");
+        assert!(files.is_empty());
     }
 
     // =========================================================================
