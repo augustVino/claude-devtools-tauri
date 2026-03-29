@@ -79,6 +79,15 @@ pub fn extract_command_display(text: &str) -> Option<String> {
 /// 3. 移除末尾的 "Read the output file..." 指令
 /// 4. 去除首尾空白
 pub fn sanitize_display_content(text: &str) -> String {
+    // 如果内容是命令消息，提取命令显示文本后直接返回（与 Electron 对齐）。
+    // Electron 的 sanitizeDisplayContent() 会在移除噪声标签之前检查 isCommandContent()
+    // 并返回 extractCommandDisplay() 的结果，避免将命令标签全部剥离后返回空字符串。
+    if is_command_content(text) {
+        if let Some(display) = extract_command_display(text) {
+            return display;
+        }
+    }
+
     // 第一步：移除噪声标签
     let mut sanitized = remove_noise_tags(text);
 
@@ -270,7 +279,22 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_display_content_command_tags() {
+    fn test_sanitize_display_content_command_tags_starting() {
+        // Command content starting with <command-name> returns extracted display (Electron behavior)
+        let input = "<command-name>/model</command-name><command-args>sonnet</command-args>";
+        assert_eq!(sanitize_display_content(input), "/model sonnet");
+    }
+
+    #[test]
+    fn test_sanitize_display_content_command_message_starting() {
+        // Command content starting with <command-message> also returns extracted display
+        let input = "<command-message>Switch model</command-message><command-name>/model</command-name><command-args>opus</command-args>";
+        assert_eq!(sanitize_display_content(input), "/model opus");
+    }
+
+    #[test]
+    fn test_sanitize_display_content_command_tags_mid_content() {
+        // Command tags in the middle of other content (not starting) get stripped
         let input = "before <command-name>/model</command-name> after";
         assert_eq!(sanitize_display_content(input), "before  after");
     }
