@@ -17,6 +17,7 @@ import type {
   AgentConfig,
   MentionedFileInfo,
   HttpServerStatus,
+  ContextInfo,
 } from "@shared/types/api";
 import type {
   Session,
@@ -77,16 +78,22 @@ function stubEventAPI(): Record<string, unknown> {
 }
 
 /**
- * Context API stub for V1 - returns local-only context.
- * SSH context switching is V2 scope, so we return safe defaults.
+ * Context API — delegates to Tauri invoke commands.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function createContextAPI(): any {
+function createContextAPI() {
   return {
-    getActive: () => Promise.resolve("local"),
-    list: () => Promise.resolve([{ id: "local", type: "local" }]),
-    switch: notImplemented,
-    onChanged: () => () => {},
+    getActive: (): Promise<string> => invoke<string>("context_active"),
+    list: (): Promise<ContextInfo[]> => invoke<ContextInfo[]>("context_list"),
+    switch: (contextId: string): Promise<{ contextId: string }> =>
+      invoke<{ contextId: string }>("context_switch", { contextId }),
+    onChanged: (callback: (event: unknown, data: ContextInfo) => void) => {
+      const unlisten = listen<ContextInfo>("context:changed", (event) => {
+        callback(event, event.payload);
+      });
+      return () => {
+        unlisten.then((fn) => fn());
+      };
+    },
   };
 }
 
