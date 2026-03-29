@@ -9,6 +9,7 @@ use crate::commands::AppState;
 use crate::http::server::{self, HttpServerHandle, HttpServerStatus};
 use crate::http::sse::SSEBroadcaster;
 use crate::http::state::HttpState;
+use crate::infrastructure::fs_provider::LocalFsProvider;
 use crate::infrastructure::{ContextManager, NotificationManager};
 use crate::utils::get_projects_base_path;
 
@@ -73,7 +74,7 @@ pub async fn start(
             .clone();
 
         let projects_dir = get_projects_base_path();
-        let searcher = Arc::new(create_searcher_state(projects_dir));
+        let searcher = Arc::new(create_searcher_state(projects_dir, Arc::new(LocalFsProvider::new())));
 
         let http_state = HttpState {
             app_state: state.inner().clone(),

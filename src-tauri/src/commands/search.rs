@@ -5,9 +5,10 @@
 //! - search_all_projects: Search sessions across all projects
 
 use crate::discovery::SessionSearcher;
+use crate::infrastructure::fs_provider::FsProvider;
 use crate::types::domain::SearchSessionsResult;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::State;
 
 /// Search sessions in a project.
@@ -65,6 +66,6 @@ pub async fn search_all_projects(
 }
 
 /// Create a SessionSearcher state.
-pub fn create_searcher_state(projects_dir: PathBuf) -> Mutex<SessionSearcher> {
-    Mutex::new(SessionSearcher::new(projects_dir))
+pub fn create_searcher_state(projects_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Mutex<SessionSearcher> {
+    Mutex::new(SessionSearcher::new(projects_dir, fs_provider))
 }

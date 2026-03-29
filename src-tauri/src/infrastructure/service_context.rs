@@ -49,15 +49,15 @@ pub struct ServiceContext {
 
 impl ServiceContext {
     pub fn new(config: ServiceContextConfig) -> Self {
-        // TODO: Pass fs_provider to scanners (Tasks 5, 6, 7)
         let project_scanner = ProjectScanner::with_paths(
             config.projects_dir.clone(),
             config.todos_dir.clone(),
+            config.fs_provider.clone(),
         );
         let session_searcher = Arc::new(Mutex::new(
-            SessionSearcher::new(config.projects_dir.clone()),
+            SessionSearcher::new(config.projects_dir.clone(), config.fs_provider.clone()),
         ));
-        let subagent_resolver = SubagentResolver::new(config.projects_dir.clone());
+        let subagent_resolver = SubagentResolver::new(config.projects_dir.clone(), config.fs_provider.clone());
         let cache = DataCache::new();
         let file_watcher = Arc::new(Mutex::new(FileWatcher::new()));
         let todo_watcher = Arc::new(Mutex::new(FileWatcher::new()));

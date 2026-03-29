@@ -5,15 +5,17 @@
 //! - Search within a single session file
 //! - Extract context around each match occurrence
 
+use crate::infrastructure::fs_provider::FsProvider;
 use crate::types::domain::{SearchResult, SearchSessionsResult};
 use crate::utils::path_decoder;
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// SessionSearcher provides methods for searching sessions.
 pub struct SessionSearcher {
     projects_dir: PathBuf,
+    fs_provider: Arc<dyn FsProvider>,
     // Simple cache: file_path -> (mtime, entries)
     cache: HashMap<String, (u64, Vec<SearchableEntry>)>,
 }
@@ -28,9 +30,10 @@ struct SearchableEntry {
 
 impl SessionSearcher {
     /// Create a new SessionSearcher.
-    pub fn new(projects_dir: PathBuf) -> Self {
+    pub fn new(projects_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Self {
         Self {
             projects_dir,
+            fs_provider,
             cache: HashMap::new(),
         }
     }
@@ -59,7 +62,7 @@ impl SessionSearcher {
         let base_dir = path_decoder::extract_base_dir(project_id);
         let project_path = self.projects_dir.join(&base_dir);
 
-        if !project_path.exists() {
+        if !self.fs_provider.exists(&project_path).unwrap_or(false) {
             return SearchSessionsResult {
                 results: Vec::new(),
                 total_matches: 0,
@@ -70,7 +73,7 @@ impl SessionSearcher {
         }
 
         // Get all session files
-        let entries = match fs::read_dir(&project_path) {
+        let entries = match self.fs_provider.read_dir(&project_path) {
             Ok(entries) => entries,
             Err(_) => return SearchSessionsResult {
                 results: Vec::new(),
@@ -83,19 +86,14 @@ impl SessionSearcher {
 
         let mut session_files: Vec<(String, PathBuf, u64)> = Vec::new();
 
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() || path.extension().map_or(true, |ext| ext != "jsonl") {
+        for dirent in entries {
+            if !dirent.is_file || !dirent.name.ends_with(".jsonl") {
                 continue;
             }
 
-            let mtime = entry.metadata()
-                .and_then(|m| m.modified())
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0))
-                .unwrap_or(0);
-
-            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            session_files.push((file_name.to_string(), path, mtime));
+            let mtime = dirent.mtime_ms.unwrap_or(0);
+            let path = project_path.join(&dirent.name);
+            session_files.push((dirent.name, path, mtime));
         }
 
         // Sort by modification time (most recent first)
@@ -189,7 +187,8 @@ impl SessionSearcher {
 
     /// Extract searchable entries from a session file.
     fn extract_searchable_entries(&self, file_path: &Path) -> Result<Vec<SearchableEntry>, std::io::Error> {
-        let content = fs::read_to_string(file_path)?;
+        let content = self.fs_provider.read_file(file_path)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         let mut entries = Vec::new();
 
         for line in content.lines() {
@@ -305,7 +304,9 @@ impl SessionSearcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::infrastructure::fs_provider::LocalFsProvider;
     use std::fs;
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     fn setup_test_env() -> (TempDir, SessionSearcher) {
@@ -313,7 +314,7 @@ mod tests {
         let projects_dir = temp_dir.path().join("projects");
         fs::create_dir_all(&projects_dir).unwrap();
 
-        let searcher = SessionSearcher::new(projects_dir);
+        let searcher = SessionSearcher::new(projects_dir, Arc::new(LocalFsProvider::new()));
         (temp_dir, searcher)
     }
 
