@@ -9,7 +9,7 @@ use crate::commands::AppState;
 use crate::http::server::{self, HttpServerHandle, HttpServerStatus};
 use crate::http::sse::SSEBroadcaster;
 use crate::http::state::HttpState;
-use crate::infrastructure::NotificationManager;
+use crate::infrastructure::{ContextManager, NotificationManager};
 use crate::utils::get_projects_base_path;
 
 /// 获取 HTTP 服务器状态。
@@ -67,6 +67,11 @@ pub async fn start(
             .inner()
             .clone();
 
+        let context_manager = app
+            .state::<Arc<RwLock<ContextManager>>>()
+            .inner()
+            .clone();
+
         let projects_dir = get_projects_base_path();
         let searcher = Arc::new(create_searcher_state(projects_dir));
 
@@ -75,6 +80,7 @@ pub async fn start(
             broadcaster,
             notification_manager,
             searcher,
+            context_manager,
         };
 
         // 前端构建产物目录：CARGO_MANIFEST_DIR/../dist

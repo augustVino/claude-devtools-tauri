@@ -119,6 +119,14 @@ impl FileWatcher {
         *is_watching = false;
     }
 
+    /// 停止当前监听并切换到新目录。
+    ///
+    /// 用于上下文切换时重新配置监听路径。
+    pub async fn rewatch(&mut self, new_path: &Path) -> Result<(), String> {
+        self.stop().await;
+        self.watch(new_path).await
+    }
+
     /// 返回文件变更事件的广播接收端。
     pub fn receiver(&self) -> broadcast::Receiver<FileChangeEvent> {
         self.sender.subscribe()

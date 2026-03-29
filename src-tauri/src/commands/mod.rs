@@ -18,6 +18,7 @@ pub mod notifications;
 pub mod updater;
 pub mod tray;
 pub mod http_server;
+pub mod context;
 
 pub use window::*;
 pub use version::*;

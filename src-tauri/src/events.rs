@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::types::config::{DetectedError, StoredNotification};
 use crate::types::domain::FileChangeEvent;
+use crate::infrastructure::context_manager::ContextInfo;
 
 /// 通知前端文件变更事件。
 pub fn emit_file_change(app: &AppHandle, event: FileChangeEvent) {
@@ -60,5 +61,12 @@ pub fn emit_notification_updated(
 pub fn emit_error_detected(app: &AppHandle, error: &DetectedError) {
     if let Err(e) = app.emit("error:detected", error) {
         log::error!("Failed to emit error:detected event: {}", e);
+    }
+}
+
+/// 通知前端上下文已切换。
+pub fn emit_context_changed(app: &AppHandle, info: &ContextInfo) {
+    if let Err(e) = app.emit("context:changed", info) {
+        log::error!("Failed to emit context:changed event: {}", e);
     }
 }

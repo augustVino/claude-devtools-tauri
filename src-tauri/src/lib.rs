@@ -15,20 +15,19 @@ mod parsing;
 mod types;
 mod utils;
 
-use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tauri::{Emitter, Manager};
 use commands::AppState;
-use error::error_detector::ErrorDetector;
-use infrastructure::{ConfigManager, FileWatcher, NotificationManager};
+use infrastructure::{ConfigManager, ContextManager, NotificationManager};
+use infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
 use commands::tray::TrayIconManager;
-use utils::{get_projects_base_path, is_subagent_file};
+use utils::get_projects_base_path;
 
 /// 运行 Tauri 应用。
 ///
-/// 初始化配置管理器、应用状态、通知管理器，
-/// 启动三个并发文件监听器（主监听器、错误检测管道、Todo 监听器），
+/// 初始化配置管理器、应用状态、通知管理器和上下文管理器，
+/// 通过 ContextManager 启动本地上下文的文件监听器，
 /// 并注册所有 IPC 命令处理函数。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -134,170 +133,35 @@ pub fn run() {
         log::info!("NotificationManager initialized");
       });
 
-      // ========== 主文件监听器：监听 JSONL/JSON 文件变更 ==========
-      let watcher_app_handle = app.handle().clone();
-      let watcher_state = app_state.clone();
-      tauri::async_runtime::spawn(async move {
-        let mut watcher = FileWatcher::new();
-        let projects_path = get_projects_base_path();
+      // ========== 创建 ContextManager 并注册本地上下文 ==========
+      let context_manager = {
+        let mut mgr = ContextManager::new();
+        let local_context = ServiceContext::new(ServiceContextConfig {
+          id: "local".to_string(),
+          context_type: ContextType::Local,
+          projects_dir: get_projects_base_path(),
+          todos_dir: if let Some(home) = dirs::home_dir() {
+            home.join(".claude").join("todos")
+          } else {
+            std::path::PathBuf::from("/tmp/claude-todos")
+          },
+        });
+        mgr.register_context(local_context)
+          .expect("Failed to register local context");
 
-        // 目录不存在时自动创建
-        if !projects_path.exists() {
-          if let Err(e) = tokio::fs::create_dir_all(&projects_path).await {
-            log::error!("Failed to create projects directory: {}", e);
-            return;
-          }
-        }
+        // 启动本地上下文的 watcher 任务（在同步 setup 闭包中使用 block_on）
+        let local_ctx = mgr.get("local").unwrap();
+        let local = local_ctx.blocking_read();
+        local.spawn_watcher_tasks(
+          app.handle().clone(),
+          config_manager.clone(),
+          notification_manager.clone(),
+        );
 
-        // 启动文件监听
-        match watcher.watch(&projects_path).await {
-          Ok(()) => {
-            log::info!("FileWatcher started successfully");
-            let mut receiver = watcher.receiver();
-
-            // 处理文件变更事件
-            while let Ok(event) = receiver.recv().await {
-              // 失效缓存，确保后续 getSessionDetail 重新解析文件
-              if let (Some(pid), Some(sid)) = (&event.project_id, &event.session_id) {
-                let app_state = watcher_state.read().await;
-                app_state.cache.invalidate_session(pid, sid).await;
-              }
-              events::emit_file_change(&watcher_app_handle, event.clone());
-              // Bridge to SSE broadcaster for HTTP clients
-              if let Some(broadcaster) =
-                watcher_app_handle.try_state::<crate::http::sse::SSEBroadcaster>()
-              {
-                broadcaster
-                  .inner()
-                  .send(crate::http::sse::BackendEvent::FileChange(event));
-              }
-            }
-          }
-          Err(e) => {
-            log::error!("Failed to start FileWatcher: {}", e);
-          }
-        }
-      });
-
-      // ========== 错误检测管道：第二个 FileWatcher 监听 .jsonl 变更 ==========
-      let pipeline_handle = app.handle().clone();
-      let pipeline_notification_mgr = notification_manager.clone();
-      let pipeline_config = config_manager.clone(); // 共享同一个 ConfigManager 实例（已由命令层初始化）
-      tauri::async_runtime::spawn(async move {
-        let detector = ErrorDetector::new(pipeline_config);
-
-        let mut pipeline_watcher = FileWatcher::new();
-        let projects_path = get_projects_base_path();
-
-        if !projects_path.exists() {
-          // 目录可能尚未创建；静默跳过（主监听器负责创建）
-          return;
-        }
-
-        match pipeline_watcher.watch(&projects_path).await {
-          Ok(()) => {
-            log::info!("Error detection pipeline: watcher started");
-            let mut receiver = pipeline_watcher.receiver();
-
-            while let Ok(event) = receiver.recv().await {
-              let path = Path::new(&event.path);
-
-              // 仅处理 .jsonl 文件，跳过子 Agent 文件（由父会话处理）
-              if path.extension().map(|e| e != "jsonl").unwrap_or(true) {
-                continue;
-              }
-              if is_subagent_file(&event.path) {
-                continue;
-              }
-
-              let session_id = path
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-              let project_id = event
-                .project_id
-                .clone()
-                .unwrap_or_default();
-
-              // 解析会话文件并执行错误检测
-              let messages =
-                crate::parsing::jsonl_parser::parse_jsonl_file(path).await;
-
-              if messages.is_empty() {
-                continue;
-              }
-
-              let errors = detector
-                .detect_errors(
-                  &messages,
-                  &session_id,
-                  &project_id,
-                  &event.path,
-                )
-                .await;
-
-              // 将检测到的错误发送给 NotificationManager
-              let mgr = pipeline_notification_mgr.read().await;
-              for detected_error in errors {
-                events::emit_error_detected(&pipeline_handle, &detected_error);
-                // add_error 内部会发射 notification:new 和 notification:updated 事件
-                let _ = mgr.add_error(detected_error).await;
-              }
-            }
-          }
-          Err(e) => {
-            log::error!("Error detection pipeline: failed to start watcher: {}", e);
-          }
-        }
-      });
-
-      // ========== Todo 文件监听器：监听 ~/.claude/todos/ 的清单变更 ==========
-      let todo_app_handle = app.handle().clone();
-      tauri::async_runtime::spawn(async move {
-        let mut todo_watcher = FileWatcher::new();
-
-        let todos_path = if let Some(home) = dirs::home_dir() {
-          home.join(".claude").join("todos")
-        } else {
-          return;
-        };
-
-        if !todos_path.exists() {
-          if let Err(e) = tokio::fs::create_dir_all(&todos_path).await {
-            log::error!("Failed to create todos directory: {}", e);
-            return;
-          }
-        }
-
-        match todo_watcher.watch(&todos_path).await {
-          Ok(()) => {
-            log::info!("Todo FileWatcher started successfully");
-            let mut receiver = todo_watcher.receiver();
-
-            while let Ok(event) = receiver.recv().await {
-              let session_id = Path::new(&event.path)
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-              let todo_event = events::TodoChangeEvent {
-                session_id: session_id.clone(),
-              };
-              events::emit_todo_change(&todo_app_handle, todo_event.clone());
-              // Bridge to SSE broadcaster for HTTP clients
-              if let Some(broadcaster) =
-                todo_app_handle.try_state::<crate::http::sse::SSEBroadcaster>()
-              {
-                broadcaster
-                  .inner()
-                  .send(crate::http::sse::BackendEvent::TodoChange(todo_event));
-              }
-            }
-          }
-          Err(e) => {
-            log::error!("Failed to start todo FileWatcher: {}", e);
-          }
-        }
-      });
+        mgr
+      };
+      let context_manager = Arc::new(RwLock::new(context_manager));
+      app.manage(context_manager.clone());
 
       // Debug 模式下启用日志插件
       if cfg!(debug_assertions) {
@@ -376,6 +240,9 @@ pub fn run() {
       commands::http_server::get_status,
       commands::http_server::start,
       commands::http_server::stop,
+      commands::context::context_list,
+      commands::context::context_active,
+      commands::context::context_switch,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
