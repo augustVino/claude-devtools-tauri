@@ -26,15 +26,15 @@ pub mod validation;
 
 /// 通用错误响应。
 #[derive(Serialize)]
-struct ErrorResponse {
-    success: bool,
-    error: String,
+pub(crate) struct ErrorResponse {
+    pub success: bool,
+    pub error: String,
 }
 
 /// 通用成功响应。
 #[derive(Serialize)]
-struct SuccessResponse {
-    success: bool,
+pub(crate) struct SuccessResponse {
+    pub success: bool,
 }
 
 pub(crate) fn error_json(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
