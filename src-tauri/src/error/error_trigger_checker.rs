@@ -483,7 +483,7 @@ pub fn check_token_threshold_trigger(
         // 构建包含工具信息和 token 类型的消息
         let token_type_label = match token_type {
             TriggerTokenType::Total => String::new(),
-            other => format!(" {}", serde_json::to_string(other).unwrap_or_default()),
+            other => format!(" {}", other.as_str()),
         };
         let token_message = format!(
             "{} - {} : ~{}{} tokens",
