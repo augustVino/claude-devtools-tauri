@@ -376,6 +376,9 @@ pub fn run() {
       commands::http_server::get_status,
       commands::http_server::start,
       commands::http_server::stop,
+      commands::context::context_list,
+      commands::context::context_active,
+      commands::context::context_switch,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
