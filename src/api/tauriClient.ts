@@ -18,6 +18,10 @@ import type {
   MentionedFileInfo,
   HttpServerStatus,
   ContextInfo,
+  SshConnectionConfig,
+  SshConnectionStatus,
+  SshConfigHostEntry,
+  SshLastConnection,
 } from "@shared/types/api";
 import type {
   Session,
@@ -444,7 +448,44 @@ export class TauriAPIClient implements ElectronAPI {
       };
     },
   } as any;
-  readonly ssh = stubEventAPI() as any;
+  readonly ssh = {
+    connect: (config: SshConnectionConfig): Promise<SshConnectionStatus> =>
+      invoke<SshConnectionStatus>("ssh_connect", { config }),
+    disconnect: (): Promise<SshConnectionStatus> =>
+      invoke<SshConnectionStatus>("ssh_disconnect"),
+    getState: (): Promise<SshConnectionStatus> =>
+      invoke<SshConnectionStatus>("ssh_get_state"),
+    test: (
+      config: SshConnectionConfig,
+    ): Promise<{ success: boolean; error?: string }> =>
+      invoke<{ success: boolean; error?: string }>("ssh_test", { config }),
+    getConfigHosts: (): Promise<SshConfigHostEntry[]> =>
+      invoke<SshConfigHostEntry[]>("ssh_get_config_hosts"),
+    resolveHost: (alias: string): Promise<SshConfigHostEntry | null> =>
+      invoke<SshConfigHostEntry | null>("ssh_resolve_host", { alias }),
+    saveLastConnection: (config: SshLastConnection): Promise<void> =>
+      invoke<void>("ssh_save_last_connection", { config }),
+    getLastConnection: (): Promise<SshLastConnection | null> =>
+      invoke<SshLastConnection | null>("ssh_get_last_connection"),
+    // IPC signature: (event: unknown, status: SshConnectionStatus) => void
+    onStatus: (
+      cb: (_event: unknown, status: SshConnectionStatus) => void,
+    ): (() => void) => {
+      let unlisten: UnlistenFn | null = null;
+      listen<{ status: SshConnectionStatus }>("ssh:status", (e) =>
+        cb(e, e.payload.status),
+      )
+        .then((fn) => {
+          unlisten = fn;
+        })
+        .catch((err) => {
+          console.error("Failed to listen to ssh:status event:", err);
+        });
+      return () => {
+        if (unlisten) unlisten();
+      };
+    },
+  };
   readonly context = createContextAPI();
   readonly httpServer = createHttpServerAPI();
 
