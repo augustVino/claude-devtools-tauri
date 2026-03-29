@@ -24,6 +24,8 @@ use crate::types::config::{
     StoredNotification,
 };
 use crate::infrastructure::ConfigManager;
+use crate::parsing::git_identity::GitIdentityResolver;
+use crate::utils::path_decoder;
 
 // =============================================================================
 // 常量
@@ -533,6 +535,27 @@ impl NotificationManager {
         false
     }
 
+    /// Check if the error comes from an ignored repository.
+    ///
+    /// Resolves the error's projectId to a repository identity via GitIdentityResolver,
+    /// then checks against config.notifications.ignored_repositories.
+    fn is_from_ignored_repository(&self, error: &DetectedError) -> bool {
+        let config = self.config_manager.get_config();
+        let ignored = &config.notifications.ignored_repositories;
+        if ignored.is_empty() {
+            return false;
+        }
+
+        let resolver = GitIdentityResolver;
+        let project_path = path_decoder::decode_path(&error.project_id);
+        let resolved_path = error.context.cwd.as_deref().unwrap_or(&project_path);
+
+        match resolver.resolve_identity(resolved_path) {
+            Some(identity) => ignored.contains(&identity.id),
+            None => false,
+        }
+    }
+
     /// 检查通知当前是否启用（未暂停、未禁用）。
     fn are_notifications_enabled(&self) -> bool {
         let config = self.config_manager.get_config();
@@ -559,6 +582,10 @@ impl NotificationManager {
     /// 此方法仅控制操作系统通知；存储不受条件限制。
     async fn should_notify(&self, error: &DetectedError) -> bool {
         if !self.are_notifications_enabled() {
+            return false;
+        }
+
+        if self.is_from_ignored_repository(error) {
             return false;
         }
 
