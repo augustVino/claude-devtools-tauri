@@ -182,7 +182,7 @@ impl From<crate::discovery::subagent_resolver::Process> for Process {
             file_path: p.file_path,
             description: p.description,
             subagent_type: p.subagent_type,
-            messages: vec![],
+            messages: p.messages,
             start_time: p.start_time_ms,
             end_time: p.end_time_ms,
             duration_ms: p.duration_ms,

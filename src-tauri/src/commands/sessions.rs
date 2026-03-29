@@ -177,11 +177,24 @@ pub async fn get_session_detail(
         phase_breakdown: None,
     });
 
+    // 解析子 Agent 数据并链接到 Chunk
+    let subagents: Vec<crate::types::chunks::Process> = {
+        let resolver = crate::discovery::subagent_resolver::SubagentResolver::new(
+            get_projects_base_path(),
+            std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
+        );
+        resolver
+            .resolve_subagents(&project_id, &session_id, Some(&parsed.task_calls), Some(&parsed.messages))
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    };
+
     // 使用 ChunkBuilder 将解析后的消息构建为可视化 Chunk
     let detail = ChunkBuilder::build_session_detail(
         session,
         parsed.messages.clone(),
-        vec![], // 子 Agent 数据在后续阶段填充
+        subagents,
     );
 
     // 缓存结果

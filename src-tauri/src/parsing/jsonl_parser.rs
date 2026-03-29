@@ -278,6 +278,16 @@ pub async fn parse_jsonl_file(file_path: &std::path::Path) -> Vec<ParsedMessage>
     messages
 }
 
+/// Parse JSONL content string into ParsedMessage vector (sync version).
+///
+/// Used by SubagentResolver which already has file content from FsProvider.
+pub fn parse_jsonl_content(content: &str) -> Vec<ParsedMessage> {
+    content
+        .lines()
+        .filter_map(|line| parse_jsonl_line(line))
+        .collect()
+}
+
 // =============================================================================
 // Deduplication
 // =============================================================================

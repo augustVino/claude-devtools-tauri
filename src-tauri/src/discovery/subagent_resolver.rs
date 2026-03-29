@@ -7,8 +7,9 @@
 //! - Detect parallel execution (100ms overlap threshold)
 
 use crate::infrastructure::fs_provider::FsProvider;
+use crate::parsing::jsonl_parser::parse_jsonl_content;
 use crate::types::chunks::TeamInfo;
-use crate::types::domain::SessionMetrics;
+use crate::types::domain::{MessageType, SessionMetrics};
 use crate::types::messages::{ParsedMessage, ToolCall};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -26,7 +27,7 @@ pub struct Process {
     pub is_parallel: bool,
     pub is_ongoing: bool,
     pub task_id: Option<String>,
-    pub messages: Vec<SimpleMessage>,
+    pub messages: Vec<ParsedMessage>,
     pub description: Option<String>,
     pub subagent_type: Option<String>,
     pub team: Option<crate::types::chunks::TeamInfo>,
@@ -62,10 +63,11 @@ fn enrich_subagent_from_task(subagent: &mut Process, task_call: &ToolCall) {
 }
 
 /// Extract the summary attribute from a teammate-message tag in the first user message.
-fn extract_team_message_summary(messages: &[SimpleMessage]) -> Option<String> {
-    let first_user = messages.iter().find(|m| m.message_type == "user")?;
+fn extract_team_message_summary(messages: &[ParsedMessage]) -> Option<String> {
+    let first_user = messages.iter().find(|m| m.message_type == MessageType::User)?;
+    let content_str = first_user.content.as_str().unwrap_or("");
     let re = regex::Regex::new(r#"<teammate-message[^>]*\bsummary="([^"]+)""#).ok()?;
-    re.captures(&first_user.content)
+    re.captures(content_str)
         .map(|cap| cap[1].to_string())
 }
 
@@ -190,10 +192,8 @@ fn propagate_team_metadata(subagents: &mut [Process]) {
     let mut last_uuid_to_idx: HashMap<String, usize> = HashMap::new();
     for (i, subagent) in subagents.iter().enumerate() {
         if let Some(last) = subagent.messages.last() {
-            if let Some(uuid) = &last.uuid {
-                if !uuid.is_empty() {
-                    last_uuid_to_idx.insert(uuid.clone(), i);
-                }
+            if !last.uuid.is_empty() {
+                last_uuid_to_idx.insert(last.uuid.clone(), i);
             }
         }
     }
@@ -426,7 +426,7 @@ impl SubagentResolver {
     /// Parse a single subagent file.
     fn parse_subagent_file(&self, file_path: &Path) -> Option<Process> {
         let content = self.fs_provider.read_file(file_path).ok()?;
-        let messages = parse_jsonl_lines(&content);
+        let messages = parse_jsonl_content(&content);
 
         if messages.is_empty() {
             return None;
@@ -476,19 +476,23 @@ impl SubagentResolver {
     }
 
     /// Check if this is a warmup subagent.
-    fn is_warmup_subagent(&self, messages: &[SimpleMessage]) -> bool {
+    fn is_warmup_subagent(&self, messages: &[ParsedMessage]) -> bool {
         messages
             .iter()
-            .find(|m| m.message_type == "user")
-            .map(|m| m.content.as_str() == "Warmup")
+            .find(|m| m.message_type == MessageType::User)
+            .map(|m| m.content.as_str().unwrap_or("") == "Warmup")
             .unwrap_or(false)
     }
 
     /// Calculate timing from messages.
-    fn calculate_timing(&self, messages: &[SimpleMessage]) -> (u64, u64, u64) {
+    fn calculate_timing(&self, messages: &[ParsedMessage]) -> (u64, u64, u64) {
         let timestamps: Vec<u64> = messages
             .iter()
-            .filter_map(|m| m.timestamp_ms)
+            .filter_map(|m| {
+                chrono::DateTime::parse_from_rfc3339(&m.timestamp)
+                    .ok()
+                    .map(|dt| dt.timestamp_millis() as u64)
+            })
             .collect();
 
         if timestamps.is_empty() {
@@ -502,15 +506,21 @@ impl SubagentResolver {
     }
 
     /// Calculate metrics from messages.
-    fn calculate_metrics(&self, messages: &[SimpleMessage]) -> SessionMetrics {
+    fn calculate_metrics(&self, messages: &[ParsedMessage]) -> SessionMetrics {
         let mut total_input = 0u64;
         let mut total_output = 0u64;
+        let mut cache_read = 0u64;
+        let mut cache_creation = 0u64;
         let mut message_count = 0u32;
 
         for msg in messages {
             message_count += 1;
-            total_input += msg.input_tokens.unwrap_or(0);
-            total_output += msg.output_tokens.unwrap_or(0);
+            if let Some(ref usage) = msg.usage {
+                total_input += usage.input_tokens;
+                total_output += usage.output_tokens;
+                cache_read += usage.cache_read_input_tokens.unwrap_or(0);
+                cache_creation += usage.cache_creation_input_tokens.unwrap_or(0);
+            }
         }
 
         SessionMetrics {
@@ -518,21 +528,16 @@ impl SubagentResolver {
             total_tokens: total_input + total_output,
             input_tokens: total_input,
             output_tokens: total_output,
-            cache_read_tokens: None,
-            cache_creation_tokens: None,
+            cache_read_tokens: if cache_read > 0 { Some(cache_read) } else { None },
+            cache_creation_tokens: if cache_creation > 0 { Some(cache_creation) } else { None },
             message_count,
             cost_usd: None,
         }
     }
 
     /// Check if messages indicate ongoing session.
-    fn check_is_ongoing(&self, messages: &[SimpleMessage]) -> bool {
-        // Simple check: last message should not be a result with end status
-        if let Some(last) = messages.last() {
-            last.message_type == "assistant" && last.is_ongoing.unwrap_or(false)
-        } else {
-            false
-        }
+    fn check_is_ongoing(&self, messages: &[ParsedMessage]) -> bool {
+        crate::utils::session_state_detection::check_messages_ongoing(messages)
     }
 
     /// Detect parallel execution among subagents.
@@ -594,76 +599,16 @@ impl SubagentResolver {
     }
 }
 
-/// Simple message representation for parsing.
-#[derive(Debug, Clone)]
-struct SimpleMessage {
-    message_type: String,
-    content: String,
-    timestamp_ms: Option<u64>,
-    input_tokens: Option<u64>,
-    output_tokens: Option<u64>,
-    is_ongoing: Option<bool>,
-    uuid: Option<String>,
-    parent_uuid: Option<String>,
-}
-
-/// Parse JSONL lines into simple messages.
-fn parse_jsonl_lines(content: &str) -> Vec<SimpleMessage> {
-    content
-        .lines()
-        .filter_map(|line| {
-            let json: serde_json::Value = serde_json::from_str(line).ok()?;
-            let message_type = json.get("type")?.as_str()?.to_string();
-
-            let content = match message_type.as_str() {
-                "user" => json.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string(),
-                "assistant" => {
-                    if let Some(content_arr) = json.get("content").and_then(|c| c.as_array()) {
-                        content_arr
-                            .iter()
-                            .filter_map(|item| {
-                                if item.get("type")?.as_str()? == "text" {
-                                    item.get("text").and_then(|t| t.as_str())
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    } else {
-                        String::new()
-                    }
-                }
-                _ => String::new(),
-            };
-
-            let timestamp_ms = json
-                .get("timestamp")
-                .and_then(|t| t.as_str())
-                .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-                .map(|dt| dt.timestamp_millis() as u64);
-
-            let usage = json.get("usage");
-            let input_tokens = usage.and_then(|u| u.get("input_tokens")).and_then(|t| t.as_u64());
-            let output_tokens = usage.and_then(|u| u.get("output_tokens")).and_then(|t| t.as_u64());
-
-            let is_ongoing = json.get("is_ongoing").and_then(|v| v.as_bool());
-
-            let uuid = json.get("uuid").and_then(|v| v.as_str()).map(|s| s.to_string());
-            let parent_uuid = json.get("parentUuid").and_then(|v| v.as_str()).map(|s| s.to_string());
-
-            Some(SimpleMessage {
-                message_type,
-                content,
-                timestamp_ms,
-                input_tokens,
-                output_tokens,
-                is_ongoing,
-                uuid,
-                parent_uuid,
-            })
-        })
-        .collect()
+/// Helper to create a minimal ParsedMessage for tests.
+fn make_test_message(msg_type: MessageType, content: &str, uuid: &str, parent_uuid: Option<&str>, timestamp: &str) -> ParsedMessage {
+    ParsedMessage {
+        message_type: msg_type,
+        content: serde_json::Value::String(content.to_string()),
+        uuid: uuid.to_string(),
+        parent_uuid: parent_uuid.map(|s| s.to_string()),
+        timestamp: timestamp.to_string(),
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]
@@ -734,8 +679,8 @@ mod tests {
         // Create subagent file
         fs::write(
             subagents_dir.join("agent-test123.jsonl"),
-            r#"{"type":"user","message":"Hello","timestamp":"2024-01-01T00:00:00Z"}
-{"type":"assistant","content":[{"type":"text","text":"Response"}],"timestamp":"2024-01-01T00:01:00Z"}"#,
+            r#"{"type":"user","message":{"role":"user","content":"Hello"},"uuid":"u1","timestamp":"2024-01-01T00:00:00Z"}
+{"type":"assistant","content":[{"type":"text","text":"Response"}],"uuid":"u2","timestamp":"2024-01-01T00:01:00Z"}"#,
         )
         .unwrap();
 
@@ -745,20 +690,20 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_jsonl_lines_extracts_uuid_and_parent_uuid() {
-        let content = r#"{"type":"user","message":"Hello","uuid":"abc-123","parentUuid":"parent-456","timestamp":"2024-01-01T00:00:00Z"}"#;
-        let messages = parse_jsonl_lines(content);
+    fn test_parse_jsonl_content_extracts_uuid_and_parent_uuid() {
+        let content = r#"{"type":"user","message":{"role":"user","content":"Hello"},"uuid":"abc-123","parentUuid":"parent-456","timestamp":"2024-01-01T00:00:00Z"}"#;
+        let messages = parse_jsonl_content(content);
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].uuid, Some("abc-123".to_string()));
+        assert_eq!(messages[0].uuid, "abc-123");
         assert_eq!(messages[0].parent_uuid, Some("parent-456".to_string()));
     }
 
     #[test]
-    fn test_parse_jsonl_lines_missing_uuid() {
-        let content = r#"{"type":"user","message":"Hello","timestamp":"2024-01-01T00:00:00Z"}"#;
-        let messages = parse_jsonl_lines(content);
-        assert_eq!(messages[0].uuid, None);
-        assert_eq!(messages[0].parent_uuid, None);
+    fn test_parse_jsonl_content_missing_uuid() {
+        // parse_jsonl_line skips messages with empty uuid, so this returns empty
+        let content = r#"{"type":"user","message":{"role":"user","content":"Hello"},"timestamp":"2024-01-01T00:00:00Z"}"#;
+        let messages = parse_jsonl_content(content);
+        assert!(messages.is_empty());
     }
 
     // =========================================================================
@@ -833,16 +778,13 @@ mod tests {
 
     #[test]
     fn test_extract_team_message_summary_found() {
-        let messages = vec![SimpleMessage {
-            message_type: "user".to_string(),
-            content: r##"<teammate-message teammate_id="researcher@my-team" color="#FF5733" summary="Research topic X">message content</teammate-message>"##.to_string(),
-            timestamp_ms: Some(1000),
-            input_tokens: None,
-            output_tokens: None,
-            is_ongoing: None,
-            uuid: Some("msg-1".to_string()),
-            parent_uuid: Some("parent-1".to_string()),
-        }];
+        let messages = vec![make_test_message(
+            MessageType::User,
+            r##"<teammate-message teammate_id="researcher@my-team" color="#FF5733" summary="Research topic X">message content</teammate-message>"##,
+            "msg-1",
+            Some("parent-1"),
+            "2026-01-01T00:00:00+00:00",
+        )];
         assert_eq!(
             extract_team_message_summary(&messages),
             Some("Research topic X".to_string())
@@ -851,22 +793,19 @@ mod tests {
 
     #[test]
     fn test_extract_team_message_summary_not_found() {
-        let messages = vec![SimpleMessage {
-            message_type: "user".to_string(),
-            content: "Regular message".to_string(),
-            timestamp_ms: Some(1000),
-            input_tokens: None,
-            output_tokens: None,
-            is_ongoing: None,
-            uuid: None,
-            parent_uuid: None,
-        }];
+        let messages = vec![make_test_message(
+            MessageType::User,
+            "Regular message",
+            "msg-1",
+            None,
+            "2026-01-01T00:00:00+00:00",
+        )];
         assert_eq!(extract_team_message_summary(&messages), None);
     }
 
     #[test]
     fn test_extract_team_message_summary_empty() {
-        let messages: Vec<SimpleMessage> = vec![];
+        let messages: Vec<ParsedMessage> = vec![];
         assert_eq!(extract_team_message_summary(&messages), None);
     }
 
@@ -922,16 +861,13 @@ mod tests {
             is_parallel: false,
             is_ongoing: false,
             task_id: None,
-            messages: vec![SimpleMessage {
-                message_type: "user".to_string(),
-                content: r#"<teammate-message teammate_id="researcher@my-team" summary="Research X">msg</teammate-message>"#.to_string(),
-                timestamp_ms: Some(1000),
-                input_tokens: None,
-                output_tokens: None,
-                is_ongoing: None,
-                uuid: None,
-                parent_uuid: None,
-            }],
+            messages: vec![make_test_message(
+                MessageType::User,
+                r#"<teammate-message teammate_id="researcher@my-team" summary="Research X">msg</teammate-message>"#,
+                "msg-1",
+                None,
+                "2026-01-01T00:00:00+00:00",
+            )],
             description: None,
             subagent_type: None,
             team: None,
@@ -1024,16 +960,8 @@ mod tests {
                 metrics: SessionMetrics::default(), is_parallel: false, is_ongoing: false,
                 task_id: Some("tc-1".to_string()),
                 messages: vec![
-                    SimpleMessage {
-                        message_type: "user".to_string(), content: "msg".to_string(),
-                        timestamp_ms: Some(1000), input_tokens: None, output_tokens: None,
-                        is_ongoing: None, uuid: Some("main-uuid".to_string()), parent_uuid: None,
-                    },
-                    SimpleMessage {
-                        message_type: "assistant".to_string(), content: "resp".to_string(),
-                        timestamp_ms: Some(2000), input_tokens: None, output_tokens: None,
-                        is_ongoing: None, uuid: Some("main-last".to_string()), parent_uuid: None,
-                    },
+                    make_test_message(MessageType::User, "msg", "main-uuid", None, "2026-01-01T00:00:01+00:00"),
+                    make_test_message(MessageType::Assistant, "resp", "main-last", None, "2026-01-01T00:00:02+00:00"),
                 ],
                 description: Some("Main task".to_string()), subagent_type: Some("Explore".to_string()),
                 team: Some(TeamInfo {
@@ -1047,17 +975,8 @@ mod tests {
                 metrics: SessionMetrics::default(), is_parallel: false, is_ongoing: false,
                 task_id: None,
                 messages: vec![
-                    SimpleMessage {
-                        message_type: "user".to_string(), content: "cont msg".to_string(),
-                        timestamp_ms: Some(3000), input_tokens: None, output_tokens: None,
-                        is_ongoing: None, uuid: Some("cont-uuid".to_string()),
-                        parent_uuid: Some("main-last".to_string()),
-                    },
-                    SimpleMessage {
-                        message_type: "assistant".to_string(), content: "cont resp".to_string(),
-                        timestamp_ms: Some(4000), input_tokens: None, output_tokens: None,
-                        is_ongoing: None, uuid: Some("cont-last".to_string()), parent_uuid: None,
-                    },
+                    make_test_message(MessageType::User, "cont msg", "cont-uuid", Some("main-last"), "2026-01-01T00:00:03+00:00"),
+                    make_test_message(MessageType::Assistant, "cont resp", "cont-last", None, "2026-01-01T00:00:04+00:00"),
                 ],
                 description: None, subagent_type: None, team: None,
             },
