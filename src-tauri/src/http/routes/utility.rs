@@ -184,5 +184,5 @@ pub async fn read_agent_configs(
 
 /// No-op handler for routes that require native UI interaction (open-path, open-external).
 pub async fn no_op() -> (StatusCode, Json<super::SuccessResponse>) {
-    super::success_json()
+    super::success_response()
 }

@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::analysis::tool_extraction::{build_tool_result_map, build_tool_use_map};
@@ -396,7 +397,11 @@ mod tests {
         fs::create_dir_all(&projects_dir).unwrap();
         fs::create_dir_all(&todos_dir).unwrap();
 
-        let scanner = ProjectScanner::with_paths(projects_dir, todos_dir);
+        let scanner = ProjectScanner::with_paths(
+            projects_dir,
+            todos_dir,
+            Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
+        );
         (temp_dir, scanner)
     }
 

@@ -7,6 +7,9 @@ pub mod file_watcher;
 pub mod fs_provider;
 pub mod notification_manager;
 pub mod service_context;
+pub mod ssh_config_parser;
+pub mod ssh_connection_manager;
+pub mod ssh_fs_provider;
 pub mod trigger_manager;
 
 pub use config_manager::ConfigManager;
@@ -15,6 +18,9 @@ pub use data_cache::DataCache;
 pub use file_watcher::FileWatcher;
 pub use fs_provider::{FsDirent, FsProvider, FsStatResult, LocalFsProvider};
 pub use notification_manager::NotificationManager;
+pub use ssh_config_parser::SshConfigParser;
+pub use ssh_connection_manager::SshConnectionManager;
+pub use ssh_fs_provider::SshFsProvider;
 #[allow(unused_imports)]
 pub use service_context::{ContextType, ServiceContext, ServiceContextConfig};
 #[allow(unused_imports)]

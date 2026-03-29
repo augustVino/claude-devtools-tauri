@@ -6,15 +6,15 @@
 //! - List session files for each project
 //! - Return sorted list of projects by recent activity
 
+use crate::infrastructure::fs_provider::{FsProvider, LocalFsProvider};
 use crate::types::domain::{Project, Session, SessionMetadataLevel};
 use crate::utils::content_sanitizer::{
     extract_command_display, sanitize_display_content, is_command_output_content, is_command_content,
 };
 use crate::utils::path_decoder;
-use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Light-weight session preview extracted from the first few KB of a JSONL file.
 struct SessionPreview {
@@ -49,6 +49,7 @@ impl Default for SessionPreview {
 pub struct ProjectScanner {
     projects_dir: PathBuf,
     todos_dir: PathBuf,
+    fs_provider: Arc<dyn FsProvider>,
 }
 
 impl ProjectScanner {
@@ -59,12 +60,21 @@ impl ProjectScanner {
         Self {
             projects_dir: claude_base.join("projects"),
             todos_dir: claude_base.join("todos"),
+            fs_provider: Arc::new(LocalFsProvider::new()),
         }
     }
 
     /// Create a new ProjectScanner with custom paths (for testing).
-    pub fn with_paths(projects_dir: PathBuf, todos_dir: PathBuf) -> Self {
-        Self { projects_dir, todos_dir }
+    pub fn with_paths(
+        projects_dir: PathBuf,
+        todos_dir: PathBuf,
+        fs_provider: Arc<dyn FsProvider>,
+    ) -> Self {
+        Self {
+            projects_dir,
+            todos_dir,
+            fs_provider,
+        }
     }
 
     /// Get the projects directory path.
@@ -79,32 +89,34 @@ impl ProjectScanner {
 
     /// Check if the projects directory exists.
     pub fn projects_dir_exists(&self) -> bool {
-        self.projects_dir.exists()
+        self.fs_provider
+            .exists(&self.projects_dir)
+            .unwrap_or(false)
     }
 
     /// Scan all projects and return them sorted by most recent activity.
     pub fn scan(&self) -> Vec<Project> {
-        if !self.projects_dir.exists() {
+        if !self
+            .fs_provider
+            .exists(&self.projects_dir)
+            .unwrap_or(false)
+        {
             return Vec::new();
         }
 
-        let entries = match fs::read_dir(&self.projects_dir) {
+        let entries = match self.fs_provider.read_dir(&self.projects_dir) {
             Ok(entries) => entries,
             Err(_) => return Vec::new(),
         };
 
         let mut projects: Vec<Project> = Vec::new();
 
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
+        for dirent in &entries {
+            if !dirent.is_directory {
                 continue;
             }
 
-            let encoded_name = match path.file_name().and_then(|n| n.to_str()) {
-                Some(name) => name,
-                None => continue,
-            };
+            let encoded_name = &dirent.name;
 
             // Check if it's a valid encoded path
             if !path_decoder::is_valid_encoded_path(encoded_name) {
@@ -128,16 +140,19 @@ impl ProjectScanner {
     fn scan_project(&self, encoded_name: &str) -> Option<Project> {
         let project_path = self.projects_dir.join(encoded_name);
 
-        let entries = match fs::read_dir(&project_path) {
+        let entries = match self.fs_provider.read_dir(&project_path) {
             Ok(entries) => entries,
             Err(_) => return None,
         };
 
         // Get session files (.jsonl at root level)
         let session_files: Vec<_> = entries
-            .flatten()
-            .filter(|entry| {
-                entry.path().is_file() && entry.path().extension().map_or(false, |ext| ext == "jsonl")
+            .iter()
+            .filter(|dirent| {
+                dirent.is_file
+                    && Path::new(&dirent.name)
+                        .extension()
+                        .map_or(false, |ext| ext == "jsonl")
             })
             .collect();
 
@@ -151,36 +166,23 @@ impl ProjectScanner {
         let mut created_at = u64::MAX;
         let mut first_cwd: Option<String> = None;
 
-        for entry in &session_files {
-            let file_name = entry.file_name();
-            let file_name_str = file_name.to_string_lossy();
-
-            let session_id = path_decoder::extract_session_id(&file_name_str);
+        for session_file in &session_files {
+            let session_id = path_decoder::extract_session_id(&session_file.name);
             session_ids.push(session_id);
 
-            if let Ok(metadata) = entry.metadata() {
-                if let Ok(modified) = metadata.modified() {
-                    let mtime = modified
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as u64)
-                        .unwrap_or(0);
+            if let Some(mtime) = session_file.mtime_ms {
+                most_recent_session =
+                    Some(most_recent_session.map_or(mtime, |m| m.max(mtime)));
+            }
 
-                    most_recent_session = Some(most_recent_session.map_or(mtime, |m| m.max(mtime)));
-                }
-
-                if let Ok(created) = metadata.created() {
-                    let birthtime = created
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as u64)
-                        .unwrap_or(u64::MAX);
-
-                    created_at = created_at.min(birthtime);
-                }
+            if let Some(birthtime) = session_file.birthtime_ms {
+                created_at = created_at.min(birthtime);
             }
 
             // Extract cwd from the first session file that has one
             if first_cwd.is_none() {
-                let preview = self.extract_session_preview(&entry.path());
+                let entry_path = project_path.join(&session_file.name);
+                let preview = self.extract_session_preview(&entry_path);
                 if let Some(cwd) = preview.cwd {
                     first_cwd = Some(cwd);
                 }
@@ -212,18 +214,18 @@ impl ProjectScanner {
         let base_dir = path_decoder::extract_base_dir(project_id);
         let project_path = self.projects_dir.join(&base_dir);
 
-        if !project_path.exists() {
+        if !self.fs_provider.exists(&project_path).unwrap_or(false) {
             return Vec::new();
         }
 
-        let entries = match fs::read_dir(&project_path) {
+        let entries = match self.fs_provider.read_dir(&project_path) {
             Ok(entries) => entries,
             Err(_) => return Vec::new(),
         };
 
         // Step 1: Collect file entries with metadata (lightweight stat calls)
         struct FileInfo {
-            path: std::path::PathBuf,
+            name: String,
             session_id: String,
             mtime_ms: u64,
             birthtime_ms: u64,
@@ -231,30 +233,24 @@ impl ProjectScanner {
 
         let mut file_infos: Vec<FileInfo> = Vec::new();
 
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() || path.extension().map_or(true, |ext| ext != "jsonl") {
+        for dirent in &entries {
+            if !dirent.is_file {
+                continue;
+            }
+            if !Path::new(&dirent.name)
+                .extension()
+                .map_or(false, |ext| ext == "jsonl")
+            {
                 continue;
             }
 
-            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let session_id = path_decoder::extract_session_id(file_name);
+            let session_id = path_decoder::extract_session_id(&dirent.name);
 
-            let metadata = entry.metadata().ok();
-            let mtime_ms = metadata
-                .as_ref()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            let birthtime_ms = metadata
-                .and_then(|m| m.created().ok())
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
+            let mtime_ms = dirent.mtime_ms.unwrap_or(0);
+            let birthtime_ms = dirent.birthtime_ms.unwrap_or(0);
 
             file_infos.push(FileInfo {
-                path,
+                name: dirent.name.clone(),
                 session_id,
                 mtime_ms,
                 birthtime_ms,
@@ -274,7 +270,8 @@ impl ProjectScanner {
         let mut sessions: Vec<Session> = Vec::new();
 
         for info in &file_infos {
-            let preview = self.extract_session_preview(&info.path);
+            let entry_path = project_path.join(&info.name);
+            let preview = self.extract_session_preview(&entry_path);
 
             let decoded_path = preview
                 .cwd
@@ -293,11 +290,7 @@ impl ProjectScanner {
                 })
                 .unwrap_or(info.birthtime_ms);
 
-            let file_name = info
-                .path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let file_name = info.name.as_str();
 
             sessions.push(Session {
                 id: info.session_id.clone(),
@@ -323,23 +316,17 @@ impl ProjectScanner {
 
     /// Read the first 200 lines of a JSONL file to extract preview metadata.
     fn extract_session_preview(&self, path: &Path) -> SessionPreview {
-        let file = match fs::File::open(path) {
-            Ok(f) => f,
+        let content = match self.fs_provider.read_file_head(path, 200) {
+            Ok(content) => content,
             Err(_) => return SessionPreview::default(),
         };
 
-        let reader = BufReader::new(file);
         let mut preview = SessionPreview::default();
         let mut found_first_user = false;
         let mut lines_read = 0u32;
         const MAX_LINES: u32 = 200;
 
-        for line_result in reader.lines() {
-            let line = match line_result {
-                Ok(l) => l,
-                Err(_) => break,
-            };
-
+        for line in content.lines() {
             if lines_read >= MAX_LINES {
                 break;
             }
@@ -494,11 +481,12 @@ impl ProjectScanner {
     fn load_todo_data(&self, session_id: &str) -> Option<serde_json::Value> {
         let todo_path = self.todos_dir.join(format!("{}.json", session_id));
 
-        if !todo_path.exists() {
+        if !self.fs_provider.exists(&todo_path).unwrap_or(false) {
             return None;
         }
 
-        fs::read_to_string(&todo_path)
+        self.fs_provider
+            .read_file(&todo_path)
             .ok()
             .and_then(|content| serde_json::from_str(&content).ok())
     }
@@ -508,21 +496,24 @@ impl ProjectScanner {
         let base_dir = path_decoder::extract_base_dir(project_id);
         let project_path = self.projects_dir.join(&base_dir);
 
-        if !project_path.exists() {
+        if !self.fs_provider.exists(&project_path).unwrap_or(false) {
             return Vec::new();
         }
 
-        let entries = match fs::read_dir(&project_path) {
+        let entries = match self.fs_provider.read_dir(&project_path) {
             Ok(entries) => entries,
             Err(_) => return Vec::new(),
         };
 
         entries
-            .flatten()
-            .filter(|entry| {
-                entry.path().is_file() && entry.path().extension().map_or(false, |ext| ext == "jsonl")
+            .iter()
+            .filter(|dirent| {
+                dirent.is_file
+                    && Path::new(&dirent.name)
+                        .extension()
+                        .map_or(false, |ext| ext == "jsonl")
             })
-            .map(|entry| entry.path().to_string_lossy().to_string())
+            .map(|dirent| project_path.join(&dirent.name).to_string_lossy().to_string())
             .collect()
     }
 }
@@ -574,7 +565,11 @@ mod tests {
         fs::create_dir_all(&projects_dir).unwrap();
         fs::create_dir_all(&todos_dir).unwrap();
 
-        let scanner = ProjectScanner::with_paths(projects_dir, todos_dir);
+        let scanner = ProjectScanner::with_paths(
+            projects_dir,
+            todos_dir,
+            Arc::new(LocalFsProvider::new()),
+        );
         (temp_dir, scanner)
     }
 
