@@ -1,3 +1,8 @@
-//! HTTP 路由定义。
-//!
-//! 占位文件 — 将在 Task 4 中实现完整功能。
+//! HTTP 路由聚合模块（临时最小实现，Task 4 将替换）。
+
+use axum::Router;
+use crate::http::state::HttpState;
+
+pub fn build_routes() -> Router<HttpState> {
+    Router::new()
+}

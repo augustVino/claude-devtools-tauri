@@ -9,10 +9,14 @@ pub mod sse;
 pub mod server;
 pub mod state;
 
-// NOTE: build_router will be uncommented once routes module is implemented.
-// pub fn build_router(http_state: HttpState) -> Router {
-//     Router::new()
-//         .merge(routes::build_routes())
-//         .layer(cors::cors_layer())
-//         .with_state(http_state)
-// }
+use axum::Router;
+
+use crate::http::state::HttpState;
+
+/// 构建 Axum 路由。
+pub fn build_router(http_state: HttpState) -> Router {
+    Router::new()
+        .merge(routes::build_routes())
+        .layer(cors::cors_layer())
+        .with_state(http_state)
+}
