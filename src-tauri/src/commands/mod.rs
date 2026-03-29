@@ -19,6 +19,7 @@ pub mod updater;
 pub mod tray;
 pub mod http_server;
 pub mod context;
+pub mod ssh;
 
 pub use window::*;
 pub use version::*;
@@ -31,3 +32,4 @@ pub use projects::*;
 pub use subagents::*;
 pub use notifications::*;
 pub use sessions::AppState;
+pub use ssh::*;

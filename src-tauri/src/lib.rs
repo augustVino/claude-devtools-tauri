@@ -269,6 +269,14 @@ pub fn run() {
       commands::context::context_list,
       commands::context::context_active,
       commands::context::context_switch,
+      commands::ssh_connect,
+      commands::ssh_disconnect,
+      commands::ssh_get_state,
+      commands::ssh_test,
+      commands::ssh_get_config_hosts,
+      commands::ssh_resolve_host,
+      commands::ssh_save_last_connection,
+      commands::ssh_get_last_connection,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
