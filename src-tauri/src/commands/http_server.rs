@@ -77,7 +77,12 @@ pub async fn start(
             searcher,
         };
 
-        let new_handle = server::spawn_http_server(http_state, preferred_port)?;
+        // 前端构建产物目录：CARGO_MANIFEST_DIR/../dist
+        let dist_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("dist");
+
+        let new_handle = server::spawn_http_server(http_state, preferred_port, dist_dir)?;
         let port = new_handle.port;
 
         *handle = Some(new_handle);

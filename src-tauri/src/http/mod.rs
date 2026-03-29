@@ -9,17 +9,22 @@ pub mod sse;
 pub mod server;
 pub mod state;
 
+use std::path::PathBuf;
+
 use axum::Router;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::http::state::HttpState;
 
 /// 构建 Axum 路由。
-pub fn build_router(http_state: HttpState) -> Router {
+///
+/// `dist_dir`: 前端构建产物目录的绝对路径（如 `/path/to/project/dist`）。
+pub fn build_router(http_state: HttpState, dist_dir: PathBuf) -> Router {
     let api_routes = routes::build_routes();
 
-    let static_files = ServeDir::new("dist")
-        .not_found_service(ServeFile::new("dist/index.html"));
+    let index_html = dist_dir.join("index.html");
+    let static_files = ServeDir::new(&dist_dir)
+        .not_found_service(ServeFile::new(index_html));
 
     Router::new()
         .merge(api_routes)

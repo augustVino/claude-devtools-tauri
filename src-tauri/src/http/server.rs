@@ -2,6 +2,8 @@
 //!
 //! 负责 Axum 服务器的启动、关闭和端口选择。
 
+use std::path::PathBuf;
+
 use tokio_util::sync::CancellationToken;
 
 use crate::http::state::HttpState;
@@ -36,13 +38,14 @@ fn find_available_port(start: u16) -> Option<u16> {
 pub fn spawn_http_server(
     http_state: HttpState,
     preferred_port: u16,
+    dist_dir: PathBuf,
 ) -> Result<HttpServerHandle, String> {
     let port = find_available_port(preferred_port)
         .ok_or_else(|| format!("No available port in range {}-{}", preferred_port, preferred_port + 10))?;
 
     let shutdown = CancellationToken::new();
 
-    let app = crate::http::build_router(http_state);
+    let app = crate::http::build_router(http_state, dist_dir);
     let shutdown_token = shutdown.clone();
 
     tokio::spawn(async move {
