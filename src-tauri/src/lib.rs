@@ -110,6 +110,15 @@ pub fn run() {
         }
       });
 
+      // 创建并注册 SSEBroadcaster
+      let broadcaster = crate::http::sse::SSEBroadcaster::new();
+      app.manage(broadcaster);
+
+      // 创建并注册 HttpServerHandle（初始为 None，由 start 命令填充）
+      app.manage(std::sync::Mutex::new(
+        None::<crate::http::server::HttpServerHandle>,
+      ));
+
       // 创建并注册 NotificationManager
       let notification_manager = NotificationManager::new(
         app.handle().clone(),
@@ -153,7 +162,15 @@ pub fn run() {
                 let app_state = watcher_state.read().await;
                 app_state.cache.invalidate_session(pid, sid).await;
               }
-              events::emit_file_change(&watcher_app_handle, event);
+              events::emit_file_change(&watcher_app_handle, event.clone());
+              // Bridge to SSE broadcaster for HTTP clients
+              if let Some(broadcaster) =
+                watcher_app_handle.try_state::<crate::http::sse::SSEBroadcaster>()
+              {
+                broadcaster
+                  .inner()
+                  .send(crate::http::sse::BackendEvent::FileChange(event));
+              }
             }
           }
           Err(e) => {
@@ -262,10 +279,18 @@ pub fn run() {
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default();
-              events::emit_todo_change(
-                &todo_app_handle,
-                events::TodoChangeEvent { session_id },
-              );
+              let todo_event = events::TodoChangeEvent {
+                session_id: session_id.clone(),
+              };
+              events::emit_todo_change(&todo_app_handle, todo_event.clone());
+              // Bridge to SSE broadcaster for HTTP clients
+              if let Some(broadcaster) =
+                todo_app_handle.try_state::<crate::http::sse::SSEBroadcaster>()
+              {
+                broadcaster
+                  .inner()
+                  .send(crate::http::sse::BackendEvent::TodoChange(todo_event));
+              }
             }
           }
           Err(e) => {
@@ -348,6 +373,9 @@ pub fn run() {
       commands::updater::check_for_updates,
       commands::updater::download_and_install_update,
       commands::updater::install_update,
+      commands::http_server::get_status,
+      commands::http_server::start,
+      commands::http_server::stop,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

@@ -17,6 +17,7 @@ pub mod subagents;
 pub mod notifications;
 pub mod updater;
 pub mod tray;
+pub mod http_server;
 
 pub use window::*;
 pub use version::*;
