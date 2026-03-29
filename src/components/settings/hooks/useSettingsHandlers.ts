@@ -49,7 +49,7 @@ interface SettingsHandlers {
 
   // Advanced handlers
   handleResetToDefaults: () => Promise<void>;
-  handleExportConfig: () => void;
+  handleExportConfig: () => Promise<void>;
   handleImportConfig: () => void;
   handleOpenInEditor: () => Promise<void>;
 }
@@ -314,19 +314,42 @@ export function useSettingsHandlers({
     }
   }, [setSaving, setConfig, setOptimisticConfig, setError]);
 
-  const handleExportConfig = useCallback(() => {
+  const handleExportConfig = useCallback(async () => {
     if (!configRef.current) return;
-    const dataStr = JSON.stringify(configRef.current, null, 2);
-    const blob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'claude-devtools-config.json';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }, []);
+    const content = JSON.stringify(configRef.current, null, 2);
+
+    const { isTauriMode } = await import("@renderer/api");
+
+    if (isTauriMode()) {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const { invoke } = await import("@tauri-apps/api/core");
+
+      try {
+        const filePath = await save({
+          title: "Export Config",
+          defaultPath: "claude-devtools-config.json",
+          filters: [{ name: "JSON", extensions: ["json"] }],
+        });
+
+        if (filePath == null) return; // User cancelled
+
+        await invoke("write_text_file", { path: filePath, content });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(`Export failed: ${message}`);
+      }
+    } else {
+      const blob = new Blob([content], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "claude-devtools-config.json";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+  }, [setError]);
 
   const handleOpenInEditor = useCallback(async () => {
     try {
