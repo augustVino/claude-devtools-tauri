@@ -16,10 +16,10 @@ mod types;
 mod utils;
 
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, broadcast};
 use tauri::{Emitter, Manager};
 use commands::AppState;
-use infrastructure::{ConfigManager, ContextManager, NotificationManager};
+use infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConnectionManager};
 use infrastructure::fs_provider::LocalFsProvider;
 use infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
 use commands::tray::TrayIconManager;
@@ -164,6 +164,30 @@ pub fn run() {
       };
       let context_manager = Arc::new(RwLock::new(context_manager));
       app.manage(context_manager.clone());
+
+      // ========== 创建并注册 SshConnectionManager ==========
+      let ssh_manager_inner = SshConnectionManager::new();
+
+      // 在包装为 Arc<RwLock<>> 之前获取 broadcast receiver（避免在 async 任务中持有读锁）
+      let mut ssh_status_rx = ssh_manager_inner.subscribe();
+
+      let ssh_manager = Arc::new(RwLock::new(ssh_manager_inner));
+      app.manage(ssh_manager.clone());
+
+      // 启动 SSH 状态事件转发任务
+      let app_handle_for_ssh = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+        loop {
+          match ssh_status_rx.recv().await {
+            Ok(status) => {
+              let event = crate::types::ssh::SshStatusChangedEvent { status };
+              let _ = app_handle_for_ssh.emit("ssh:status", event);
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+            Err(_) => continue,
+          }
+        }
+      });
 
       // Debug 模式下启用日志插件
       if cfg!(debug_assertions) {

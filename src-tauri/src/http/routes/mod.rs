@@ -48,10 +48,18 @@ pub(crate) fn error_json(msg: impl Into<String>) -> (StatusCode, Json<ErrorRespo
     )
 }
 
-pub(crate) fn success_json() -> (StatusCode, Json<SuccessResponse>) {
+pub(crate) fn success_response() -> (StatusCode, Json<SuccessResponse>) {
     (
         StatusCode::OK,
         Json(SuccessResponse { success: true }),
+    )
+}
+
+/// 带数据的成功响应 — 序列化为 { "success": true, "data": <T> }。
+pub(crate) fn success_json<T: Serialize>(data: T) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "success": true, "data": data })),
     )
 }
 

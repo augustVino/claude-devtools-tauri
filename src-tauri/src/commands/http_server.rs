@@ -10,7 +10,7 @@ use crate::http::server::{self, HttpServerHandle, HttpServerStatus};
 use crate::http::sse::SSEBroadcaster;
 use crate::http::state::HttpState;
 use crate::infrastructure::fs_provider::LocalFsProvider;
-use crate::infrastructure::{ContextManager, NotificationManager};
+use crate::infrastructure::{ContextManager, NotificationManager, SshConnectionManager};
 use crate::utils::get_projects_base_path;
 
 /// 获取 HTTP 服务器状态。
@@ -82,6 +82,10 @@ pub async fn start(
             notification_manager,
             searcher,
             context_manager,
+            ssh_manager: app
+                .state::<Arc<RwLock<SshConnectionManager>>>()
+                .inner()
+                .clone(),
         };
 
         // 前端构建产物目录：CARGO_MANIFEST_DIR/../dist
