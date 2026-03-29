@@ -8,6 +8,7 @@
 //! - read_directory_claude_md: Read a specific directory's CLAUDE.md file
 //! - read_mentioned_file: Read a mentioned file for context injection
 //! - read_agent_configs: Read agent configurations from .claude/agents/
+//! - write_text_file: Write text content to a file
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -156,4 +157,66 @@ pub fn read_agent_configs(project_root: String) -> std::collections::HashMap<Str
             )
         })
         .collect()
+}
+
+/// Write text content to a file at the given path.
+/// Used by the export flow after the user picks a save location via the native dialog.
+#[tauri::command]
+pub async fn write_text_file(path: String, content: String) -> Result<(), String> {
+    tokio::fs::write(&path, content)
+        .await
+        .map_err(|e| format!("Failed to write file: {}", e))
+}
+
+#[cfg(test)]
+mod write_text_file_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_write_text_file_creates_file() {
+        let dir = tempfile::TempDir::new().expect("temp dir creation");
+        let path = dir.path().join("test-export.md");
+        let content = "# Hello\nThis is a test.".to_string();
+
+        write_text_file(path.to_string_lossy().to_string(), content.clone())
+            .await
+            .expect("write should succeed");
+
+        let read_back = tokio::fs::read_to_string(&path).await.expect("should read back");
+        assert_eq!(read_back, content);
+    }
+
+    #[tokio::test]
+    async fn test_write_text_file_overwrites_existing() {
+        let dir = tempfile::TempDir::new().expect("temp dir creation");
+        let path = dir.path().join("test-overwrite.md");
+
+        write_text_file(path.to_string_lossy().to_string(), "old content".to_string())
+            .await
+            .expect("first write should succeed");
+
+        write_text_file(path.to_string_lossy().to_string(), "new content".to_string())
+            .await
+            .expect("overwrite should succeed");
+
+        let read_back = tokio::fs::read_to_string(&path).await.expect("should read back");
+        assert_eq!(read_back, "new content");
+    }
+
+    #[tokio::test]
+    async fn test_write_text_file_nonexistent_directory() {
+        let result = write_text_file(
+            "/nonexistent/tauri_test_dir/file.txt".to_string(),
+            "content".to_string(),
+        )
+        .await;
+
+        assert!(result.is_err(), "expected error for nonexistent directory");
+        let err_msg = result.unwrap_err();
+        assert!(
+            err_msg.contains("Failed to write file"),
+            "error message should contain 'Failed to write file', got: {}",
+            err_msg
+        );
+    }
 }
