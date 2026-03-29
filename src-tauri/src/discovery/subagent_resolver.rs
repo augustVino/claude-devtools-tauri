@@ -7,7 +7,10 @@
 //! - Detect parallel execution (100ms overlap threshold)
 
 use crate::infrastructure::fs_provider::FsProvider;
+use crate::types::chunks::TeamInfo;
 use crate::types::domain::SessionMetrics;
+use crate::types::messages::{ParsedMessage, ToolCall};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -38,6 +41,146 @@ pub struct SubagentResolver {
 /// Parallel detection window in milliseconds
 const PARALLEL_WINDOW_MS: u64 = 100;
 
+/// Enrich a subagent Process with metadata from its parent Task call.
+fn enrich_subagent_from_task(subagent: &mut Process, task_call: &ToolCall) {
+    subagent.task_id = Some(task_call.id.clone());
+    subagent.description = task_call.task_description.clone();
+    subagent.subagent_type = task_call.task_subagent_type.clone();
+
+    let team_name = task_call.input.get("team_name").and_then(|v| v.as_str());
+    let member_name = task_call.input.get("name").and_then(|v| v.as_str());
+    if let (Some(tn), Some(mn)) = (team_name, member_name) {
+        subagent.team = Some(TeamInfo {
+            team_name: tn.to_string(),
+            member_name: mn.to_string(),
+            member_color: String::new(),
+        });
+    }
+}
+
+/// Extract the summary attribute from a teammate-message tag in the first user message.
+fn extract_team_message_summary(messages: &[SimpleMessage]) -> Option<String> {
+    let first_user = messages.iter().find(|m| m.message_type == "user")?;
+    let re = regex::Regex::new(r#"<teammate-message[^>]*\bsummary="([^"]+)""#).ok()?;
+    re.captures(&first_user.content)
+        .map(|cap| cap[1].to_string())
+}
+
+/// Link subagents to their parent Task calls using a 3-phase matching algorithm.
+fn link_to_task_calls(
+    subagents: &mut [Process],
+    task_calls: &[ToolCall],
+    messages: &[ParsedMessage],
+) {
+    // Phase 0: Preprocessing
+    let task_calls_only: Vec<&ToolCall> = task_calls.iter().filter(|tc| tc.is_task).collect();
+    if task_calls_only.is_empty() || subagents.is_empty() {
+        return;
+    }
+
+    // Build agentId -> taskCallId mapping from tool results
+    let mut agent_id_to_task_id: HashMap<String, String> = HashMap::new();
+    for msg in messages {
+        if let Some(result) = &msg.tool_use_result {
+            let agent_id = result
+                .get("agentId")
+                .or_else(|| result.get("agent_id"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let task_call_id = msg.source_tool_use_id.clone()
+                .or_else(|| msg.tool_results.first().map(|tr| tr.tool_use_id.clone()));
+            if let (Some(aid), Some(tcid)) = (agent_id, task_call_id) {
+                agent_id_to_task_id.insert(aid, tcid);
+            }
+        }
+    }
+
+    let task_call_by_id: HashMap<&str, &ToolCall> = task_calls_only
+        .iter()
+        .map(|tc| (tc.id.as_str(), *tc))
+        .collect();
+
+    let mut matched_subagent_ids: HashSet<String> = HashSet::new();
+    let mut matched_task_ids: HashSet<String> = HashSet::new();
+
+    // Phase 1: Result matching (agentId exact match)
+    for subagent in subagents.iter_mut() {
+        if let Some(task_call_id) = agent_id_to_task_id.get(&subagent.id) {
+            if let Some(&task_call) = task_call_by_id.get(task_call_id.as_str()) {
+                enrich_subagent_from_task(subagent, task_call);
+                matched_subagent_ids.insert(subagent.id.clone());
+                matched_task_ids.insert(task_call_id.clone());
+            }
+        }
+    }
+
+    // Phase 2: Description matching (team members)
+    let team_task_calls: Vec<&&ToolCall> = task_calls_only
+        .iter()
+        .filter(|tc| {
+            !matched_task_ids.contains(&tc.id)
+                && tc.input.get("team_name").is_some()
+                && tc.input.get("name").is_some()
+        })
+        .collect();
+
+    if !team_task_calls.is_empty() {
+        let mut subagent_summaries: HashMap<String, String> = HashMap::new();
+        for subagent in subagents.iter() {
+            if matched_subagent_ids.contains(&subagent.id) {
+                continue;
+            }
+            if let Some(summary) = extract_team_message_summary(&subagent.messages) {
+                subagent_summaries.insert(subagent.id.clone(), summary);
+            }
+        }
+
+        for team_tc in &team_task_calls {
+            let desc = match &team_tc.task_description {
+                Some(d) if !d.is_empty() => d.clone(),
+                _ => continue,
+            };
+            let mut best_match_idx: Option<usize> = None;
+            let mut best_match_time: u64 = u64::MAX;
+            for (i, subagent) in subagents.iter().enumerate() {
+                if matched_subagent_ids.contains(&subagent.id) {
+                    continue;
+                }
+                if subagent_summaries.get(&subagent.id).map(|s| s == &desc).unwrap_or(false) {
+                    if subagent.start_time_ms < best_match_time {
+                        best_match_time = subagent.start_time_ms;
+                        best_match_idx = Some(i);
+                    }
+                }
+            }
+            if let Some(idx) = best_match_idx {
+                enrich_subagent_from_task(&mut subagents[idx], team_tc);
+                matched_subagent_ids.insert(subagents[idx].id.clone());
+                matched_task_ids.insert(team_tc.id.clone());
+            }
+        }
+    }
+
+    // Phase 3: Positional fallback (no wrap-around)
+    let mut unmatched_indices: Vec<usize> = subagents
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| !matched_subagent_ids.contains(&s.id))
+        .map(|(i, _)| i)
+        .collect();
+    unmatched_indices.sort_by_key(|&i| subagents[i].start_time_ms);
+
+    let unmatched_tasks: Vec<&&ToolCall> = task_calls_only
+        .iter()
+        .filter(|tc| !matched_task_ids.contains(&tc.id) && tc.input.get("team_name").is_none())
+        .collect();
+
+    let pair_count = unmatched_indices.len().min(unmatched_tasks.len());
+    for i in 0..pair_count {
+        enrich_subagent_from_task(&mut subagents[unmatched_indices[i]], unmatched_tasks[i]);
+    }
+}
+
 impl SubagentResolver {
     /// Create a new SubagentResolver.
     pub fn new(projects_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Self {
@@ -45,7 +188,16 @@ impl SubagentResolver {
     }
 
     /// Resolve all subagents for a session.
-    pub fn resolve_subagents(&self, project_id: &str, session_id: &str) -> Vec<Process> {
+    ///
+    /// `task_calls` and `messages` are optional parent session data used for
+    /// linking subagents to Task calls and enriching team metadata.
+    pub fn resolve_subagents(
+        &self,
+        project_id: &str,
+        session_id: &str,
+        task_calls: Option<&[ToolCall]>,
+        _messages: Option<&[ParsedMessage]>,
+    ) -> Vec<Process> {
         // Get subagent files
         let subagent_files = self.list_subagent_files(project_id, session_id);
 
@@ -59,8 +211,15 @@ impl SubagentResolver {
             .filter_map(|file_path| self.parse_subagent_file(&file_path))
             .collect();
 
+        if let (Some(tc), Some(msgs)) = (task_calls, _messages) {
+            link_to_task_calls(&mut subagents, tc, msgs);
+        }
+        // TODO: propagate_team_metadata (Task 7)
+
         // Detect parallel execution
         self.detect_parallel_execution(&mut subagents);
+
+        // TODO: enrich_team_colors (Task 8)
 
         // Sort by start time
         subagents.sort_by_key(|s| s.start_time_ms);
@@ -380,7 +539,7 @@ mod tests {
         )
         .unwrap();
 
-        let subagents = resolver.resolve_subagents("-Users-test-project", "session-123");
+        let subagents = resolver.resolve_subagents("-Users-test-project", "session-123", None, None);
         assert_eq!(subagents.len(), 1);
         assert_eq!(subagents[0].id, "test123");
     }
@@ -400,5 +559,255 @@ mod tests {
         let messages = parse_jsonl_lines(content);
         assert_eq!(messages[0].uuid, None);
         assert_eq!(messages[0].parent_uuid, None);
+    }
+
+    // =========================================================================
+    // Task 5: enrich_subagent_from_task + extract_team_message_summary
+    // =========================================================================
+
+    #[test]
+    fn test_enrich_subagent_from_task_basic() {
+        let mut process = Process {
+            id: "agent-123".to_string(),
+            file_path: "/tmp/test.jsonl".to_string(),
+            start_time_ms: 1000,
+            end_time_ms: 2000,
+            duration_ms: 1000,
+            metrics: SessionMetrics::default(),
+            is_parallel: false,
+            is_ongoing: false,
+            task_id: None,
+            messages: vec![],
+            description: None,
+            subagent_type: None,
+            team: None,
+        };
+        let task_call = ToolCall {
+            id: "tc-1".to_string(),
+            name: "Task".to_string(),
+            input: serde_json::json!({"prompt": "Fix the bug", "subagentType": "Explore"}),
+            is_task: true,
+            task_description: Some("Fix the bug".to_string()),
+            task_subagent_type: Some("Explore".to_string()),
+        };
+        enrich_subagent_from_task(&mut process, &task_call);
+        assert_eq!(process.task_id, Some("tc-1".to_string()));
+        assert_eq!(process.description, Some("Fix the bug".to_string()));
+        assert_eq!(process.subagent_type, Some("Explore".to_string()));
+        assert!(process.team.is_none());
+    }
+
+    #[test]
+    fn test_enrich_subagent_from_task_with_team() {
+        let mut process = Process {
+            id: "agent-456".to_string(),
+            file_path: "/tmp/test.jsonl".to_string(),
+            start_time_ms: 1000,
+            end_time_ms: 2000,
+            duration_ms: 1000,
+            metrics: SessionMetrics::default(),
+            is_parallel: false,
+            is_ongoing: false,
+            task_id: None,
+            messages: vec![],
+            description: None,
+            subagent_type: None,
+            team: None,
+        };
+        let task_call = ToolCall {
+            id: "tc-2".to_string(),
+            name: "Task".to_string(),
+            input: serde_json::json!({"team_name": "my-team", "name": "researcher", "prompt": "Research X"}),
+            is_task: true,
+            task_description: Some("Research X".to_string()),
+            task_subagent_type: None,
+        };
+        enrich_subagent_from_task(&mut process, &task_call);
+        assert_eq!(process.task_id, Some("tc-2".to_string()));
+        assert_eq!(process.description, Some("Research X".to_string()));
+        let team = process.team.unwrap();
+        assert_eq!(team.team_name, "my-team");
+        assert_eq!(team.member_name, "researcher");
+        assert_eq!(team.member_color, "");
+    }
+
+    #[test]
+    fn test_extract_team_message_summary_found() {
+        let messages = vec![SimpleMessage {
+            message_type: "user".to_string(),
+            content: r##"<teammate-message teammate_id="researcher@my-team" color="#FF5733" summary="Research topic X">message content</teammate-message>"##.to_string(),
+            timestamp_ms: Some(1000),
+            input_tokens: None,
+            output_tokens: None,
+            is_ongoing: None,
+            uuid: Some("msg-1".to_string()),
+            parent_uuid: Some("parent-1".to_string()),
+        }];
+        assert_eq!(
+            extract_team_message_summary(&messages),
+            Some("Research topic X".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_team_message_summary_not_found() {
+        let messages = vec![SimpleMessage {
+            message_type: "user".to_string(),
+            content: "Regular message".to_string(),
+            timestamp_ms: Some(1000),
+            input_tokens: None,
+            output_tokens: None,
+            is_ongoing: None,
+            uuid: None,
+            parent_uuid: None,
+        }];
+        assert_eq!(extract_team_message_summary(&messages), None);
+    }
+
+    #[test]
+    fn test_extract_team_message_summary_empty() {
+        let messages: Vec<SimpleMessage> = vec![];
+        assert_eq!(extract_team_message_summary(&messages), None);
+    }
+
+    // =========================================================================
+    // Task 6: link_to_task_calls
+    // =========================================================================
+
+    #[test]
+    fn test_link_to_task_calls_phase1_agent_id_match() {
+        let mut subagents = vec![Process {
+            id: "agent-abc".to_string(),
+            file_path: "/tmp/agent-abc.jsonl".to_string(),
+            start_time_ms: 1000,
+            end_time_ms: 2000,
+            duration_ms: 1000,
+            metrics: SessionMetrics::default(),
+            is_parallel: false,
+            is_ongoing: false,
+            task_id: None,
+            messages: vec![],
+            description: None,
+            subagent_type: None,
+            team: None,
+        }];
+        let task_calls = vec![ToolCall {
+            id: "tc-1".to_string(),
+            name: "Task".to_string(),
+            input: serde_json::json!({"prompt": "Explore code"}),
+            is_task: true,
+            task_description: Some("Explore code".to_string()),
+            task_subagent_type: Some("Explore".to_string()),
+        }];
+        let messages = vec![ParsedMessage {
+            tool_use_result: Some(serde_json::json!({"agentId": "agent-abc", "status": "done"})),
+            source_tool_use_id: Some("tc-1".to_string()),
+            ..Default::default()
+        }];
+        link_to_task_calls(&mut subagents, &task_calls, &messages);
+        assert_eq!(subagents[0].task_id, Some("tc-1".to_string()));
+        assert_eq!(subagents[0].description, Some("Explore code".to_string()));
+        assert_eq!(subagents[0].subagent_type, Some("Explore".to_string()));
+    }
+
+    #[test]
+    fn test_link_to_task_calls_phase2_team_description_match() {
+        let mut subagents = vec![Process {
+            id: "team-member".to_string(),
+            file_path: "/tmp/team-member.jsonl".to_string(),
+            start_time_ms: 1000,
+            end_time_ms: 2000,
+            duration_ms: 1000,
+            metrics: SessionMetrics::default(),
+            is_parallel: false,
+            is_ongoing: false,
+            task_id: None,
+            messages: vec![SimpleMessage {
+                message_type: "user".to_string(),
+                content: r#"<teammate-message teammate_id="researcher@my-team" summary="Research X">msg</teammate-message>"#.to_string(),
+                timestamp_ms: Some(1000),
+                input_tokens: None,
+                output_tokens: None,
+                is_ongoing: None,
+                uuid: None,
+                parent_uuid: None,
+            }],
+            description: None,
+            subagent_type: None,
+            team: None,
+        }];
+        let task_calls = vec![ToolCall {
+            id: "tc-team".to_string(),
+            name: "Task".to_string(),
+            input: serde_json::json!({"team_name": "my-team", "name": "researcher", "prompt": "Research X"}),
+            is_task: true,
+            task_description: Some("Research X".to_string()),
+            task_subagent_type: None,
+        }];
+        let messages: Vec<ParsedMessage> = vec![];
+        link_to_task_calls(&mut subagents, &task_calls, &messages);
+        assert_eq!(subagents[0].task_id, Some("tc-team".to_string()));
+        assert_eq!(
+            subagents[0].team.as_ref().unwrap().team_name,
+            "my-team"
+        );
+    }
+
+    #[test]
+    fn test_link_to_task_calls_phase3_positional_fallback() {
+        let mut subagents = vec![
+            Process {
+                id: "agent-1".to_string(),
+                file_path: "/tmp/a1.jsonl".to_string(),
+                start_time_ms: 1000,
+                end_time_ms: 2000,
+                duration_ms: 1000,
+                metrics: SessionMetrics::default(),
+                is_parallel: false,
+                is_ongoing: false,
+                task_id: None,
+                messages: vec![],
+                description: None,
+                subagent_type: None,
+                team: None,
+            },
+            Process {
+                id: "agent-2".to_string(),
+                file_path: "/tmp/a2.jsonl".to_string(),
+                start_time_ms: 2000,
+                end_time_ms: 3000,
+                duration_ms: 1000,
+                metrics: SessionMetrics::default(),
+                is_parallel: false,
+                is_ongoing: false,
+                task_id: None,
+                messages: vec![],
+                description: None,
+                subagent_type: None,
+                team: None,
+            },
+        ];
+        let task_calls = vec![
+            ToolCall {
+                id: "tc-1".to_string(),
+                name: "Task".to_string(),
+                input: serde_json::json!({"prompt": "First task"}),
+                is_task: true,
+                task_description: Some("First task".to_string()),
+                task_subagent_type: None,
+            },
+            ToolCall {
+                id: "tc-2".to_string(),
+                name: "Task".to_string(),
+                input: serde_json::json!({"prompt": "Second task"}),
+                is_task: true,
+                task_description: Some("Second task".to_string()),
+                task_subagent_type: None,
+            },
+        ];
+        let messages: Vec<ParsedMessage> = vec![];
+        link_to_task_calls(&mut subagents, &task_calls, &messages);
+        assert_eq!(subagents[0].description, Some("First task".to_string()));
+        assert_eq!(subagents[1].description, Some("Second task".to_string()));
     }
 }
