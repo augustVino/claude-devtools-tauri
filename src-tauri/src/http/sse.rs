@@ -6,6 +6,7 @@ use serde::Serialize;
 use tokio::sync::broadcast;
 
 use crate::events::{NotificationUpdatedPayload, TodoChangeEvent};
+use crate::infrastructure::context_manager::ContextInfo;
 use crate::types::config::StoredNotification;
 use crate::types::domain::{FileChangeEvent, FileChangeType};
 
@@ -17,6 +18,7 @@ pub enum BackendEvent {
     TodoChange(TodoChangeEvent),
     NotificationNew(StoredNotification),
     NotificationUpdated(NotificationUpdatedPayload),
+    ContextChanged(ContextInfo),
 }
 
 impl BackendEvent {
@@ -27,6 +29,7 @@ impl BackendEvent {
             BackendEvent::TodoChange(_) => "todo-change",
             BackendEvent::NotificationNew(_) => "notification:new",
             BackendEvent::NotificationUpdated(_) => "notification:updated",
+            BackendEvent::ContextChanged(_) => "context:changed",
         }
     }
 }
@@ -126,5 +129,17 @@ mod tests {
 
         let _rx2 = broadcaster.subscribe();
         assert_eq!(broadcaster.receiver_count(), 2);
+    }
+
+    #[test]
+    fn context_changed_event_name() {
+        assert_eq!(
+            BackendEvent::ContextChanged(ContextInfo {
+                id: "local".into(),
+                context_type: "local".into(),
+            })
+            .event_name(),
+            "context:changed"
+        );
     }
 }
