@@ -41,6 +41,9 @@ pub struct SubagentResolver {
 /// Parallel detection window in milliseconds
 const PARALLEL_WINDOW_MS: u64 = 100;
 
+/// Maximum depth for parentUuid chain traversal when propagating team metadata.
+const MAX_PARENT_DEPTH: usize = 10;
+
 /// Enrich a subagent Process with metadata from its parent Task call.
 fn enrich_subagent_from_task(subagent: &mut Process, task_call: &ToolCall) {
     subagent.task_id = Some(task_call.id.clone());
@@ -181,6 +184,118 @@ fn link_to_task_calls(
     }
 }
 
+/// Propagate team metadata to continuation files via parentUuid chain.
+fn propagate_team_metadata(subagents: &mut [Process]) {
+    // Build last message uuid -> subagent index mapping
+    let mut last_uuid_to_idx: HashMap<String, usize> = HashMap::new();
+    for (i, subagent) in subagents.iter().enumerate() {
+        if let Some(last) = subagent.messages.last() {
+            if let Some(uuid) = &last.uuid {
+                if !uuid.is_empty() {
+                    last_uuid_to_idx.insert(uuid.clone(), i);
+                }
+            }
+        }
+    }
+
+    // Phase 1: Collect which subagent each continuation should inherit from
+    let mut inherit_from: Vec<Option<usize>> = vec![None; subagents.len()];
+    for (i, subagent) in subagents.iter().enumerate() {
+        if subagent.team.is_some() {
+            continue;
+        }
+        if subagent.messages.is_empty() {
+            continue;
+        }
+
+        let first_parent_uuid = match subagent.messages.first().and_then(|m| m.parent_uuid.as_ref()) {
+            Some(uuid) if !uuid.is_empty() => uuid.clone(),
+            _ => continue,
+        };
+
+        // Walk parentUuid chain
+        let mut current_uuid = first_parent_uuid;
+        let mut depth = 0;
+        let mut ancestor_idx: Option<usize> = None;
+
+        while depth < MAX_PARENT_DEPTH {
+            if let Some(&idx) = last_uuid_to_idx.get(&current_uuid) {
+                if subagents[idx].team.is_some() {
+                    ancestor_idx = Some(idx);
+                    break;
+                }
+                if let Some(prev_last) = subagents[idx].messages.last() {
+                    if let Some(prev_parent) = &prev_last.parent_uuid {
+                        current_uuid = prev_parent.clone();
+                        depth += 1;
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+
+        inherit_from[i] = ancestor_idx;
+    }
+
+    // Phase 2: Apply inheritance
+    // Collect cloned data to avoid simultaneous borrow of different indices in the slice
+    let inherited: Vec<(usize, Option<TeamInfo>, Option<String>, Option<String>, Option<String>)> = inherit_from
+        .iter()
+        .enumerate()
+        .filter_map(|(i, anc)| {
+            let anc = (*anc)?;
+            let ancestor = &subagents[anc];
+            Some((
+                i,
+                ancestor.team.clone(),
+                ancestor.task_id.clone(),
+                ancestor.description.clone(),
+                ancestor.subagent_type.clone(),
+            ))
+        })
+        .collect();
+
+    for (i, team, task_id, description, subagent_type) in inherited {
+        subagents[i].team = team;
+        subagents[i].task_id = subagents[i].task_id.take().or(task_id);
+        subagents[i].description = subagents[i].description.take().or(description);
+        subagents[i].subagent_type = subagents[i].subagent_type.take().or(subagent_type);
+    }
+}
+
+/// Inject team member colors from teammate_spawned tool results.
+fn enrich_team_colors(subagents: &mut [Process], messages: &[ParsedMessage]) {
+    for msg in messages {
+        let source_id = match &msg.source_tool_use_id {
+            Some(id) if !id.is_empty() => id.as_str(),
+            _ => continue,
+        };
+        let result = match &msg.tool_use_result {
+            Some(r) => r,
+            None => continue,
+        };
+        let status = match result.get("status").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => continue,
+        };
+        let color = match result.get("color").and_then(|v| v.as_str()) {
+            Some(c) if !c.is_empty() => c.to_string(),
+            _ => continue,
+        };
+        if status != "teammate_spawned" {
+            continue;
+        }
+        for subagent in subagents.iter_mut() {
+            if subagent.task_id.as_deref() == Some(source_id) {
+                if let Some(team) = &mut subagent.team {
+                    team.member_color = color.clone();
+                }
+            }
+        }
+    }
+}
+
 impl SubagentResolver {
     /// Create a new SubagentResolver.
     pub fn new(projects_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Self {
@@ -196,7 +311,7 @@ impl SubagentResolver {
         project_id: &str,
         session_id: &str,
         task_calls: Option<&[ToolCall]>,
-        _messages: Option<&[ParsedMessage]>,
+        messages: Option<&[ParsedMessage]>,
     ) -> Vec<Process> {
         // Get subagent files
         let subagent_files = self.list_subagent_files(project_id, session_id);
@@ -211,15 +326,18 @@ impl SubagentResolver {
             .filter_map(|file_path| self.parse_subagent_file(&file_path))
             .collect();
 
-        if let (Some(tc), Some(msgs)) = (task_calls, _messages) {
+        if let (Some(tc), Some(msgs)) = (task_calls, messages) {
             link_to_task_calls(&mut subagents, tc, msgs);
         }
-        // TODO: propagate_team_metadata (Task 7)
+
+        propagate_team_metadata(&mut subagents);
 
         // Detect parallel execution
         self.detect_parallel_execution(&mut subagents);
 
-        // TODO: enrich_team_colors (Task 8)
+        if let Some(msgs) = messages {
+            enrich_team_colors(&mut subagents, msgs);
+        }
 
         // Sort by start time
         subagents.sort_by_key(|s| s.start_time_ms);
@@ -809,5 +927,97 @@ mod tests {
         link_to_task_calls(&mut subagents, &task_calls, &messages);
         assert_eq!(subagents[0].description, Some("First task".to_string()));
         assert_eq!(subagents[1].description, Some("Second task".to_string()));
+    }
+
+    // =========================================================================
+    // Task 7: propagate_team_metadata
+    // =========================================================================
+
+    #[test]
+    fn test_propagate_team_metadata_chain() {
+        let mut subagents = vec![
+            Process {
+                id: "agent-main".to_string(), file_path: "/tmp/main.jsonl".to_string(),
+                start_time_ms: 1000, end_time_ms: 2000, duration_ms: 1000,
+                metrics: SessionMetrics::default(), is_parallel: false, is_ongoing: false,
+                task_id: Some("tc-1".to_string()),
+                messages: vec![
+                    SimpleMessage {
+                        message_type: "user".to_string(), content: "msg".to_string(),
+                        timestamp_ms: Some(1000), input_tokens: None, output_tokens: None,
+                        is_ongoing: None, uuid: Some("main-uuid".to_string()), parent_uuid: None,
+                    },
+                    SimpleMessage {
+                        message_type: "assistant".to_string(), content: "resp".to_string(),
+                        timestamp_ms: Some(2000), input_tokens: None, output_tokens: None,
+                        is_ongoing: None, uuid: Some("main-last".to_string()), parent_uuid: None,
+                    },
+                ],
+                description: Some("Main task".to_string()), subagent_type: Some("Explore".to_string()),
+                team: Some(TeamInfo {
+                    team_name: "my-team".to_string(), member_name: "researcher".to_string(),
+                    member_color: "#FF5733".to_string(),
+                }),
+            },
+            Process {
+                id: "agent-cont".to_string(), file_path: "/tmp/cont.jsonl".to_string(),
+                start_time_ms: 3000, end_time_ms: 4000, duration_ms: 1000,
+                metrics: SessionMetrics::default(), is_parallel: false, is_ongoing: false,
+                task_id: None,
+                messages: vec![
+                    SimpleMessage {
+                        message_type: "user".to_string(), content: "cont msg".to_string(),
+                        timestamp_ms: Some(3000), input_tokens: None, output_tokens: None,
+                        is_ongoing: None, uuid: Some("cont-uuid".to_string()),
+                        parent_uuid: Some("main-last".to_string()),
+                    },
+                    SimpleMessage {
+                        message_type: "assistant".to_string(), content: "cont resp".to_string(),
+                        timestamp_ms: Some(4000), input_tokens: None, output_tokens: None,
+                        is_ongoing: None, uuid: Some("cont-last".to_string()), parent_uuid: None,
+                    },
+                ],
+                description: None, subagent_type: None, team: None,
+            },
+        ];
+
+        propagate_team_metadata(&mut subagents);
+
+        assert!(subagents[1].team.is_some());
+        let team = subagents[1].team.as_ref().unwrap();
+        assert_eq!(team.team_name, "my-team");
+        assert_eq!(team.member_name, "researcher");
+        assert_eq!(subagents[1].description, Some("Main task".to_string()));
+        assert_eq!(subagents[1].subagent_type, Some("Explore".to_string()));
+    }
+
+    // =========================================================================
+    // Task 8: enrich_team_colors
+    // =========================================================================
+
+    #[test]
+    fn test_enrich_team_colors_from_teammate_spawned() {
+        use crate::types::messages::ParsedMessage;
+
+        let mut subagents = vec![Process {
+            id: "agent-1".to_string(), file_path: "/tmp/a1.jsonl".to_string(),
+            start_time_ms: 1000, end_time_ms: 2000, duration_ms: 1000,
+            metrics: SessionMetrics::default(), is_parallel: false, is_ongoing: false,
+            task_id: Some("tc-1".to_string()), messages: vec![], description: None, subagent_type: None,
+            team: Some(TeamInfo {
+                team_name: "my-team".to_string(), member_name: "researcher".to_string(),
+                member_color: String::new(),
+            }),
+        }];
+        let messages = vec![ParsedMessage {
+            tool_use_result: Some(serde_json::json!({
+                "status": "teammate_spawned",
+                "color": "#FF5733"
+            })),
+            source_tool_use_id: Some("tc-1".to_string()),
+            ..Default::default()
+        }];
+        enrich_team_colors(&mut subagents, &messages);
+        assert_eq!(subagents[0].team.as_ref().unwrap().member_color, "#FF5733");
     }
 }
