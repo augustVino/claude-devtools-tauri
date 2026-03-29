@@ -205,6 +205,10 @@ pub fn build_routes() -> Router<HttpState> {
         .route("/api/updater/check", post(deferred_not_implemented))
         .route("/api/updater/download", post(deferred_not_implemented))
         .route("/api/updater/install", post(deferred_not_implemented))
+        // Deferred: Context Switch (V2 scope)
+        .route("/api/contexts", get(deferred_not_implemented))
+        .route("/api/contexts/active", get(deferred_not_implemented))
+        .route("/api/contexts/switch", post(deferred_not_implemented))
 }
 
 /// SSH/updater deferred stub handler.
