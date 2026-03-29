@@ -12,18 +12,14 @@
 
 - 可视化 Claude Code 会话时间线
 - 追踪上下文窗口在 6 个分类中的使用情况
-- 分析工具调用与子 Agent 编排
-- 跨会话搜索
+- 分析工具调用与子 Agent / Team 编排
+- 跨会话搜索（全文检索）
 - 实时文件监听与增量更新
-- 错误检测与通知触发
-
-## V2 待实现
-
-以下功能计划在后续版本中完成：
-
-- **SSH 远程连接** — 通过 SSH 访问远程机器上的 Claude 会话（8 个命令）
-- **上下文切换** — 多 Claude 实例间的上下文切换（3 个命令）
-- **内置 HTTP 服务** — 提供浏览器端访问的后端服务（3 个命令）
+- 错误检测与通知触发（原生 OS 通知）
+- macOS 系统托盘 + Dock 隐藏
+- SSH 远程连接 — 通过 SSH 浏览远程机器上的 Claude 会话
+- 多上下文切换 — 本地 / SSH 远程上下文之间切换
+- 内置 HTTP 服务 — 浏览器端访问（REST API + SSE 实时事件流）
 
 ## 开发
 
@@ -43,14 +39,31 @@ pnpm tauri dev
 ### 构建
 
 ```bash
-pnpm tauri build
+pnpm tauri build          # macOS: DMG / Windows: NSIS / Linux: deb+rpm
+```
+
+### 测试
+
+```bash
+cd src-tauri && cargo test               # Rust 单元测试 (552)
+cd src-tauri && cargo test -- session_   # 按名称过滤
 ```
 
 ## 技术栈
 
-- **后端：** Rust + Tauri v2
-- **前端：** React 18, TypeScript, Vite, Tailwind CSS, Zustand
-- **核心 crates：** tokio, serde, notify, moka
+- **后端：** Rust + Tauri v2.10, tokio (异步运行时), serde, axum 0.8 (HTTP), russh 0.46 (SSH)
+- **前端：** React 19, TypeScript 5.9, Vite 8, Tailwind CSS 3, Zustand 5
+- **核心 crates：** tokio, serde, notify (文件监听), moka (LRU 缓存), russh (SSH), axum (HTTP)
+
+## 项目规模
+
+| 指标 | 数值 |
+|------|------|
+| Rust 后端 | 92 文件, ~27,900 LOC, 552 单元测试 |
+| 前端 | ~43,800 LOC TypeScript/TSX, 14 Zustand store slices |
+| Tauri 命令 | 65 个 `#[tauri::command]` |
+| HTTP 端点 | 50+ REST + SSE |
+| 事件通道 | 8 个 (file-change, todo-change, notification, error, ssh, context 等) |
 
 ## 许可证
 
