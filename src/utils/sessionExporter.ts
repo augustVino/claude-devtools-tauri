@@ -22,7 +22,8 @@ interface ExtractOptions {
 // Helpers (not exported)
 // =============================================================================
 
-function formatNumber(n: number): string {
+function formatNumber(n: number | undefined): string {
+  if (n == null) return "0";
   return n.toLocaleString("en-US");
 }
 
@@ -38,7 +39,8 @@ function formatTimestamp(date: Date): string {
     .replace(/\.\d{3}Z$/, " UTC");
 }
 
-function formatDurationForExport(ms: number): string {
+function formatDurationForExport(ms: number | undefined): string {
+  if (ms == null) return "0ms";
   if (ms < 1000) return `${ms}ms`;
   const secs = Math.floor(ms / 1000);
   const mins = Math.floor(secs / 60);
