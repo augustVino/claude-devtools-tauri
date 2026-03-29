@@ -406,7 +406,7 @@ impl SubagentResolver {
                     }
 
                     let file_path = project_root.join(&dirent.name);
-                    if let Ok(content) = self.fs_provider.read_file(&file_path) {
+                    if let Ok(content) = self.fs_provider.read_file_head(&file_path, 1) {
                         if subagent_belongs_to_session(&content, session_id) {
                             files.push(file_path);
                         }
