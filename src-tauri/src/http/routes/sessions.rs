@@ -286,7 +286,7 @@ pub async fn get_session_groups(
         let resolver =
             crate::discovery::subagent_resolver::SubagentResolver::new(get_projects_base_path(), std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()));
         resolver
-            .resolve_subagents(&project_id, &session_id)
+            .resolve_subagents(&project_id, &session_id, Some(&parsed.task_calls), Some(&parsed.messages))
             .into_iter()
             .map(Into::into)
             .collect()
@@ -377,7 +377,7 @@ pub async fn get_waterfall_data(
         let resolver =
             crate::discovery::subagent_resolver::SubagentResolver::new(get_projects_base_path(), std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()));
         resolver
-            .resolve_subagents(&project_id, &session_id)
+            .resolve_subagents(&project_id, &session_id, Some(&parsed.task_calls), Some(&parsed.messages))
             .into_iter()
             .map(Into::into)
             .collect()

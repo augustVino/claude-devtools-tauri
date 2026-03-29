@@ -69,7 +69,7 @@ pub async fn get_subagent_detail(
 
     // 解析子 Agent 以获取时间/并行信息
     let resolver = SubagentResolver::new(projects_dir, std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()));
-    let processes = resolver.resolve_subagents(&project_id, &session_id);
+    let processes = resolver.resolve_subagents(&project_id, &session_id, None, None);
 
     // 查找匹配的进程
     let process = processes.iter().find(|p| p.id == subagent_id);
