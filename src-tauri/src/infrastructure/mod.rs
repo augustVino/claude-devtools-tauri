@@ -4,6 +4,7 @@ pub mod config_manager;
 pub mod context_manager;
 pub mod data_cache;
 pub mod file_watcher;
+pub mod fs_provider;
 pub mod notification_manager;
 pub mod service_context;
 pub mod trigger_manager;
@@ -12,6 +13,7 @@ pub use config_manager::ConfigManager;
 pub use context_manager::{ContextInfo, ContextManager};
 pub use data_cache::DataCache;
 pub use file_watcher::FileWatcher;
+pub use fs_provider::{FsDirent, FsProvider, FsStatResult, LocalFsProvider};
 pub use notification_manager::NotificationManager;
 #[allow(unused_imports)]
 pub use service_context::{ContextType, ServiceContext, ServiceContextConfig};

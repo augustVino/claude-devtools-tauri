@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 use crate::discovery::{ProjectScanner, SessionSearcher, SubagentResolver};
 use crate::infrastructure::DataCache;
 use crate::infrastructure::file_watcher::FileWatcher;
+use crate::infrastructure::fs_provider::FsProvider;
 use tauri::Manager;
 
 /// 服务上下文配置。
@@ -18,6 +19,7 @@ pub struct ServiceContextConfig {
     pub context_type: ContextType,
     pub projects_dir: PathBuf,
     pub todos_dir: PathBuf,
+    pub fs_provider: Arc<dyn FsProvider>,
 }
 
 /// 上下文类型。
@@ -34,6 +36,7 @@ pub struct ServiceContext {
     pub context_type: ContextType,
     pub projects_dir: PathBuf,
     pub todos_dir: PathBuf,
+    pub fs_provider: Arc<dyn FsProvider>,
     pub cache: DataCache,
     pub project_scanner: ProjectScanner,
     pub subagent_resolver: SubagentResolver,
@@ -46,6 +49,7 @@ pub struct ServiceContext {
 
 impl ServiceContext {
     pub fn new(config: ServiceContextConfig) -> Self {
+        // TODO: Pass fs_provider to scanners (Tasks 5, 6, 7)
         let project_scanner = ProjectScanner::with_paths(
             config.projects_dir.clone(),
             config.todos_dir.clone(),
@@ -63,6 +67,7 @@ impl ServiceContext {
             context_type: config.context_type,
             projects_dir: config.projects_dir,
             todos_dir: config.todos_dir,
+            fs_provider: config.fs_provider,
             cache,
             project_scanner,
             subagent_resolver,
@@ -88,6 +93,13 @@ impl ServiceContext {
         config_manager: Arc<crate::infrastructure::ConfigManager>,
         notification_manager: Arc<tokio::sync::RwLock<crate::infrastructure::NotificationManager>>,
     ) {
+        // SSH 模式下直接返回，不启动文件监听 (与 Electron 行为一致)
+        if self.context_type == ContextType::Ssh {
+            log::info!("Skipping file watcher for SSH context '{}'", self.id);
+            self.is_started.store(true, Ordering::Relaxed);
+            return;
+        }
+
         let cancel_token = self.watcher_cancel_token.clone();
         let projects_dir = self.projects_dir.clone();
         let todos_dir = self.todos_dir.clone();

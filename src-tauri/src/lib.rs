@@ -20,6 +20,7 @@ use tokio::sync::RwLock;
 use tauri::{Emitter, Manager};
 use commands::AppState;
 use infrastructure::{ConfigManager, ContextManager, NotificationManager};
+use infrastructure::fs_provider::LocalFsProvider;
 use infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
 use commands::tray::TrayIconManager;
 use utils::get_projects_base_path;
@@ -145,6 +146,7 @@ pub fn run() {
           } else {
             std::path::PathBuf::from("/tmp/claude-todos")
           },
+          fs_provider: Arc::new(LocalFsProvider::new()),
         });
         mgr.register_context(local_context)
           .expect("Failed to register local context");

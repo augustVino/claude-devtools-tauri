@@ -151,6 +151,9 @@ mod tests {
             context_type,
             projects_dir: PathBuf::from("/tmp/test-projects"),
             todos_dir: PathBuf::from("/tmp/test-todos"),
+            fs_provider: std::sync::Arc::new(
+                crate::infrastructure::fs_provider::LocalFsProvider::new(),
+            ),
         }
     }
 
