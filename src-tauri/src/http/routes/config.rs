@@ -3,6 +3,7 @@
 //! 对应 Tauri 命令：config.rs 中的配置管理命令。
 
 use axum::{Json, extract::State, http::StatusCode};
+use serde::Serialize;
 use serde::Deserialize;
 
 use crate::http::state::HttpState;
@@ -12,14 +13,24 @@ use crate::types::config::{
 
 use super::error_json;
 
+/// httpClient.ts 的 config API 期望 `{success, data}` 包装格式。
+#[derive(Serialize)]
+pub(crate) struct ConfigResponse {
+    success: bool,
+    data: AppConfig,
+}
+
 /// 获取当前完整的应用配置。
 ///
 /// GET /api/config
 pub async fn get_config(
     State(state): State<HttpState>,
-) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
+) -> Result<Json<ConfigResponse>, (StatusCode, Json<super::ErrorResponse>)> {
     let app_state = state.app_state.read().await;
-    Ok(Json(app_state.config_manager.get_config()))
+    Ok(Json(ConfigResponse {
+        success: true,
+        data: app_state.config_manager.get_config(),
+    }))
 }
 
 /// 请求体：更新配置分区。
@@ -35,12 +46,14 @@ pub struct UpdateConfigRequest {
 pub async fn update_config(
     State(state): State<HttpState>,
     Json(body): Json<UpdateConfigRequest>,
-) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
+) -> Result<Json<ConfigResponse>, (StatusCode, Json<super::ErrorResponse>)> {
     let app_state = state.app_state.read().await;
     app_state
         .config_manager
         .update_config(&body.section, body.data)
-        .map(Json)
+        .map(|data| {
+            Json(ConfigResponse { success: true, data })
+        })
         .map_err(|e| error_json(e))
 }
 
