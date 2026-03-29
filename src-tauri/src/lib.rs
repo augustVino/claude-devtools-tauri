@@ -165,6 +165,15 @@ pub fn run() {
       let context_manager = Arc::new(RwLock::new(context_manager));
       app.manage(context_manager.clone());
 
+      // ========== 注册 SessionSearcher（供 Tauri IPC search 命令使用）==========
+      {
+        let local_fs: Arc<dyn infrastructure::fs_provider::FsProvider> = Arc::new(LocalFsProvider::new());
+        app.manage(commands::search::create_searcher_state(
+          get_projects_base_path(),
+          local_fs,
+        ));
+      }
+
       // ========== 创建并注册 SshConnectionManager ==========
       let ssh_manager_inner = SshConnectionManager::new();
 
