@@ -396,6 +396,12 @@ impl ConfigManager {
         &self,
         trigger: NotificationTrigger,
     ) -> Result<AppConfig, String> {
+        // Validate trigger before persisting
+        let validation = crate::infrastructure::trigger_manager::TriggerManager::validate_trigger_only(&trigger);
+        if !validation.valid {
+            return Err(format!("Invalid trigger: {}", validation.errors.join(", ")));
+        }
+
         let mut config = self
             .config
             .write()
@@ -453,6 +459,12 @@ impl ConfigManager {
         }
         if let Some(match_field) = updates.get("matchField").and_then(|v| v.as_str()) {
             trigger.match_field = Some(match_field.to_string());
+        }
+
+        // Validate the updated trigger
+        let validation = crate::infrastructure::trigger_manager::TriggerManager::validate_trigger_only(trigger);
+        if !validation.valid {
+            return Err(format!("Invalid trigger update: {}", validation.errors.join(", ")));
         }
 
         drop(config);

@@ -611,6 +611,7 @@ dependencies = [
  "moka",
  "notify 8.2.0",
  "notify-debouncer-mini",
+ "notify-rust",
  "objc",
  "once_cell",
  "regex",
