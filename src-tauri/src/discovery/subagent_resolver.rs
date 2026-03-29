@@ -236,6 +236,8 @@ struct SimpleMessage {
     input_tokens: Option<u64>,
     output_tokens: Option<u64>,
     is_ongoing: Option<bool>,
+    uuid: Option<String>,
+    parent_uuid: Option<String>,
 }
 
 /// Parse JSONL lines into simple messages.
@@ -280,6 +282,9 @@ fn parse_jsonl_lines(content: &str) -> Vec<SimpleMessage> {
 
             let is_ongoing = json.get("is_ongoing").and_then(|v| v.as_bool());
 
+            let uuid = json.get("uuid").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let parent_uuid = json.get("parentUuid").and_then(|v| v.as_str()).map(|s| s.to_string());
+
             Some(SimpleMessage {
                 message_type,
                 content,
@@ -287,6 +292,8 @@ fn parse_jsonl_lines(content: &str) -> Vec<SimpleMessage> {
                 input_tokens,
                 output_tokens,
                 is_ongoing,
+                uuid,
+                parent_uuid,
             })
         })
         .collect()
@@ -368,5 +375,22 @@ mod tests {
         let subagents = resolver.resolve_subagents("-Users-test-project", "session-123");
         assert_eq!(subagents.len(), 1);
         assert_eq!(subagents[0].id, "test123");
+    }
+
+    #[test]
+    fn test_parse_jsonl_lines_extracts_uuid_and_parent_uuid() {
+        let content = r#"{"type":"user","message":"Hello","uuid":"abc-123","parentUuid":"parent-456","timestamp":"2024-01-01T00:00:00Z"}"#;
+        let messages = parse_jsonl_lines(content);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].uuid, Some("abc-123".to_string()));
+        assert_eq!(messages[0].parent_uuid, Some("parent-456".to_string()));
+    }
+
+    #[test]
+    fn test_parse_jsonl_lines_missing_uuid() {
+        let content = r#"{"type":"user","message":"Hello","timestamp":"2024-01-01T00:00:00Z"}"#;
+        let messages = parse_jsonl_lines(content);
+        assert_eq!(messages[0].uuid, None);
+        assert_eq!(messages[0].parent_uuid, None);
     }
 }
