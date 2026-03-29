@@ -45,7 +45,7 @@ notify-rust = "4"
 once_cell = "1"
 sha2 = "0.10"
 axum = "0.8"
-tower-http = { version = "0.6", features = ["cors"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = "0.7"
 futures = "0.3"
