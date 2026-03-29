@@ -553,6 +553,45 @@ impl SubagentResolver {
             }
         }
     }
+
+    /// Find a subagent by ID.
+    pub fn find_subagent_by_id<'a>(subagents: &'a [Process], id: &str) -> Option<&'a Process> {
+        subagents.iter().find(|s| s.id == id)
+    }
+
+    /// Get aggregated metrics across all subagents.
+    pub fn get_total_subagent_metrics(subagents: &[Process]) -> SessionMetrics {
+        if subagents.is_empty() {
+            return SessionMetrics::default();
+        }
+
+        let mut total_input = 0u64;
+        let mut total_output = 0u64;
+        let mut total_cache_read: Option<u64> = Some(0);
+        let mut total_cache_creation: Option<u64> = Some(0);
+        let mut total_messages = 0u32;
+
+        for s in subagents {
+            total_input += s.metrics.input_tokens;
+            total_output += s.metrics.output_tokens;
+            total_messages += s.metrics.message_count;
+            total_cache_read =
+                Some(total_cache_read.unwrap_or(0) + s.metrics.cache_read_tokens.unwrap_or(0));
+            total_cache_creation =
+                Some(total_cache_creation.unwrap_or(0) + s.metrics.cache_creation_tokens.unwrap_or(0));
+        }
+
+        SessionMetrics {
+            duration_ms: 0,
+            total_tokens: total_input + total_output,
+            input_tokens: total_input,
+            output_tokens: total_output,
+            cache_read_tokens: total_cache_read,
+            cache_creation_tokens: total_cache_creation,
+            message_count: total_messages,
+            cost_usd: None,
+        }
+    }
 }
 
 /// Simple message representation for parsing.
@@ -1173,5 +1212,92 @@ mod tests {
         }];
         enrich_team_colors(&mut subagents, &messages);
         assert_eq!(subagents[0].team.as_ref().unwrap().member_color, "#FF5733");
+    }
+
+    // =========================================================================
+    // Task 12: find_subagent_by_id and get_total_subagent_metrics helpers
+    // =========================================================================
+
+    #[test]
+    fn test_find_subagent_by_id_found() {
+        let subagents = vec![Process {
+            id: "abc".to_string(),
+            file_path: "/tmp/a.jsonl".to_string(),
+            start_time_ms: 0,
+            end_time_ms: 0,
+            duration_ms: 0,
+            metrics: SessionMetrics::default(),
+            is_parallel: false,
+            is_ongoing: false,
+            task_id: None,
+            messages: vec![],
+            description: None,
+            subagent_type: None,
+            team: None,
+        }];
+        assert!(SubagentResolver::find_subagent_by_id(&subagents, "abc").is_some());
+        assert!(SubagentResolver::find_subagent_by_id(&subagents, "xyz").is_none());
+    }
+
+    #[test]
+    fn test_get_total_subagent_metrics() {
+        let subagents = vec![
+            Process {
+                id: "a".to_string(),
+                file_path: "/tmp/a.jsonl".to_string(),
+                start_time_ms: 0,
+                end_time_ms: 1000,
+                duration_ms: 1000,
+                metrics: SessionMetrics {
+                    input_tokens: 100,
+                    output_tokens: 50,
+                    cache_read_tokens: Some(20),
+                    cache_creation_tokens: Some(10),
+                    message_count: 3,
+                    ..Default::default()
+                },
+                is_parallel: false,
+                is_ongoing: false,
+                task_id: None,
+                messages: vec![],
+                description: None,
+                subagent_type: None,
+                team: None,
+            },
+            Process {
+                id: "b".to_string(),
+                file_path: "/tmp/b.jsonl".to_string(),
+                start_time_ms: 0,
+                end_time_ms: 2000,
+                duration_ms: 2000,
+                metrics: SessionMetrics {
+                    input_tokens: 200,
+                    output_tokens: 100,
+                    cache_read_tokens: Some(30),
+                    cache_creation_tokens: Some(5),
+                    message_count: 5,
+                    ..Default::default()
+                },
+                is_parallel: false,
+                is_ongoing: false,
+                task_id: None,
+                messages: vec![],
+                description: None,
+                subagent_type: None,
+                team: None,
+            },
+        ];
+        let total = SubagentResolver::get_total_subagent_metrics(&subagents);
+        assert_eq!(total.input_tokens, 300);
+        assert_eq!(total.output_tokens, 150);
+        assert_eq!(total.cache_read_tokens, Some(50));
+        assert_eq!(total.cache_creation_tokens, Some(15));
+        assert_eq!(total.message_count, 8);
+    }
+
+    #[test]
+    fn test_get_total_subagent_metrics_empty() {
+        let total = SubagentResolver::get_total_subagent_metrics(&[]);
+        assert_eq!(total.input_tokens, 0);
     }
 }
