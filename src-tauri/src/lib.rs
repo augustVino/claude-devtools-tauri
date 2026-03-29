@@ -333,6 +333,7 @@ pub fn run() {
       commands::utility::read_directory_claude_md,
       commands::utility::read_mentioned_file,
       commands::utility::read_agent_configs,
+      commands::utility::write_text_file,
       commands::projects::get_repository_groups,
       commands::projects::get_worktree_sessions,
       commands::subagents::get_subagent_detail,
