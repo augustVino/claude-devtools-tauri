@@ -611,32 +611,41 @@ impl NotificationManager {
         };
 
         let sound_enabled = self.config_manager.get_config().notifications.sound_enabled;
-
         let body = truncate_str(&error.message, 200);
+        let subtitle = &error.context.project_name;
 
         #[cfg(not(test))]
         {
-            use tauri_plugin_notification::NotificationExt;
-
-            let builder = app_handle
-                .notification()
-                .builder()
-                .title("Claude Code Error")
+            // Use notify-rust directly for subtitle support.
+            // tauri-plugin-notification v2 does not expose subtitle().
+            let mut notification = notify_rust::Notification::new();
+            notification
+                .summary("Claude Code Error")
+                .subtitle(subtitle)
                 .body(&body);
 
-            let builder = if sound_enabled {
-                builder.sound("default")
-            } else {
-                builder
-            };
+            if sound_enabled {
+                notification.sound_name("default");
+            }
 
-            if let Err(e) = builder.show() {
+            #[cfg(target_os = "macos")]
+            {
+                let _ = notify_rust::set_application(
+                    if tauri::is_dev() {
+                        "com.apple.Terminal"
+                    } else {
+                        app_handle.config().identifier.as_str()
+                    },
+                );
+            }
+
+            if let Err(e) = notification.show() {
                 warn!("Failed to show native notification: {e}");
             }
         }
 
         #[cfg(test)]
-        let _ = (sound_enabled, body);
+        let _ = (sound_enabled, body, subtitle);
     }
 
     /// 向前端发出 `notification:new` 事件。
