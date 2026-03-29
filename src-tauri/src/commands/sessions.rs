@@ -15,6 +15,19 @@ use crate::utils::content_sanitizer::{
 use crate::utils::{decode_path, extract_base_dir, extract_project_name, get_projects_base_path};
 use crate::analysis::ChunkBuilder;
 
+/// Extract the first non-empty cwd from parsed session messages.
+/// This avoids the lossy decode_path for project names containing dashes (e.g., "obsidian-stories").
+fn extract_cwd_from_messages(parsed: &ParsedSession) -> Option<String> {
+    for msg in &parsed.messages {
+        if let Some(ref cwd) = msg.cwd {
+            if !cwd.is_empty() {
+                return Some(cwd.clone());
+            }
+        }
+    }
+    None
+}
+
 /// 跨命令共享的应用状态。
 ///
 /// 包含数据缓存和配置管理器，通过 `Arc<RwLock<AppState>>` 注入到各 Tauri command 中。
@@ -108,10 +121,14 @@ pub async fn get_session_detail(
 
     let parsed = parse_session_file(&session_path).await;
 
+    // Prefer cwd from session file over lossy decode_path (handles dashes in project names)
+    let fallback_path = extract_cwd_from_messages(&parsed)
+        .unwrap_or_else(|| decode_path(&project_id));
+
     let session = build_session_metadata(&session_path, &project_id).await.unwrap_or_else(|| Session {
         id: session_id.clone(),
         project_id: project_id.clone(),
-        project_path: decode_path(&project_id),
+        project_path: fallback_path,
         created_at: 0,
         todo_data: None,
         first_message: None,
@@ -341,12 +358,16 @@ pub async fn get_waterfall_data(
 
     let parsed = parse_session_file(&session_path).await;
 
+    // Prefer cwd from session file over lossy decode_path (handles dashes in project names)
+    let fallback_path = extract_cwd_from_messages(&parsed)
+        .unwrap_or_else(|| decode_path(&project_id));
+
     let session = build_session_metadata(&session_path, &project_id)
         .await
         .unwrap_or_else(|| Session {
             id: session_id.clone(),
             project_id: project_id.clone(),
-            project_path: decode_path(&project_id),
+            project_path: fallback_path,
             created_at: 0,
             todo_data: None,
             first_message: None,
@@ -451,10 +472,14 @@ async fn build_session_metadata(path: &std::path::Path, project_id: &str) -> Opt
 
     let first_message = first_user_text.or(first_command_text);
 
+    // Prefer cwd from session file over lossy decode_path (handles dashes in project names)
+    let project_path = extract_cwd_from_messages(&parsed)
+        .unwrap_or_else(|| decode_path(project_id));
+
     Some(Session {
         id: filename,
         project_id: project_id.to_string(),
-        project_path: decode_path(project_id),
+        project_path,
         created_at: metadata.created()
             .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64)
             .unwrap_or(0),
