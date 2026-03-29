@@ -205,10 +205,20 @@ pub fn build_routes() -> Router<HttpState> {
         .route("/api/updater/check", post(deferred_not_implemented))
         .route("/api/updater/download", post(deferred_not_implemented))
         .route("/api/updater/install", post(deferred_not_implemented))
-        // Deferred: Context Switch (V2 scope)
-        .route("/api/contexts", get(deferred_not_implemented))
-        .route("/api/contexts/active", get(deferred_not_implemented))
+        // Deferred: Context Switch (V2 scope) — 返回与 TauriClient stub 一致的本地默认值
+        .route("/api/contexts", get(context_list))
+        .route("/api/contexts/active", get(context_active))
         .route("/api/contexts/switch", post(deferred_not_implemented))
+}
+
+/// GET /api/contexts — 返回本地上下文（与 TauriClient createContextAPI 一致）。
+async fn context_list() -> Json<serde_json::Value> {
+    Json(serde_json::json!([{ "id": "local", "type": "local" }]))
+}
+
+/// GET /api/contexts/active — 返回 "local"（与 TauriClient createContextAPI 一致）。
+async fn context_active() -> Json<&'static str> {
+    Json("local")
 }
 
 /// SSH/updater deferred stub handler.
