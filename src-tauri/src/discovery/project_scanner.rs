@@ -13,6 +13,7 @@ use crate::utils::content_sanitizer::{
 use crate::utils::path_decoder;
 use std::collections::HashMap;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 /// Light-weight session preview extracted from the first few KB of a JSONL file.
@@ -271,23 +272,30 @@ impl ProjectScanner {
         sessions
     }
 
-    /// Read the first 8KB of a JSONL file to extract preview metadata.
+    /// Read the first 200 lines of a JSONL file to extract preview metadata.
     fn extract_session_preview(&self, path: &Path) -> SessionPreview {
-        let content = match fs::read(path) {
-            Ok(bytes) => bytes,
+        let file = match fs::File::open(path) {
+            Ok(f) => f,
             Err(_) => return SessionPreview::default(),
         };
 
-        let preview_bytes = &content[..content.len().min(8192)];
-        let preview_str = match std::str::from_utf8(preview_bytes) {
-            Ok(s) => s,
-            Err(_) => return SessionPreview::default(),
-        };
-
+        let reader = BufReader::new(file);
         let mut preview = SessionPreview::default();
         let mut found_first_user = false;
+        let mut lines_read = 0u32;
+        const MAX_LINES: u32 = 200;
 
-        for line in preview_str.lines() {
+        for line_result in reader.lines() {
+            let line = match line_result {
+                Ok(l) => l,
+                Err(_) => break,
+            };
+
+            if lines_read >= MAX_LINES {
+                break;
+            }
+            lines_read += 1;
+
             let line = line.trim();
             if line.is_empty() {
                 continue;
@@ -656,5 +664,269 @@ mod tests {
         assert_eq!(normalize_drive_letter("c:/Users/test".to_string()), "C:/Users/test");
         assert_eq!(normalize_drive_letter("C:/Users/test".to_string()), "C:/Users/test");
         assert_eq!(normalize_drive_letter("/Users/test".to_string()), "/Users/test");
+    }
+
+    // --- Task 1: Bug reproduction test ---
+    #[test]
+    fn test_extract_session_preview_first_message_beyond_8kb() {
+        let (temp_dir, scanner) = setup_test_env();
+
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("beyond-8kb.jsonl");
+
+        let mut content = String::new();
+        for i in 0..50 {
+            content.push_str(&format!(
+                r#"{{"type":"system","message":{{"role":"system","content":"System padding line {} with extra text to ensure it exceeds eight kilobytes total across all lines combined in the file"}}}}
+"#,
+                i
+            ));
+        }
+        content.push_str(r#"{"type":"user","isMeta":false,"message":{"role":"user","content":"My real session title"}}"#);
+
+        fs::write(&session_path, &content).unwrap();
+
+        let preview = scanner.extract_session_preview(&session_path);
+        assert!(
+            preview.first_message.is_some(),
+            "first_message should be found when user message is beyond 8KB"
+        );
+        assert_eq!(preview.first_message.unwrap(), "My real session title");
+    }
+
+    // --- Task 3: first_message tests ---
+    #[test]
+    fn test_extract_session_preview_first_message_simple() {
+        let (temp_dir, scanner) = setup_test_env();
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("simple.jsonl");
+
+        let jsonl = r#"{"type":"user","isMeta":false,"message":{"role":"user","content":"Hello world"}}"#;
+        fs::write(&session_path, jsonl).unwrap();
+
+        let preview = scanner.extract_session_preview(&session_path);
+        assert_eq!(preview.first_message.as_deref(), Some("Hello world"));
+    }
+
+    #[test]
+    fn test_extract_session_preview_skips_meta_user() {
+        let (temp_dir, scanner) = setup_test_env();
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("meta.jsonl");
+
+        let jsonl = r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"internal meta"}}
+{"type":"user","isMeta":false,"message":{"role":"user","content":"real user text"}}"#;
+        fs::write(&session_path, jsonl).unwrap();
+
+        let preview = scanner.extract_session_preview(&session_path);
+        assert_eq!(preview.first_message.as_deref(), Some("real user text"));
+    }
+
+    #[test]
+    fn test_extract_session_preview_command_fallback() {
+        let (temp_dir, scanner) = setup_test_env();
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("cmd.jsonl");
+
+        let jsonl = r#"{"type":"user","isMeta":false,"message":{"role":"user","content":"<command-name>/compact</command-name><command-message>Compact context</command-message>"}}"#;
+        fs::write(&session_path, jsonl).unwrap();
+
+        let preview = scanner.extract_session_preview(&session_path);
+        assert_eq!(preview.first_message.as_deref(), Some("/compact"));
+    }
+
+    #[test]
+    fn test_extract_session_preview_skips_command_output() {
+        let (temp_dir, scanner) = setup_test_env();
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("cmdout.jsonl");
+
+        let jsonl = r#"{"type":"user","isMeta":false,"message":{"role":"user","content":"<local-command-stdout>output</local-command-stdout>"}}
+{"type":"user","isMeta":false,"message":{"role":"user","content":"real message"}}"#;
+        fs::write(&session_path, jsonl).unwrap();
+
+        let preview = scanner.extract_session_preview(&session_path);
+        assert_eq!(preview.first_message.as_deref(), Some("real message"));
+    }
+
+    #[test]
+    fn test_extract_session_preview_sanitizes_content() {
+        let (temp_dir, scanner) = setup_test_env();
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("sanitize.jsonl");
+
+        let jsonl = r#"{"type":"user","isMeta":false,"message":{"role":"user","content":"<system-reminder>rules</system-reminder>Please fix the bug"}}"#;
+        fs::write(&session_path, jsonl).unwrap();
+
+        let preview = scanner.extract_session_preview(&session_path);
+        assert_eq!(preview.first_message.as_deref(), Some("Please fix the bug"));
+    }
+
+    #[test]
+    fn test_extract_session_preview_truncates_to_500() {
+        let (temp_dir, scanner) = setup_test_env();
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("truncate.jsonl");
+
+        let long_text = "a".repeat(600);
+        let jsonl = format!(
+            r#"{{"type":"user","isMeta":false,"message":{{"role":"user","content":"{}"}}}}"#,
+            long_text
+        );
+        fs::write(&session_path, &jsonl).unwrap();
+
+        let preview = scanner.extract_session_preview(&session_path);
+        assert_eq!(preview.first_message.unwrap().chars().count(), 500);
+    }
+
+    // --- Task 3: metadata field tests ---
+    #[test]
+    fn test_extract_session_preview_extracts_cwd() {
+        let (temp_dir, scanner) = setup_test_env();
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("cwd.jsonl");
+
+        let jsonl = r#"{"type":"user","isMeta":false,"cwd":"/Users/test/my-project","message":{"role":"user","content":"hello"}}"#;
+        fs::write(&session_path, jsonl).unwrap();
+
+        let preview = scanner.extract_session_preview(&session_path);
+        assert_eq!(preview.cwd.as_deref(), Some("/Users/test/my-project"));
+    }
+
+    #[test]
+    fn test_extract_session_preview_extracts_git_branch() {
+        let (temp_dir, scanner) = setup_test_env();
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("git.jsonl");
+
+        let jsonl = r#"{"type":"user","isMeta":false,"gitBranch":"feature/test","message":{"role":"user","content":"hello"}}"#;
+        fs::write(&session_path, jsonl).unwrap();
+
+        let preview = scanner.extract_session_preview(&session_path);
+        assert_eq!(preview.git_branch.as_deref(), Some("feature/test"));
+    }
+
+    #[test]
+    fn test_extract_session_preview_message_count() {
+        let (temp_dir, scanner) = setup_test_env();
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("count.jsonl");
+
+        let jsonl = r#"{"type":"user","message":{"role":"user","content":"hello"}}
+{"type":"assistant","message":{"role":"assistant","content":"hi"}}
+{"type":"user","message":{"role":"user","content":"world"}}
+{"type":"system","message":{"role":"system","content":"sys"}}"#;
+        fs::write(&session_path, jsonl).unwrap();
+
+        let preview = scanner.extract_session_preview(&session_path);
+        assert_eq!(preview.message_count, 4);
+    }
+
+    #[test]
+    fn test_extract_session_preview_has_task_calls() {
+        let (temp_dir, scanner) = setup_test_env();
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("task.jsonl");
+
+        let jsonl = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Task","input":{"prompt":"do something"}}]}}"#;
+        fs::write(&session_path, jsonl).unwrap();
+
+        let preview = scanner.extract_session_preview(&session_path);
+        assert!(preview.has_task_calls);
+    }
+
+    #[test]
+    fn test_extract_session_preview_first_timestamp() {
+        let (temp_dir, scanner) = setup_test_env();
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("ts.jsonl");
+
+        let jsonl = r#"{"type":"user","isMeta":false,"timestamp":"2026-03-29T10:00:00Z","message":{"role":"user","content":"hello"}}"#;
+        fs::write(&session_path, jsonl).unwrap();
+
+        let preview = scanner.extract_session_preview(&session_path);
+        assert_eq!(preview.first_timestamp.as_deref(), Some("2026-03-29T10:00:00Z"));
+    }
+
+    // --- Task 3: edge case tests ---
+    #[test]
+    fn test_extract_session_preview_empty_file() {
+        let (temp_dir, scanner) = setup_test_env();
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("empty.jsonl");
+
+        fs::write(&session_path, "").unwrap();
+
+        let preview = scanner.extract_session_preview(&session_path);
+        assert!(preview.first_message.is_none());
+        assert_eq!(preview.message_count, 0);
+        assert!(!preview.has_task_calls);
+    }
+
+    #[test]
+    fn test_extract_session_preview_nonexistent_file() {
+        let (temp_dir, scanner) = setup_test_env();
+        let path = temp_dir.path().join("nonexistent.jsonl");
+
+        let preview = scanner.extract_session_preview(&path);
+        assert!(preview.first_message.is_none());
+        assert_eq!(preview.message_count, 0);
+    }
+
+    #[test]
+    fn test_extract_session_preview_stops_at_200_lines() {
+        let (temp_dir, scanner) = setup_test_env();
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("200lines.jsonl");
+
+        let mut content = String::new();
+        for i in 0..199 {
+            content.push_str(&format!(
+                r#"{{"type":"system","message":{{"role":"system","content":"padding {}"}}}}
+"#,
+                i
+            ));
+        }
+        content.push_str(r#"{"type":"user","isMeta":false,"message":{"role":"user","content":"found at line 200"}}"#);
+        fs::write(&session_path, &content).unwrap();
+
+        let preview = scanner.extract_session_preview(&session_path);
+        assert_eq!(preview.first_message.as_deref(), Some("found at line 200"));
+    }
+
+    #[test]
+    fn test_extract_session_preview_beyond_200_lines() {
+        let (temp_dir, scanner) = setup_test_env();
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("201lines.jsonl");
+
+        let mut content = String::new();
+        for i in 0..200 {
+            content.push_str(&format!(
+                r#"{{"type":"system","message":{{"role":"system","content":"padding {}"}}}}
+"#,
+                i
+            ));
+        }
+        content.push_str(r#"{"type":"user","isMeta":false,"message":{"role":"user","content":"beyond 200 lines"}}"#);
+        fs::write(&session_path, &content).unwrap();
+
+        let preview = scanner.extract_session_preview(&session_path);
+        assert!(preview.first_message.is_none(), "user message beyond 200 lines should not be found");
     }
 }
