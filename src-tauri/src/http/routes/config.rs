@@ -99,6 +99,7 @@ pub async fn remove_ignore_regex(
 
 /// 请求体：仓库 ID。
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RepositoryIdRequest {
     pub repository_id: String,
 }
@@ -174,14 +175,24 @@ pub async fn clear_snooze(
 // 通知触发器
 // =============================================================================
 
+/// 触发器列表响应（包装格式）。
+#[derive(Serialize)]
+pub(crate) struct TriggersResponse {
+    success: bool,
+    data: Vec<NotificationTrigger>,
+}
+
 /// 获取所有通知触发器列表。
 ///
 /// GET /api/config/triggers
 pub async fn get_triggers(
     State(state): State<HttpState>,
-) -> Result<Json<Vec<NotificationTrigger>>, (StatusCode, Json<super::ErrorResponse>)> {
+) -> Result<Json<TriggersResponse>, (StatusCode, Json<super::ErrorResponse>)> {
     let app_state = state.app_state.read().await;
-    Ok(Json(app_state.config_manager.get_triggers()))
+    Ok(Json(TriggersResponse {
+        success: true,
+        data: app_state.config_manager.get_triggers(),
+    }))
 }
 
 /// 添加自定义通知触发器。
@@ -230,6 +241,13 @@ pub async fn remove_trigger(
         .map_err(|e| error_json(e))
 }
 
+/// 触发器测试结果响应（包装格式）。
+#[derive(Serialize)]
+pub(crate) struct TriggerTestResponse {
+    success: bool,
+    data: crate::types::config::TriggerTestResult,
+}
+
 /// 测试通知触发器。
 ///
 /// POST /api/config/triggers/{trigger_id}/test
@@ -238,14 +256,18 @@ pub async fn test_trigger(
     axum::extract::Path(_trigger_id): axum::extract::Path<String>,
     Json(trigger): Json<NotificationTrigger>,
 ) -> Result<
-    Json<crate::types::config::TriggerTestResult>,
+    Json<TriggerTestResponse>,
     (StatusCode, Json<super::ErrorResponse>),
 > {
     use crate::discovery::project_scanner::ProjectScanner;
     use crate::error::error_trigger_tester;
 
     let scanner = ProjectScanner::new();
-    Ok(Json(error_trigger_tester::test_trigger(&trigger, &scanner, None).await))
+    let result = error_trigger_tester::test_trigger(&trigger, &scanner, None).await;
+    Ok(Json(TriggerTestResponse {
+        success: true,
+        data: result,
+    }))
 }
 
 // =============================================================================
@@ -254,6 +276,7 @@ pub async fn test_trigger(
 
 /// 请求体：会话标识。
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionIdentRequest {
     pub project_id: String,
     pub session_id: String,
@@ -325,6 +348,7 @@ pub async fn unhide_session(
 
 /// 请求体：批量会话标识。
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BatchSessionIdentRequest {
     pub project_id: String,
     pub session_ids: Vec<String>,

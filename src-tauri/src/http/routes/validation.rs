@@ -8,18 +8,20 @@ use std::path::Path;
 
 use crate::http::state::HttpState;
 
-/// 路径验证结果。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 路径验证结果（匹配 httpClient.ts 的返回类型）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PathValidationResult {
-    pub valid: bool,
-    pub error: Option<String>,
-    pub resolved_path: Option<String>,
+    pub exists: bool,
+    pub is_directory: Option<bool>,
 }
 
-/// 请求体：路径验证。
+/// 请求体：路径验证（匹配 httpClient.ts 发送的 {relativePath, projectPath}）。
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ValidatePathRequest {
-    pub path: String,
+    pub relative_path: String,
+    pub project_path: String,
 }
 
 /// 验证文件系统路径。
@@ -29,67 +31,79 @@ pub async fn validate_path(
     State(_state): State<HttpState>,
     Json(body): Json<ValidatePathRequest>,
 ) -> Result<Json<PathValidationResult>, (StatusCode, Json<super::ErrorResponse>)> {
-    let expanded = if body.path.starts_with('~') {
+    // 组合 projectPath + relativePath 得到完整路径
+    let full_path = Path::new(&body.project_path).join(&body.relative_path);
+
+    // 处理 ~ 展开
+    let expanded = if full_path.starts_with("~") {
         if let Some(home) = dirs::home_dir() {
-            let remainder = body.path[1..].trim_start_matches('/');
-            home.join(remainder).to_string_lossy().to_string()
+            let full_str = full_path.to_string_lossy().to_string();
+            let remainder = full_str[1..].trim_start_matches('/');
+            home.join(remainder).to_path_buf()
         } else {
-            body.path.clone()
+            full_path
         }
     } else {
-        body.path.clone()
+        full_path
     };
 
-    let p = Path::new(&expanded);
-
-    if !p.exists() {
+    if !expanded.exists() {
         return Ok(Json(PathValidationResult {
-            valid: false,
-            error: Some(format!("Path does not exist: {}", expanded)),
-            resolved_path: Some(expanded),
+            exists: false,
+            is_directory: None,
         }));
     }
 
     Ok(Json(PathValidationResult {
-        valid: true,
-        error: None,
-        resolved_path: Some(expanded),
+        exists: true,
+        is_directory: Some(expanded.is_dir()),
     }))
+}
+
+/// Mention 条目（匹配 httpClient.ts 发送的 {type, value} 结构）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MentionEntry {
+    #[serde(rename = "type")]
+    pub mention_type: String,
+    pub value: String,
 }
 
 /// 请求体：mentions 验证。
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ValidateMentionsRequest {
-    pub mentions: Vec<String>,
+    pub mentions: Vec<MentionEntry>,
+    pub project_path: String,
 }
 
-/// mentions 验证结果。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MentionsValidationResult {
-    pub valid: bool,
-    pub error: Option<String>,
-}
-
-/// 验证文件 mentions。
+/// 验证文件 mentions（返回 Record<string, boolean>）。
 ///
 /// POST /api/validate/mentions
 pub async fn validate_mentions(
     State(_state): State<HttpState>,
     Json(body): Json<ValidateMentionsRequest>,
-) -> Result<Json<MentionsValidationResult>, (StatusCode, Json<super::ErrorResponse>)> {
+) -> Result<Json<std::collections::HashMap<String, bool>>, (StatusCode, Json<super::ErrorResponse>)> {
+    let base = Path::new(&body.project_path);
+    let mut results = std::collections::HashMap::new();
+
     for mention in &body.mentions {
-        if mention.contains("..") {
-            return Ok(Json(MentionsValidationResult {
-                valid: false,
-                error: Some(format!("Invalid path traversal in mention: {}", mention)),
-            }));
+        if mention.mention_type != "path" {
+            results.insert(mention.value.clone(), false);
+            continue;
         }
+
+        // 检查路径遍历攻击
+        if mention.value.contains("..") {
+            results.insert(mention.value.clone(), false);
+            continue;
+        }
+
+        let full_path = base.join(&mention.value);
+        results.insert(mention.value.clone(), full_path.exists());
     }
 
-    Ok(Json(MentionsValidationResult {
-        valid: true,
-        error: None,
-    }))
+    Ok(Json(results))
 }
 
 /// 请求体：滚动到行。

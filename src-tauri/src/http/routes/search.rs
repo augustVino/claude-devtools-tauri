@@ -11,15 +11,15 @@ use super::error_json;
 
 /// 搜索指定项目中的会话。
 ///
-/// GET /api/projects/{project_id}/search?query=&max_results=
+/// GET /api/projects/{project_id}/search?q=&maxResults=
 pub async fn search_sessions(
     State(state): State<HttpState>,
     axum::extract::Path(project_id): axum::extract::Path<String>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<SearchSessionsResult>, (StatusCode, Json<super::ErrorResponse>)> {
-    let query = params.get("query").cloned().unwrap_or_default();
+    let query = params.get("q").cloned().unwrap_or_default();
     let max_results = params
-        .get("max_results")
+        .get("maxResults")
         .and_then(|v| v.parse::<u32>().ok());
 
     let max = max_results.unwrap_or(50).min(100).max(1);
@@ -43,14 +43,14 @@ pub async fn search_sessions(
 
 /// 搜索所有项目中的会话。
 ///
-/// GET /api/search?query=&max_results=
+/// GET /api/search?q=&maxResults=
 pub async fn search_all_projects(
     State(_state): State<HttpState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<SearchSessionsResult>, (StatusCode, Json<super::ErrorResponse>)> {
-    let query = params.get("query").cloned().unwrap_or_default();
+    let query = params.get("q").cloned().unwrap_or_default();
     let max_results = params
-        .get("max_results")
+        .get("maxResults")
         .and_then(|v| v.parse::<u32>().ok());
 
     let _max = max_results.unwrap_or(50).min(100).max(1);

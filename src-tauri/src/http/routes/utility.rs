@@ -13,21 +13,14 @@ use crate::parsing::claude_md_reader::{ClaudeMdReader, ClaudeMdFileInfo};
 
 use super::error_json;
 
-/// 版本信息。
-#[derive(Debug, Clone, Serialize)]
-pub struct VersionInfo {
-    pub version: String,
-}
-
 /// 获取应用版本号。
 ///
 /// GET /api/version
+/// 注意：httpClient.ts 的 getAppVersion 期望返回裸字符串，不是 JSON 对象。
 pub async fn get_version(
     State(_state): State<HttpState>,
-) -> Result<Json<VersionInfo>, (StatusCode, Json<super::ErrorResponse>)> {
-    Ok(Json(VersionInfo {
-        version: env!("CARGO_PKG_VERSION").to_string(),
-    }))
+) -> Json<String> {
+    Json(env!("CARGO_PKG_VERSION").to_string())
 }
 
 /// 请求体：读取 CLAUDE.md 文件。
@@ -60,8 +53,9 @@ pub async fn read_claude_md(
 
 /// 请求体：读取目录级 CLAUDE.md。
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReadDirectoryClaudeMdRequest {
-    pub directory: String,
+    pub dir_path: String,
 }
 
 /// 读取指定目录的 CLAUDE.md 文件。
@@ -71,7 +65,7 @@ pub async fn read_directory_claude_md(
     State(_state): State<HttpState>,
     Json(body): Json<ReadDirectoryClaudeMdRequest>,
 ) -> Result<Json<ClaudeMdFileInfo>, (StatusCode, Json<super::ErrorResponse>)> {
-    let directory = body.directory;
+    let directory = body.dir_path;
     let result = tokio::task::spawn_blocking(move || {
         let reader = ClaudeMdReader::new();
         reader.read_directory_claude_md(&directory)
@@ -86,7 +80,7 @@ pub async fn read_directory_claude_md(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadMentionedFileRequest {
-    pub file_path: String,
+    pub absolute_path: String,
     pub project_root: String,
     pub max_tokens: Option<usize>,
 }
@@ -109,7 +103,7 @@ pub async fn read_mentioned_file(
     Json(body): Json<ReadMentionedFileRequest>,
 ) -> Result<Json<Option<MentionedFileInfo>>, (StatusCode, Json<super::ErrorResponse>)> {
     let max_tokens_limit = body.max_tokens.unwrap_or(25000);
-    let path = Path::new(&body.file_path);
+    let path = Path::new(&body.absolute_path);
 
     // 跳过不存在的路径和目录
     if !path.exists() || path.is_dir() {
@@ -131,7 +125,7 @@ pub async fn read_mentioned_file(
             }
 
             Ok(Json(Some(MentionedFileInfo {
-                path: body.file_path,
+                path: body.absolute_path,
                 exists: true,
                 char_count,
                 estimated_tokens,
