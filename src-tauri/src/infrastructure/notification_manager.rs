@@ -127,6 +127,7 @@ impl NotificationManager {
 
         self.load_notifications().await;
         self.prune_notifications();
+        self.save_notifications().await;
         self.is_initialized = true;
 
         let count = self
