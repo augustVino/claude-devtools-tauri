@@ -5,13 +5,13 @@
  * Follows the same close-on-outside-click / Escape patterns as RepositoryDropdown.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
-import { triggerDownload } from '@renderer/utils/sessionExporter';
-import { Braces, Download, FileText, Type } from 'lucide-react';
+import { triggerDownload } from "@renderer/utils/sessionExporter";
+import { Braces, Download, FileText, Type } from "lucide-react";
 
-import type { SessionDetail } from '@renderer/types/data';
-import type { ExportFormat } from '@renderer/utils/sessionExporter';
+import type { SessionDetail } from "@renderer/types/data";
+import type { ExportFormat } from "@renderer/utils/sessionExporter";
 
 interface ExportDropdownProps {
   sessionDetail: SessionDetail;
@@ -25,9 +25,9 @@ interface FormatOption {
 }
 
 const FORMAT_OPTIONS: FormatOption[] = [
-  { format: 'markdown', label: 'Markdown', icon: FileText, ext: '.md' },
-  { format: 'json', label: 'JSON', icon: Braces, ext: '.json' },
-  { format: 'plaintext', label: 'Plain Text', icon: Type, ext: '.txt' },
+  { format: "markdown", label: "Markdown", icon: FileText, ext: ".md" },
+  { format: "json", label: "JSON", icon: Braces, ext: ".json" },
+  { format: "plaintext", label: "Plain Text", icon: Type, ext: ".txt" },
 ];
 
 export const ExportDropdown = ({
@@ -43,13 +43,16 @@ export const ExportDropdown = ({
     if (!isOpen) return;
 
     const handleClickOutside = (event: MouseEvent): void => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(event.target as Node)
+      ) {
         setIsOpen(false);
       }
     };
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isOpen]);
 
   // Close on Escape
@@ -57,21 +60,21 @@ export const ExportDropdown = ({
     if (!isOpen) return;
 
     const handleEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
+      if (event.key === "Escape") {
         setIsOpen(false);
       }
     };
 
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
   }, [isOpen]);
 
   const handleExport = useCallback(
-    (format: ExportFormat) => {
-      triggerDownload(sessionDetail, format);
+    async (format: ExportFormat) => {
+      await triggerDownload(sessionDetail, format);
       setIsOpen(false);
     },
-    [sessionDetail]
+    [sessionDetail],
   );
 
   return (
@@ -83,8 +86,14 @@ export const ExportDropdown = ({
         onMouseLeave={() => setButtonHover(false)}
         className="rounded-md p-2 transition-colors"
         style={{
-          color: buttonHover || isOpen ? 'var(--color-text)' : 'var(--color-text-muted)',
-          backgroundColor: buttonHover || isOpen ? 'var(--color-surface-raised)' : 'transparent',
+          color:
+            buttonHover || isOpen
+              ? "var(--color-text)"
+              : "var(--color-text-muted)",
+          backgroundColor:
+            buttonHover || isOpen
+              ? "var(--color-surface-raised)"
+              : "transparent",
         }}
         title="Export session"
       >
@@ -96,16 +105,16 @@ export const ExportDropdown = ({
         <div
           className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-md border shadow-lg"
           style={{
-            backgroundColor: 'var(--color-surface-overlay)',
-            borderColor: 'var(--color-border)',
+            backgroundColor: "var(--color-surface-overlay)",
+            borderColor: "var(--color-border)",
           }}
         >
           {/* Header */}
           <div
             className="px-3 py-2 text-xs font-medium"
             style={{
-              color: 'var(--color-text-secondary)',
-              borderBottom: '1px solid var(--color-border)',
+              color: "var(--color-text-secondary)",
+              borderBottom: "1px solid var(--color-border)",
             }}
           >
             Export Session
@@ -122,15 +131,20 @@ export const ExportDropdown = ({
               style={{
                 color:
                   hoveredFormat === option.format
-                    ? 'var(--color-text)'
-                    : 'var(--color-text-secondary)',
+                    ? "var(--color-text)"
+                    : "var(--color-text-secondary)",
                 backgroundColor:
-                  hoveredFormat === option.format ? 'var(--color-surface-raised)' : 'transparent',
+                  hoveredFormat === option.format
+                    ? "var(--color-surface-raised)"
+                    : "transparent",
               }}
             >
               <option.icon className="size-3.5" />
               <span className="flex-1">{option.label}</span>
-              <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+              <span
+                className="text-[10px]"
+                style={{ color: "var(--color-text-muted)" }}
+              >
                 {option.ext}
               </span>
             </button>
