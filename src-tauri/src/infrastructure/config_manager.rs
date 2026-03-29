@@ -253,14 +253,21 @@ impl ConfigManager {
     ///
     /// This is the backend handler for the "Until tomorrow" UI option (sent as minutes = -1).
     pub fn snooze_until_tomorrow(&self) -> AppConfig {
-        let tomorrow_midnight = chrono::Local::now()
-            .date_naive()
+        let tomorrow = chrono::Local::now().date_naive() + chrono::Duration::days(1);
+        let tomorrow_midnight = tomorrow
             .and_hms_opt(0, 0, 0)
             .unwrap()
             .and_local_timezone(chrono::Local)
             .single()
-            .unwrap()
-            + chrono::Duration::days(1);
+            .unwrap_or_else(|| {
+                // Fallback for ambiguous DST: use noon tomorrow (close enough for "until tomorrow")
+                tomorrow
+                    .and_hms_opt(12, 0, 0)
+                    .unwrap()
+                    .and_local_timezone(chrono::Local)
+                    .single()
+                    .expect("noon should never be ambiguous")
+            });
 
         let snoozed_until = tomorrow_midnight.timestamp_millis() as u64;
 
