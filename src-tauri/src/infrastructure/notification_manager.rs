@@ -24,6 +24,8 @@ use crate::types::config::{
     StoredNotification,
 };
 use crate::infrastructure::ConfigManager;
+use crate::parsing::git_identity::GitIdentityResolver;
+use crate::utils::path_decoder;
 
 // =============================================================================
 // 常量
@@ -125,6 +127,7 @@ impl NotificationManager {
 
         self.load_notifications().await;
         self.prune_notifications();
+        self.save_notifications().await;
         self.is_initialized = true;
 
         let count = self
@@ -533,6 +536,27 @@ impl NotificationManager {
         false
     }
 
+    /// Check if the error comes from an ignored repository.
+    ///
+    /// Resolves the error's projectId to a repository identity via GitIdentityResolver,
+    /// then checks against config.notifications.ignored_repositories.
+    fn is_from_ignored_repository(&self, error: &DetectedError) -> bool {
+        let config = self.config_manager.get_config();
+        let ignored = &config.notifications.ignored_repositories;
+        if ignored.is_empty() {
+            return false;
+        }
+
+        let resolver = GitIdentityResolver;
+        let project_path = path_decoder::decode_path(&error.project_id);
+        let resolved_path = error.context.cwd.as_deref().unwrap_or(&project_path);
+
+        match resolver.resolve_identity(resolved_path) {
+            Some(identity) => ignored.contains(&identity.id),
+            None => false,
+        }
+    }
+
     /// 检查通知当前是否启用（未暂停、未禁用）。
     fn are_notifications_enabled(&self) -> bool {
         let config = self.config_manager.get_config();
@@ -562,6 +586,10 @@ impl NotificationManager {
             return false;
         }
 
+        if self.is_from_ignored_repository(error) {
+            return false;
+        }
+
         if self.matches_ignored_regex(error) {
             return false;
         }
@@ -584,32 +612,41 @@ impl NotificationManager {
         };
 
         let sound_enabled = self.config_manager.get_config().notifications.sound_enabled;
-
         let body = truncate_str(&error.message, 200);
+        let subtitle = &error.context.project_name;
 
         #[cfg(not(test))]
         {
-            use tauri_plugin_notification::NotificationExt;
-
-            let builder = app_handle
-                .notification()
-                .builder()
-                .title("Claude Code Error")
+            // Use notify-rust directly for subtitle support.
+            // tauri-plugin-notification v2 does not expose subtitle().
+            let mut notification = notify_rust::Notification::new();
+            notification
+                .summary("Claude Code Error")
+                .subtitle(subtitle)
                 .body(&body);
 
-            let builder = if sound_enabled {
-                builder.sound("default")
-            } else {
-                builder
-            };
+            if sound_enabled {
+                notification.sound_name("default");
+            }
 
-            if let Err(e) = builder.show() {
+            #[cfg(target_os = "macos")]
+            {
+                let _ = notify_rust::set_application(
+                    if tauri::is_dev() {
+                        "com.apple.Terminal"
+                    } else {
+                        app_handle.config().identifier.as_str()
+                    },
+                );
+            }
+
+            if let Err(e) = notification.show() {
                 warn!("Failed to show native notification: {e}");
             }
         }
 
         #[cfg(test)]
-        let _ = (sound_enabled, body);
+        let _ = (sound_enabled, body, subtitle);
     }
 
     /// 向前端发出 `notification:new` 事件。

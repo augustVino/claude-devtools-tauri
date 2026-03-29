@@ -204,6 +204,87 @@ impl TriggerManager {
     // 验证
     // =========================================================================
 
+    /// Validate a trigger without requiring a TriggerManager instance.
+    ///
+    /// This is used by ConfigManager to validate triggers before persistence,
+    /// without needing to construct a full TriggerManager with an on_save callback.
+    pub fn validate_trigger_only(trigger: &NotificationTrigger) -> TriggerValidationResult {
+        let mut errors = Vec::new();
+
+        // 必填字段检查。
+        if trigger.id.trim().is_empty() {
+            errors.push("Trigger ID is required".to_string());
+        }
+
+        if trigger.name.trim().is_empty() {
+            errors.push("Trigger name is required".to_string());
+        }
+
+        // 模式特定的验证。
+        match &trigger.mode {
+            TriggerMode::ContentMatch => {
+                // match_field 为必填，除非是 tool_use 且无指定工具名（匹配任意工具）。
+                if trigger.match_field.is_none()
+                    && !(trigger.content_type == TriggerContentType::ToolUse
+                        && trigger.tool_name.is_none())
+                {
+                    errors.push("Match field is required for content_match mode".to_string());
+                }
+                // 验证正则模式（含 ReDoS 防护）。
+                if let Some(pattern) = &trigger.match_pattern {
+                    let validation = validate_regex_pattern(pattern);
+                    if !validation.valid {
+                        errors.push(
+                            validation
+                                .error
+                                .map(|e| e.reason)
+                                .unwrap_or_else(|| "Invalid regex pattern".to_string()),
+                        );
+                    }
+                }
+            }
+            TriggerMode::TokenThreshold => {
+                match trigger.token_threshold {
+                    None => {
+                        errors.push("Token threshold must be a non-negative number".to_string());
+                    }
+                    Some(v) if v == 0 => {
+                        errors.push("Token threshold must be greater than 0".to_string());
+                    }
+                    _ => {}
+                }
+                if trigger.token_type.is_none() {
+                    errors.push("Token type is required for token_threshold mode".to_string());
+                }
+            }
+            TriggerMode::ErrorStatus => {
+                // error_status 模式无额外要求。
+            }
+        }
+
+        // 验证忽略模式（含 ReDoS 防护）。
+        if let Some(patterns) = &trigger.ignore_patterns {
+            for pattern in patterns {
+                let validation = validate_regex_pattern(pattern);
+                if !validation.valid {
+                    errors.push(format!(
+                        "Invalid ignore pattern \"{}\": {}",
+                        pattern,
+                        validation
+                            .error
+                            .map(|e| e.reason)
+                            .unwrap_or_else(|| "Unknown error".to_string())
+                    ));
+                }
+            }
+        }
+
+        TriggerValidationResult {
+            valid: errors.is_empty(),
+            errors,
+        }
+    }
+
     /// 验证触发器配置，不修改状态。
     pub fn validate(&self, trigger: &NotificationTrigger) -> TriggerValidationResult {
         let mut errors = Vec::new();

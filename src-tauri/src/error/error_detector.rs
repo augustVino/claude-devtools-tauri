@@ -303,7 +303,7 @@ mod tests {
             ignore_patterns: None,
             mode: TriggerMode::ContentMatch,
             require_error: None,
-            match_field: None,
+            match_field: Some("command".to_string()),
             match_pattern: Some(pattern.to_string()),
             token_threshold: None,
             token_type: None,

@@ -249,6 +249,37 @@ impl ConfigManager {
         self.get_config()
     }
 
+    /// Snooze notifications until midnight tomorrow (local time).
+    ///
+    /// This is the backend handler for the "Until tomorrow" UI option (sent as minutes = -1).
+    pub fn snooze_until_tomorrow(&self) -> AppConfig {
+        let tomorrow = chrono::Local::now().date_naive() + chrono::Duration::days(1);
+        let tomorrow_midnight = tomorrow
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(chrono::Local)
+            .single()
+            .unwrap_or_else(|| {
+                // Fallback for ambiguous DST: use noon tomorrow (close enough for "until tomorrow")
+                tomorrow
+                    .and_hms_opt(12, 0, 0)
+                    .unwrap()
+                    .and_local_timezone(chrono::Local)
+                    .single()
+                    .expect("noon should never be ambiguous")
+            });
+
+        let snoozed_until = tomorrow_midnight.timestamp_millis() as u64;
+
+        if let Ok(mut config) = self.config.write() {
+            config.notifications.snoozed_until = Some(snoozed_until);
+            drop(config);
+            let _ = self.persist();
+            info!("Notifications snoozed until tomorrow midnight");
+        }
+        self.get_config()
+    }
+
     /// 清除通知暂停状态，恢复通知
     pub fn clear_snooze(&self) -> AppConfig {
         if let Ok(mut config) = self.config.write() {
@@ -372,6 +403,12 @@ impl ConfigManager {
         &self,
         trigger: NotificationTrigger,
     ) -> Result<AppConfig, String> {
+        // Validate trigger before persisting
+        let validation = crate::infrastructure::trigger_manager::TriggerManager::validate_trigger_only(&trigger);
+        if !validation.valid {
+            return Err(format!("Invalid trigger: {}", validation.errors.join(", ")));
+        }
+
         let mut config = self
             .config
             .write()
@@ -429,6 +466,12 @@ impl ConfigManager {
         }
         if let Some(match_field) = updates.get("matchField").and_then(|v| v.as_str()) {
             trigger.match_field = Some(match_field.to_string());
+        }
+
+        // Validate the updated trigger
+        let validation = crate::infrastructure::trigger_manager::TriggerManager::validate_trigger_only(trigger);
+        if !validation.valid {
+            return Err(format!("Invalid trigger update: {}", validation.errors.join(", ")));
         }
 
         drop(config);

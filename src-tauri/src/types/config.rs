@@ -30,6 +30,16 @@ pub enum TriggerTokenType {
     Total,
 }
 
+impl TriggerTokenType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Output => "output",
+            Self::Total => "total",
+        }
+    }
+}
+
 // =============================================================================
 // Notification Trigger
 // =============================================================================

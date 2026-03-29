@@ -28,6 +28,8 @@ use crate::types::config::{
 };
 use crate::types::domain::MessageType;
 use crate::types::messages::{ParsedMessage, ToolCall};
+use crate::parsing::git_identity::GitIdentityResolver;
+use crate::utils::path_decoder;
 use crate::utils::path_decoder::extract_project_name;
 
 // =============================================================================
@@ -91,10 +93,44 @@ pub fn matches_repository_scope(
 ///
 /// # 参数
 /// * `targets` - 待解析的项目 ID 列表（或带 cwd 提示的目标）
-pub fn pre_resolve_repository_ids(_targets: &[RepositoryScopeTarget]) {
-    // TODO: 使用 GitIdentityResolver 实现实际的仓库 ID 解析。
-    // 当前为空实现 —— 待 Tauri 后端中项目路径解析器可用后，
-    // 再实现仓库过滤功能。
+pub fn pre_resolve_repository_ids(targets: &[RepositoryScopeTarget]) {
+    let resolver = GitIdentityResolver;
+
+    // Deduplicate by project_id, preferring targets with cwd_hint
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut unique: Vec<(usize, &RepositoryScopeTarget)> = Vec::new();
+
+    for (i, target) in targets.iter().enumerate() {
+        match seen.get(&target.project_id) {
+            Some(&prev_idx) => {
+                // Replace with cwd_hint version if current has hint and previous doesn't
+                let (_, prev_target) = unique[prev_idx];
+                if target.cwd_hint.is_some() && prev_target.cwd_hint.is_none() {
+                    unique[prev_idx] = (i, target);
+                }
+            }
+            None => {
+                seen.insert(target.project_id.clone(), unique.len());
+                unique.push((i, target));
+            }
+        }
+    }
+
+    for (_i, target) in unique {
+        let project_path = path_decoder::decode_path(&target.project_id);
+        let resolved_path = target
+            .cwd_hint
+            .as_deref()
+            .unwrap_or(&project_path);
+
+        let identity = resolver.resolve_identity(resolved_path);
+        let repo_id = identity.map(|id| id.id);
+
+        let mut cache = REPOSITORY_ID_CACHE
+            .write()
+            .expect("repository_id_cache lock poisoned");
+        cache.insert(target.project_id.clone(), repo_id);
+    }
 }
 
 // =============================================================================
@@ -483,7 +519,7 @@ pub fn check_token_threshold_trigger(
         // 构建包含工具信息和 token 类型的消息
         let token_type_label = match token_type {
             TriggerTokenType::Total => String::new(),
-            other => format!(" {}", serde_json::to_string(other).unwrap_or_default()),
+            other => format!(" {}", other.as_str()),
         };
         let token_message = format!(
             "{} - {} : ~{}{} tokens",
