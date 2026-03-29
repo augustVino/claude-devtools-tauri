@@ -57,7 +57,7 @@ impl AppState {
 
 /// 获取指定项目下的所有会话列表。
 ///
-/// 扫描项目目录下的 `.jsonl` 文件，构建会话元数据，并按创建时间降序排列。
+/// 扫描项目目录下的 `.jsonl` 文件，构建会话元数据，并按文件修改时间降序排列。
 #[command]
 pub async fn get_sessions(project_id: String) -> Result<Vec<Session>, String> {
     let base_path = get_projects_base_path();
@@ -68,7 +68,14 @@ pub async fn get_sessions(project_id: String) -> Result<Vec<Session>, String> {
         return Ok(vec![]);
     }
 
-    let mut sessions = vec![];
+    // Collect file entries with mtime for sorting
+    struct FileEntry {
+        path: std::path::PathBuf,
+        session_id: String,
+        mtime_ms: u64,
+    }
+
+    let mut file_entries = vec![];
     let mut entries = tokio::fs::read_dir(&project_dir)
         .await
         .map_err(|e| e.to_string())?;
@@ -76,14 +83,41 @@ pub async fn get_sessions(project_id: String) -> Result<Vec<Session>, String> {
     while let Ok(Some(entry)) = entries.next_entry().await {
         let path = entry.path();
         if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-            if let Some(session) = build_session_metadata(&path, &project_id).await {
-                sessions.push(session);
-            }
+            let session_id = path
+                .file_stem()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let mtime_ms = entry
+                .metadata()
+                .await
+                .ok()
+                .and_then(|m: std::fs::Metadata| m.modified().ok())
+                .and_then(|t: std::time::SystemTime| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d: std::time::Duration| d.as_millis() as u64)
+                .unwrap_or(0);
+            file_entries.push(FileEntry {
+                path,
+                session_id,
+                mtime_ms,
+            });
         }
     }
 
-    // 按创建时间降序排列
-    sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    // Sort by file modification time (most recent first), matching Electron's mtimeMs sort.
+    // Tie-breaker: session ID alphabetical ascending.
+    file_entries.sort_by(|a, b| {
+        if b.mtime_ms != a.mtime_ms {
+            return b.mtime_ms.cmp(&a.mtime_ms);
+        }
+        a.session_id.cmp(&b.session_id)
+    });
+
+    let mut sessions = vec![];
+    for file_entry in &file_entries {
+        if let Some(session) = build_session_metadata(&file_entry.path, &project_id).await {
+            sessions.push(session);
+        }
+    }
 
     Ok(sessions)
 }
@@ -414,15 +448,18 @@ async fn build_session_metadata(path: &std::path::Path, project_id: &str) -> Opt
     let parsed = parse_session_file(path).await;
 
     // 提取首条用户消息作为标题（与 Electron 版 analyzeSessionFileMetadata 对齐）
+    // Note: Electron does NOT check isMeta for title extraction — it processes all type='user' entries.
+    // Slash commands are meta messages (isMeta: true) — we must still detect them as command fallback titles.
     let mut first_user_text: Option<String> = None;
     let mut first_command_text: Option<String> = None;
+    let mut first_timestamp: Option<String> = None;
 
     for msg in &parsed.messages {
         if msg.message_type != crate::types::domain::MessageType::User {
             continue;
         }
-        if msg.is_meta {
-            continue;
+        if first_timestamp.is_none() {
+            first_timestamp = Some(msg.timestamp.clone());
         }
 
         let text = match &msg.content {
@@ -453,15 +490,18 @@ async fn build_session_metadata(path: &std::path::Path, project_id: &str) -> Opt
             continue;
         }
 
-        // 保存命令名作为备选标题，继续查找真实用户文本
-        if is_command_content(trimmed) {
+        // 保存命令名作为备选标题，继续查找真实用户文本。
+        // Match Electron's `content.startsWith('<command-name>')` check exactly.
+        if trimmed.starts_with("<command-name>") {
             if first_command_text.is_none() {
                 first_command_text = extract_command_display(trimmed);
             }
             continue;
         }
 
-        // 找到真实用户文本 — 清理并截断到 500 字符
+        // 找到真实用户文本 — 清理并截断到 500 字符。
+        // Note: Electron does NOT check isMeta here; meta messages with text
+        // content are used as titles (e.g. skill invocation messages).
         let sanitized = sanitize_display_content(trimmed);
         if sanitized.is_empty() {
             continue;
@@ -476,16 +516,30 @@ async fn build_session_metadata(path: &std::path::Path, project_id: &str) -> Opt
     let project_path = extract_cwd_from_messages(&parsed)
         .unwrap_or_else(|| decode_path(project_id));
 
+    // createdAt: use first message timestamp from JSONL, fallback to file birth time.
+    // This matches Electron's buildSessionMetadata() behavior for date grouping.
+    let birthtime_ms = metadata
+        .created()
+        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64)
+        .unwrap_or(0);
+    let created_at = first_timestamp
+        .as_ref()
+        .and_then(|ts| {
+            chrono::DateTime::parse_from_rfc3339(ts)
+                .or_else(|_| chrono::DateTime::parse_from_rfc2822(ts))
+                .ok()
+                .and_then(|dt| dt.timestamp_millis().try_into().ok())
+        })
+        .unwrap_or(birthtime_ms);
+
     Some(Session {
         id: filename,
         project_id: project_id.to_string(),
         project_path,
-        created_at: metadata.created()
-            .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64)
-            .unwrap_or(0),
+        created_at,
         todo_data: None,
         first_message,
-        message_timestamp: None,
+        message_timestamp: first_timestamp,
         has_subagents: !parsed.task_calls.is_empty(),
         message_count: parsed.messages.len() as u32,
         is_ongoing: Some(parsed.is_ongoing),

@@ -44,7 +44,14 @@ pub async fn get_sessions(
         return Ok(Json(vec![]));
     }
 
-    let mut sessions = vec![];
+    // Collect file entries with mtime for sorting
+    struct FileEntry {
+        path: std::path::PathBuf,
+        session_id: String,
+        mtime_ms: u64,
+    }
+
+    let mut file_entries = vec![];
     let mut entries = tokio::fs::read_dir(&project_dir)
         .await
         .map_err(|e| error_json(e.to_string()))?;
@@ -52,14 +59,41 @@ pub async fn get_sessions(
     while let Ok(Some(entry)) = entries.next_entry().await {
         let path = entry.path();
         if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-            if let Some(session) = build_session_metadata(&path, &project_id).await {
-                sessions.push(session);
-            }
+            let session_id = path
+                .file_stem()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let mtime_ms = entry
+                .metadata()
+                .await
+                .ok()
+                .and_then(|m: std::fs::Metadata| m.modified().ok())
+                .and_then(|t: std::time::SystemTime| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d: std::time::Duration| d.as_millis() as u64)
+                .unwrap_or(0);
+            file_entries.push(FileEntry {
+                path,
+                session_id,
+                mtime_ms,
+            });
         }
     }
 
-    // 按创建时间降序排列
-    sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    // Sort by file modification time (most recent first), matching Electron's mtimeMs sort.
+    // Tie-breaker: session ID alphabetical ascending.
+    file_entries.sort_by(|a, b| {
+        if b.mtime_ms != a.mtime_ms {
+            return b.mtime_ms.cmp(&a.mtime_ms);
+        }
+        a.session_id.cmp(&b.session_id)
+    });
+
+    let mut sessions = vec![];
+    for file_entry in &file_entries {
+        if let Some(session) = build_session_metadata(&file_entry.path, &project_id).await {
+            sessions.push(session);
+        }
+    }
 
     Ok(Json(sessions))
 }
@@ -366,15 +400,18 @@ async fn build_session_metadata(path: &std::path::Path, project_id: &str) -> Opt
 
     let parsed = parse_session_file(path).await;
 
+    // Note: Electron does NOT check isMeta for title extraction — it processes all type='user' entries.
+    // Slash commands are meta messages (isMeta: true) — we must still detect them as command fallback titles.
     let mut first_user_text: Option<String> = None;
     let mut first_command_text: Option<String> = None;
+    let mut first_timestamp: Option<String> = None;
 
     for msg in &parsed.messages {
         if msg.message_type != crate::types::domain::MessageType::User {
             continue;
         }
-        if msg.is_meta {
-            continue;
+        if first_timestamp.is_none() {
+            first_timestamp = Some(msg.timestamp.clone());
         }
 
         let text = match &msg.content {
@@ -404,13 +441,16 @@ async fn build_session_metadata(path: &std::path::Path, project_id: &str) -> Opt
             continue;
         }
 
-        if is_command_content(trimmed) {
+        // Store command-name as fallback, keep looking for real text.
+        // Match Electron's `content.startsWith('<command-name>')` check exactly.
+        if trimmed.starts_with("<command-name>") {
             if first_command_text.is_none() {
                 first_command_text = extract_command_display(trimmed);
             }
             continue;
         }
 
+        // Real user text — Electron does NOT check isMeta here.
         let sanitized = sanitize_display_content(trimmed);
         if sanitized.is_empty() {
             continue;
@@ -424,21 +464,34 @@ async fn build_session_metadata(path: &std::path::Path, project_id: &str) -> Opt
     let project_path = extract_cwd_from_messages(&parsed)
         .unwrap_or_else(|| decode_path(project_id));
 
+    // createdAt: use first message timestamp from JSONL, fallback to file birth time.
+    // This matches Electron's buildSessionMetadata() behavior for date grouping.
+    let birthtime_ms = metadata
+        .created()
+        .map(|t| {
+            t.duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64
+        })
+        .unwrap_or(0);
+    let created_at = first_timestamp
+        .as_ref()
+        .and_then(|ts| {
+            chrono::DateTime::parse_from_rfc3339(ts)
+                .or_else(|_| chrono::DateTime::parse_from_rfc2822(ts))
+                .ok()
+                .and_then(|dt| dt.timestamp_millis().try_into().ok())
+        })
+        .unwrap_or(birthtime_ms);
+
     Some(Session {
         id: filename,
         project_id: project_id.to_string(),
         project_path,
-        created_at: metadata
-            .created()
-            .map(|t| {
-                t.duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64
-            })
-            .unwrap_or(0),
+        created_at,
         todo_data: None,
         first_message,
-        message_timestamp: None,
+        message_timestamp: first_timestamp,
         has_subagents: !parsed.task_calls.is_empty(),
         message_count: parsed.messages.len() as u32,
         is_ongoing: Some(parsed.is_ongoing),

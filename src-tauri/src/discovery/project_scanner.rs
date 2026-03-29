@@ -221,7 +221,15 @@ impl ProjectScanner {
             Err(_) => return Vec::new(),
         };
 
-        let mut sessions: Vec<Session> = Vec::new();
+        // Step 1: Collect file entries with metadata (lightweight stat calls)
+        struct FileInfo {
+            path: std::path::PathBuf,
+            session_id: String,
+            mtime_ms: u64,
+            birthtime_ms: u64,
+        }
+
+        let mut file_infos: Vec<FileInfo> = Vec::new();
 
         for entry in entries.flatten() {
             let path = entry.path();
@@ -232,27 +240,71 @@ impl ProjectScanner {
             let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             let session_id = path_decoder::extract_session_id(file_name);
 
-            // Get file metadata
             let metadata = entry.metadata().ok();
-            let created_at = metadata
+            let mtime_ms = metadata
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let birthtime_ms = metadata
                 .and_then(|m| m.created().ok())
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
 
-            // Light-weight preview: read first few KB to extract first user message and cwd
-            let preview = self.extract_session_preview(&path);
+            file_infos.push(FileInfo {
+                path,
+                session_id,
+                mtime_ms,
+                birthtime_ms,
+            });
+        }
+
+        // Step 2: Sort by file modification time (most recent first), matching Electron's mtimeMs sort.
+        // Tie-breaker: session ID alphabetical ascending (stable ordering).
+        file_infos.sort_by(|a, b| {
+            if b.mtime_ms != a.mtime_ms {
+                return b.mtime_ms.cmp(&a.mtime_ms);
+            }
+            a.session_id.cmp(&b.session_id)
+        });
+
+        // Step 3: Build Session objects from sorted file entries
+        let mut sessions: Vec<Session> = Vec::new();
+
+        for info in &file_infos {
+            let preview = self.extract_session_preview(&info.path);
 
             let decoded_path = preview
                 .cwd
                 .unwrap_or_else(|| self.resolve_project_path(&base_dir));
 
+            // createdAt: use first message timestamp from JSONL, fallback to file birth time.
+            // This matches Electron's buildSessionMetadata() behavior for date grouping.
+            let created_at = preview
+                .first_timestamp
+                .as_ref()
+                .and_then(|ts| {
+                    chrono::DateTime::parse_from_rfc3339(ts)
+                        .or_else(|_| chrono::DateTime::parse_from_rfc2822(ts))
+                        .ok()
+                        .and_then(|dt| dt.timestamp_millis().try_into().ok())
+                })
+                .unwrap_or(info.birthtime_ms);
+
+            let file_name = info
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+
             sessions.push(Session {
-                id: session_id,
+                id: info.session_id.clone(),
                 project_id: project_id.to_string(),
                 project_path: decoded_path,
                 created_at,
-                todo_data: self.load_todo_data(&file_name.trim_end_matches(".jsonl")),
+                todo_data: self.load_todo_data(file_name.trim_end_matches(".jsonl")),
                 first_message: preview.first_message,
                 message_timestamp: preview.first_timestamp,
                 has_subagents: preview.has_task_calls,
@@ -265,9 +317,6 @@ impl ProjectScanner {
                 phase_breakdown: None,
             });
         }
-
-        // Sort by created date (most recent first)
-        sessions.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
         sessions
     }
@@ -323,80 +372,86 @@ impl ProjectScanner {
             }
 
             if !found_first_user && msg_type == "user" {
-                let is_meta = json.get("isMeta").and_then(|v| v.as_bool()).unwrap_or(false);
-                if !is_meta {
-                    // Extract first message text — handle both string and array content
-                    let msg_content = json.pointer("/message/content");
-                    let text = if let Some(s) = msg_content.and_then(|v| v.as_str()) {
-                        Some(s.to_string())
-                    } else if let Some(arr) = msg_content.and_then(|v| v.as_array()) {
-                        let parts: Vec<String> = arr
-                            .iter()
-                            .filter_map(|block| {
-                                if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                                    block.get("text").and_then(|t| t.as_str()).map(|s| s.trim().to_string())
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        if parts.is_empty() {
-                            None
-                        } else {
-                            Some(parts.join(" "))
+                // Extract first message text — handle both string and array content.
+                // Note: Electron does NOT check isMeta for title extraction.
+                // Slash commands are meta messages (isMeta: true) — we must still
+                // detect them as command fallback titles.
+                let msg_content = json.pointer("/message/content");
+                let text = if let Some(s) = msg_content.and_then(|v| v.as_str()) {
+                    Some(s.to_string())
+                } else if let Some(arr) = msg_content.and_then(|v| v.as_array()) {
+                    let parts: Vec<String> = arr
+                        .iter()
+                        .filter_map(|block| {
+                            if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                block.get("text").and_then(|t| t.as_str()).map(|s| s.trim().to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    if parts.is_empty() {
+                        None
+                    } else {
+                        Some(parts.join(" "))
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(text) = text {
+                    let trimmed = text.trim();
+
+                    // Skip command output and interruptions
+                    if is_command_output_content(trimmed)
+                        || trimmed.starts_with("[Request interrupted by user")
+                    {
+                        // Still capture metadata even when skipping
+                        if preview.first_timestamp.is_none() {
+                            if let Some(ts) =
+                                json.get("timestamp").and_then(|v| v.as_str())
+                            {
+                                preview.first_timestamp = Some(ts.to_string());
+                            }
+                        }
+                        if preview.git_branch.is_none() {
+                            if let Some(branch) =
+                                json.get("gitBranch").and_then(|v| v.as_str())
+                            {
+                                preview.git_branch = Some(branch.to_string());
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Store command-name as fallback, keep looking for real text.
+                    // Match Electron's `content.startsWith('<command-name>')` check exactly:
+                    // content starting with <command-message> (without <command-name>) is NOT
+                    // treated as a command here — it falls through to sanitization which
+                    // extracts the display via sanitize_display_content().
+                    if trimmed.starts_with("<command-name>") {
+                        if preview.command_fallback.is_none() {
+                            preview.command_fallback =
+                                extract_command_display(trimmed);
                         }
                     } else {
-                        None
-                    };
-
-                    if let Some(text) = text {
-                        let trimmed = text.trim();
-
-                        // Skip command output and interruptions
-                        if is_command_output_content(trimmed)
-                            || trimmed.starts_with("[Request interrupted by user")
-                        {
-                            // Still capture metadata even when skipping
-                            if preview.first_timestamp.is_none() {
-                                if let Some(ts) =
-                                    json.get("timestamp").and_then(|v| v.as_str())
-                                {
-                                    preview.first_timestamp = Some(ts.to_string());
-                                }
-                            }
-                            if preview.git_branch.is_none() {
-                                if let Some(branch) =
-                                    json.get("gitBranch").and_then(|v| v.as_str())
-                                {
-                                    preview.git_branch = Some(branch.to_string());
-                                }
-                            }
-                            continue;
-                        }
-
-                        // Store command-name as fallback, keep looking for real text
-                        if is_command_content(trimmed) {
-                            if preview.command_fallback.is_none() {
-                                preview.command_fallback =
-                                    extract_command_display(trimmed);
-                            }
-                        } else {
-                            // Real user text found — sanitize and truncate to 500 chars
-                            let sanitized = sanitize_display_content(trimmed);
-                            if !sanitized.is_empty() {
-                                preview.first_message =
-                                    Some(sanitized.chars().take(500).collect());
-                                found_first_user = true;
-                            }
+                        // Real user text found — sanitize and truncate to 500 chars.
+                        // Note: Electron does NOT check isMeta here; meta messages with
+                        // text content are used as titles (e.g. skill invocation messages).
+                        let sanitized = sanitize_display_content(trimmed);
+                        if !sanitized.is_empty() {
+                            preview.first_message =
+                                Some(sanitized.chars().take(500).collect());
+                            found_first_user = true;
                         }
                     }
+                }
 
-                    if let Some(ts) = json.get("timestamp").and_then(|v| v.as_str()) {
-                        preview.first_timestamp = Some(ts.to_string());
-                    }
-                    if let Some(branch) = json.get("gitBranch").and_then(|v| v.as_str()) {
-                        preview.git_branch = Some(branch.to_string());
-                    }
+                if let Some(ts) = json.get("timestamp").and_then(|v| v.as_str()) {
+                    preview.first_timestamp = Some(ts.to_string());
+                }
+                if let Some(branch) = json.get("gitBranch").and_then(|v| v.as_str()) {
+                    preview.git_branch = Some(branch.to_string());
                 }
             }
 
@@ -717,12 +772,14 @@ mod tests {
         fs::create_dir_all(&project_dir).unwrap();
         let session_path = project_dir.join("meta.jsonl");
 
+        // Electron does NOT check isMeta for title extraction — meta user messages
+        // with displayable text are used as titles (matching Electron behavior).
         let jsonl = r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"internal meta"}}
 {"type":"user","isMeta":false,"message":{"role":"user","content":"real user text"}}"#;
         fs::write(&session_path, jsonl).unwrap();
 
         let preview = scanner.extract_session_preview(&session_path);
-        assert_eq!(preview.first_message.as_deref(), Some("real user text"));
+        assert_eq!(preview.first_message.as_deref(), Some("internal meta"));
     }
 
     #[test]
