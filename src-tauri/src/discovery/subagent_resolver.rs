@@ -23,6 +23,10 @@ pub struct Process {
     pub is_parallel: bool,
     pub is_ongoing: bool,
     pub task_id: Option<String>,
+    pub messages: Vec<SimpleMessage>,
+    pub description: Option<String>,
+    pub subagent_type: Option<String>,
+    pub team: Option<crate::types::chunks::TeamInfo>,
 }
 
 /// SubagentResolver resolves subagent files and links them to Task calls.
@@ -144,6 +148,10 @@ impl SubagentResolver {
             is_parallel: false,
             is_ongoing,
             task_id: None,
+            messages,
+            description: None,
+            subagent_type: None,
+            team: None,
         })
     }
 
