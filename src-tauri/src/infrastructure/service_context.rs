@@ -111,6 +111,7 @@ impl ServiceContext {
             let cancel = cancel_token.clone();
             let app = app_handle.clone();
             let projects_dir = projects_dir.clone();
+            let cache = self.cache.clone();
 
             tauri::async_runtime::spawn(async move {
                 let mut watcher = file_watcher.lock().await;
@@ -132,6 +133,14 @@ impl ServiceContext {
                         result = receiver.recv() => {
                             match result {
                                 Ok(event) => {
+                                    // 与 Electron 行为一致：文件变化时立即失效缓存，
+                                    // 确保后续 getSessionDetail 调用重新解析 JSONL 文件
+                                    if let (Some(pid), Some(sid)) =
+                                        (&event.project_id, &event.session_id)
+                                    {
+                                        cache.invalidate_session(pid, sid).await;
+                                    }
+
                                     crate::events::emit_file_change(&app, event.clone());
                                     if let Some(broadcaster) =
                                         app.try_state::<crate::http::sse::SSEBroadcaster>()

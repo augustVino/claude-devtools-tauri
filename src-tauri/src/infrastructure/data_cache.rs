@@ -29,6 +29,7 @@ const CURRENT_VERSION: u32 = 2;
 // ---------------------------------------------------------------------------
 
 /// 基于 `moka` 的 LRU 缓存，支持可配置容量与 TTL。
+#[derive(Clone)]
 pub struct DataCache {
     cache: Arc<Cache<String, CacheEntry>>,
 }
