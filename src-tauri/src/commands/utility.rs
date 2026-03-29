@@ -12,7 +12,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::parsing::claude_md_reader::{ClaudeMdReader, ClaudeMdFileInfo, ClaudeMdReadResult};
+use crate::parsing::claude_md_reader::{ClaudeMdReader, ClaudeMdFileInfo};
 
 /// Open a path in the system file manager.
 #[tauri::command]
@@ -64,10 +64,13 @@ pub async fn get_zoom_factor() -> Result<ZoomFactorResult, String> {
 
 /// Read all CLAUDE.md files for a project.
 /// Note: ClaudeMdReader methods are synchronous.
+/// Returns flat HashMap to match Electron IPC (which unwraps ClaudeMdReadResult.files).
 #[tauri::command]
-pub fn read_claude_md_files(project_root: String) -> ClaudeMdReadResult {
+pub fn read_claude_md_files(
+    project_root: String,
+) -> std::collections::HashMap<String, ClaudeMdFileInfo> {
     let reader = ClaudeMdReader::new();
-    reader.read_all_claude_md_files(&project_root)
+    reader.read_all_claude_md_files(&project_root).files
 }
 
 /// Read a specific directory's CLAUDE.md file.
