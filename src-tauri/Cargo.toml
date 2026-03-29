@@ -52,6 +52,7 @@ futures = "0.3"
 russh = "0.46"
 russh-keys = "0.46"
 ssh_config = "0.1"
+url = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
