@@ -1,8 +1,130 @@
-//! SSE (Server-Sent Events) 广播器。
+//! SSE 事件广播器。
 //!
-//! 占位文件 — 将在 Task 2 中实现完整功能。
+//! 使用 tokio::sync::broadcast 将后端事件分发给所有 SSE 客户端。
 
-/// SSE 广播器占位。
-/// TODO: 实现 SSEBroadcaster 结构体（Task 2）。
+use serde::Serialize;
+use tokio::sync::broadcast;
+
+use crate::events::{NotificationUpdatedPayload, TodoChangeEvent};
+use crate::types::config::StoredNotification;
+use crate::types::domain::{FileChangeEvent, FileChangeType};
+
+/// 后端事件类型 — 从各事件源统一收集后广播给 SSE 客户端。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum BackendEvent {
+    FileChange(FileChangeEvent),
+    TodoChange(TodoChangeEvent),
+    NotificationNew(StoredNotification),
+    NotificationUpdated(NotificationUpdatedPayload),
+}
+
+impl BackendEvent {
+    /// 返回 SSE 事件名称（event: 字段）。
+    pub fn event_name(&self) -> &'static str {
+        match self {
+            BackendEvent::FileChange(_) => "file-change",
+            BackendEvent::TodoChange(_) => "todo-change",
+            BackendEvent::NotificationNew(_) => "notification:new",
+            BackendEvent::NotificationUpdated(_) => "notification:updated",
+        }
+    }
+}
+
+/// SSE 广播器 — 持有 broadcast channel，向所有 SSE 客户端推送事件。
 #[derive(Clone)]
-pub struct SSEBroadcaster;
+pub struct SSEBroadcaster {
+    tx: broadcast::Sender<BackendEvent>,
+}
+
+impl SSEBroadcaster {
+    /// 创建新的广播器。channel 容量 256。
+    pub fn new() -> Self {
+        let (tx, _) = broadcast::channel(256);
+        Self { tx }
+    }
+
+    /// 发送事件到所有 SSE 客户端。
+    pub fn send(&self, event: BackendEvent) {
+        let _ = self.tx.send(event);
+    }
+
+    /// 订阅事件流。
+    pub fn subscribe(&self) -> broadcast::Receiver<BackendEvent> {
+        self.tx.subscribe()
+    }
+
+    /// 返回当前活跃接收者数量。
+    pub fn receiver_count(&self) -> usize {
+        self.tx.receiver_count()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn broadcast_receives_event() {
+        let broadcaster = SSEBroadcaster::new();
+        let mut rx = broadcaster.subscribe();
+
+        let event = BackendEvent::FileChange(FileChangeEvent {
+            event_type: FileChangeType::Change,
+            path: "/test/file.jsonl".to_string(),
+            project_id: Some("proj".to_string()),
+            session_id: Some("sess".to_string()),
+            is_subagent: false,
+        });
+        broadcaster.send(event);
+
+        let received = rx.blocking_recv().unwrap();
+        assert!(matches!(received, BackendEvent::FileChange(_)));
+    }
+
+    #[test]
+    fn event_name_matches() {
+        assert_eq!(
+            BackendEvent::FileChange(FileChangeEvent {
+                event_type: FileChangeType::Change,
+                path: "".into(),
+                project_id: None,
+                session_id: None,
+                is_subagent: false,
+            })
+            .event_name(),
+            "file-change"
+        );
+        assert_eq!(
+            BackendEvent::TodoChange(TodoChangeEvent { session_id: "".into() }).event_name(),
+            "todo-change"
+        );
+    }
+
+    #[test]
+    fn multiple_subscribers_receive() {
+        let broadcaster = SSEBroadcaster::new();
+        let mut rx1 = broadcaster.subscribe();
+        let mut rx2 = broadcaster.subscribe();
+
+        let event = BackendEvent::TodoChange(TodoChangeEvent {
+            session_id: "s1".to_string(),
+        });
+        broadcaster.send(event);
+
+        assert!(rx1.blocking_recv().is_ok());
+        assert!(rx2.blocking_recv().is_ok());
+    }
+
+    #[test]
+    fn receiver_count_reflects_subscribers() {
+        let broadcaster = SSEBroadcaster::new();
+        assert_eq!(broadcaster.receiver_count(), 0);
+
+        let _rx1 = broadcaster.subscribe();
+        assert_eq!(broadcaster.receiver_count(), 1);
+
+        let _rx2 = broadcaster.subscribe();
+        assert_eq!(broadcaster.receiver_count(), 2);
+    }
+}
