@@ -59,8 +59,8 @@ impl ServiceContext {
         ));
         let subagent_resolver = SubagentResolver::new(config.projects_dir.clone(), config.fs_provider.clone());
         let cache = DataCache::new();
-        let file_watcher = Arc::new(Mutex::new(FileWatcher::new()));
-        let todo_watcher = Arc::new(Mutex::new(FileWatcher::new()));
+        let file_watcher = Arc::new(Mutex::new(FileWatcher::new(config.fs_provider.clone())));
+        let todo_watcher = Arc::new(Mutex::new(FileWatcher::new(config.fs_provider.clone())));
 
         Self {
             id: config.id,
@@ -93,17 +93,11 @@ impl ServiceContext {
         config_manager: Arc<crate::infrastructure::ConfigManager>,
         notification_manager: Arc<tokio::sync::RwLock<crate::infrastructure::NotificationManager>>,
     ) {
-        // SSH 模式下直接返回，不启动文件监听 (与 Electron 行为一致)
-        if self.context_type == ContextType::Ssh {
-            log::info!("Skipping file watcher for SSH context '{}'", self.id);
-            self.is_started.store(true, Ordering::Relaxed);
-            return;
-        }
-
         let cancel_token = self.watcher_cancel_token.clone();
         let projects_dir = self.projects_dir.clone();
         let todos_dir = self.todos_dir.clone();
         let file_watcher = self.file_watcher.clone();
+        let file_watcher_for_error = self.file_watcher.clone();
         let todo_watcher = self.todo_watcher.clone();
 
         // === 主文件监听器任务 ===
@@ -112,10 +106,11 @@ impl ServiceContext {
             let app = app_handle.clone();
             let projects_dir = projects_dir.clone();
             let cache = self.cache.clone();
+            let fs_provider = self.fs_provider.clone();
 
             tauri::async_runtime::spawn(async move {
                 let mut watcher = file_watcher.lock().await;
-                if !projects_dir.exists() {
+                if !fs_provider.exists(&projects_dir).unwrap_or(false) {
                     if let Err(e) = tokio::fs::create_dir_all(&projects_dir).await {
                         log::error!("Failed to create projects directory: {}", e);
                         return;
@@ -167,25 +162,18 @@ impl ServiceContext {
         }
 
         // === 错误检测管道任务 ===
+        // 共享主 file_watcher 的 broadcast receiver，不创建独立 watcher
         {
             let cancel = cancel_token.clone();
             let app = app_handle.clone();
-            let projects_dir = projects_dir.clone();
 
             tauri::async_runtime::spawn(async move {
+                // 订阅主 watcher 的事件
+                let mut error_rx = { file_watcher_for_error.lock().await.receiver() };
                 let detector = crate::error::error_detector::ErrorDetector::new(config_manager);
-                let mut pipeline_watcher = crate::infrastructure::file_watcher::FileWatcher::new();
-                if !projects_dir.exists() {
-                    return;
-                }
-                if let Err(e) = pipeline_watcher.watch(&projects_dir).await {
-                    log::error!("Error detection pipeline: failed to start watcher: {}", e);
-                    return;
-                }
-                let mut receiver = pipeline_watcher.receiver();
                 loop {
                     tokio::select! {
-                        result = receiver.recv() => {
+                        result = error_rx.recv() => {
                             match result {
                                 Ok(event) => {
                                     let path = std::path::Path::new(&event.path);
@@ -220,7 +208,6 @@ impl ServiceContext {
                         }
                     }
                 }
-                pipeline_watcher.stop().await;
             });
         }
 
@@ -228,10 +215,11 @@ impl ServiceContext {
         {
             let cancel = cancel_token.clone();
             let app = app_handle;
+            let todo_fs_provider = self.fs_provider.clone();
 
             tauri::async_runtime::spawn(async move {
                 let mut todo_watcher_guard = todo_watcher.lock().await;
-                if !todos_dir.exists() {
+                if !todo_fs_provider.exists(&todos_dir).unwrap_or(false) {
                     if let Err(e) = tokio::fs::create_dir_all(&todos_dir).await {
                         log::error!("Failed to create todos directory: {}", e);
                         return;
