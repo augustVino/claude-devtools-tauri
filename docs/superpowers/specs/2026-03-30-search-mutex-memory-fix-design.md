@@ -28,6 +28,7 @@ Both fixes are confined to the same call chain, making a single coherent change.
 **Files changed:**
 
 - `src-tauri/src/commands/search.rs`
+- `src-tauri/src/commands/http_server.rs` — remove outer `Arc::new()` wrapper (see below)
 - `src-tauri/src/http/state.rs` (already uses `Arc<Mutex<...>>`, no change needed)
 
 **`create_searcher_state`** return type changes from `Mutex<SessionSearcher>` to `Arc<Mutex<SessionSearcher>>`:
@@ -42,7 +43,37 @@ pub fn create_searcher_state(
 }
 ```
 
-**`search_sessions` and `search_all_projects`** command handlers wrap the synchronous call in `spawn_blocking`:
+**`http_server.rs` update**: The current code at line 78 wraps the return value in `Arc::new(...)`:
+
+```rust
+// Before (would produce Arc<Arc<Mutex<...>>> after our change):
+let searcher = Arc::new(create_searcher_state(projects_dir, todos_dir, Arc::new(LocalFsProvider::new())));
+
+// After (create_searcher_state already returns Arc):
+let searcher = create_searcher_state(projects_dir, todos_dir, Arc::new(LocalFsProvider::new()));
+```
+
+**`search_sessions`** command handler:
+
+```rust
+pub async fn search_sessions(
+    project_id: String,
+    query: String,
+    max_results: Option<u32>,
+    searcher: State<'_, Arc<Mutex<SessionSearcher>>>,
+) -> Result<SearchSessionsResult, String> {
+    let max = max_results.unwrap_or(50).min(100).max(1);
+    let searcher = searcher.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let mut s = searcher.lock().map_err(|e| e.to_string())?;
+        Ok(s.search_sessions(&project_id, &query, max))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+```
+
+**`search_all_projects`** command handler:
 
 ```rust
 pub async fn search_all_projects(
@@ -50,7 +81,7 @@ pub async fn search_all_projects(
     max_results: Option<u32>,
     searcher: State<'_, Arc<Mutex<SessionSearcher>>>,
 ) -> Result<SearchSessionsResult, String> {
-    let max = max_results.unwrap_or(50);
+    let max = max_results.unwrap_or(50).min(100).max(1);
     let searcher = searcher.inner().clone();
     tokio::task::spawn_blocking(move || {
         let mut s = searcher.lock().map_err(|e| e.to_string())?;
@@ -61,11 +92,15 @@ pub async fn search_all_projects(
 }
 ```
 
-The same pattern applies to `search_sessions`. The `SessionSearcher` internal methods remain fully synchronous — no async conversion needed.
+Note: `.min(100).max(1)` input validation is preserved from the current code.
+
+The `SessionSearcher` internal methods remain fully synchronous — no async conversion needed.
 
 **`lib.rs`**: No change required. Tauri's `app.manage()` accepts any `Send + Sync` type; `Arc<Mutex<...>>` satisfies this.
 
-**HTTP routes** (`http/routes/search.rs`): The cross-project search route is currently a stub (`// TODO`). When implemented, it can use the same `spawn_blocking` pattern with the existing `Arc<Mutex<SessionSearcher>>` in `HttpState`.
+**HTTP routes** (`http/routes/search.rs`):
+- The cross-project search route is currently a stub (`// TODO`), out of scope.
+- The single-project HTTP `search_sessions` route has the same C1 blocking issue (`state.searcher.lock()` in async context). This is **explicitly out of scope** for this fix — the HTTP server is a secondary access path and its search usage is lower volume. A follow-up fix can apply the same `spawn_blocking` pattern there.
 
 ### I2 Fix: bounded priority queue
 
@@ -128,10 +163,12 @@ pub fn search_all_projects(&mut self, query: &str, max_results: u32) -> SearchSe
         total_matches,
         sessions_searched,
         query: query.to_string(),
-        is_partial: None,
+        is_partial: if total_matches > max_results { Some(true) } else { None },
     }
 }
 ```
+
+Note: `is_partial` logic is preserved from the current code to maintain the API contract with the frontend.
 
 **Memory improvement:**
 
@@ -146,7 +183,8 @@ pub fn search_all_projects(&mut self, query: &str, max_results: u32) -> SearchSe
 - `search_sessions` (single-project search) internal logic — its memory is already bounded by `max_results` per call
 - `SessionSearcher` cache — unbounded cache is a separate concern, out of scope
 - HTTP cross-project search stub — out of scope
-- Frontend code — no API contract changes
+- HTTP single-project search C1 fix — lower volume, deferred to follow-up
+- Frontend code — no API contract changes (`is_partial` preserved)
 
 ## Error handling
 
