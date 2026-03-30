@@ -129,8 +129,9 @@ impl FileWatcher {
         }
     }
 
-    /// 启动对指定目录的防抖监听。
+    /// 启动对指定目录的监听。
     ///
+    /// 根据当前模式选择本地 OS 级监听或 SSH 轮询。
     /// 仅对 `.jsonl` 和 `.json` 文件发出事件。
     /// 解析路径以提取 projectId、sessionId 和 isSubagent。
     ///
@@ -138,7 +139,19 @@ impl FileWatcher {
     /// - 会话文件: `watchPath/projectId/sessionId.jsonl`
     /// - 子代理文件: `watchPath/projectId/sessionId/subagents/agent-hash.jsonl`
     pub async fn watch(&mut self, path: &Path) -> Result<(), String> {
-        if !path.exists() {
+        match self.mode {
+            WatchMode::Local => self.watch_local(path).await,
+            WatchMode::SshPolling => self.start_ssh_polling(path).await,
+        }
+    }
+
+    /// 本地模式：使用 notify_debouncer_mini 监听文件变更。
+    async fn watch_local(&mut self, path: &Path) -> Result<(), String> {
+        if !self
+            .fs_provider
+            .exists(path)
+            .map_err(|e| format!("Path check failed: {}", e))?
+        {
             return Err(format!("Path does not exist: {}", path.display()));
         }
 
@@ -149,6 +162,7 @@ impl FileWatcher {
 
         let sender = self.sender.clone();
         let watch_path = path.to_path_buf();
+        let fs_provider = self.fs_provider.clone();
 
         // 创建防抖监听器及事件通道
         let (tx, mut rx) = tokio::sync::mpsc::channel::<DebouncedEvent>(64);
@@ -171,7 +185,7 @@ impl FileWatcher {
         tokio::spawn(async move {
             while let Some(debounced_event) = rx.recv().await {
                 if let Some(change_event) =
-                    Self::process_debounced_event(&debounced_event, &watch_path)
+                    Self::process_debounced_event_with_provider(&fs_provider, &debounced_event, &watch_path)
                 {
                     let _ = sender.send(change_event);
                 }
@@ -181,26 +195,30 @@ impl FileWatcher {
         *self.local_watcher.lock().await = Some(DebouncedWatcher { watcher: debouncer });
         *is_watching = true;
 
-        log::info!("FileWatcher: Started watching {}", path.display());
+        log::info!("FileWatcher: Started local watching {}", path.display());
         Ok(())
     }
 
-    /// 停止监听目录。
+    /// 停止监听目录，清理所有模式的状态。
     pub async fn stop(&mut self) {
-        let mut local_watcher = self.local_watcher.lock().await;
-        let mut is_watching = self.is_watching.lock().await;
-
-        if local_watcher.take().is_some() {
-            log::info!("FileWatcher: Stopped watching");
+        // 本地模式：丢弃防抖监听器
+        if self.local_watcher.lock().await.take().is_some() {
+            log::info!("FileWatcher: Stopped local watcher");
         }
 
-        // SSH 轮询模式：取消轮询任务
-        if let Some(handle) = self.ssh_poll_state.lock().await.timer.take() {
-            handle.abort();
-            log::info!("FileWatcher: Stopped SSH polling");
+        // SSH 轮询模式：取消轮询任务并重置状态
+        {
+            let mut state = self.ssh_poll_state.lock().await;
+            if let Some(handle) = state.timer.take() {
+                handle.abort();
+                log::info!("FileWatcher: Stopped SSH polling");
+            }
+            state.primed = false;
+            state.polled_file_sizes.clear();
+            state.poll_in_progress = false;
         }
 
-        *is_watching = false;
+        *self.is_watching.lock().await = false;
     }
 
     /// 停止当前监听并切换到新目录。
@@ -221,7 +239,7 @@ impl FileWatcher {
         *self.is_watching.lock().await
     }
 
-    /// 处理防抖事件并转换为 FileChangeEvent。
+    /// 处理防抖事件并转换为 FileChangeEvent（使用 FsProvider 检查文件存在性）。
     ///
     /// 解析相对于监听根目录的文件路径，提取:
     /// - projectId: 监听路径后的第一级目录
@@ -231,7 +249,11 @@ impl FileWatcher {
     /// 路径模式（与 Electron FileWatcher.ts 一致）:
     /// - 会话文件: `watchPath/projectId/sessionId.jsonl`
     /// - 子代理文件: `watchPath/projectId/sessionId/subagents/agent-hash.jsonl`
-    fn process_debounced_event(event: &DebouncedEvent, watch_path: &Path) -> Option<FileChangeEvent> {
+    fn process_debounced_event_with_provider(
+        fs_provider: &Arc<dyn FsProvider>,
+        event: &DebouncedEvent,
+        watch_path: &Path,
+    ) -> Option<FileChangeEvent> {
         // 仅处理 .jsonl 和 .json 文件
         let extension = event.path.extension()?.to_str()?;
 
@@ -239,9 +261,9 @@ impl FileWatcher {
             return None;
         }
 
-        // 通过检查文件是否存在来判断是新增/修改还是删除
+        // 通过 FsProvider 检查文件是否存在来判断是新增/修改还是删除
         // (debouncer-mini 不区分事件类型 — 仅返回 Any/AnyContinuous)
-        let event_type = if event.path.exists() {
+        let event_type = if fs_provider.exists(&event.path).unwrap_or(false) {
             // 文件存在: 可能是新增或修改
             // 统一报告 "change"（Electron 也对大多数情况报告 "change"）
             FileChangeType::Change
@@ -782,5 +804,26 @@ mod tests {
         assert_eq!(event.session_id.as_deref(), Some("session-new"));
 
         watcher.stop().await;
+    }
+
+    #[tokio::test]
+    async fn test_rewatch_local_mode() {
+        let local_provider = Arc::new(MockFsProvider::new("local"));
+        let mut watcher = FileWatcher::new(local_provider);
+        assert_eq!(watcher.mode, WatchMode::Local);
+
+        // Watch a temp dir (local mode) — will use notify
+        let tmp = std::env::temp_dir().join("file_watcher_test_rewatch");
+        let _ = std::fs::create_dir_all(&tmp);
+        watcher.watch(&tmp).await.unwrap();
+        assert!(watcher.is_watching().await);
+
+        // Rewatch should work — stop + watch on same path
+        watcher.rewatch(&tmp).await.unwrap();
+        assert!(watcher.is_watching().await);
+        watcher.stop().await;
+        assert!(!watcher.is_watching().await);
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
