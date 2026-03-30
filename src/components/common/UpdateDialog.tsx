@@ -172,7 +172,7 @@ export const UpdateDialog = (): React.JSX.Element | null => {
             onClick={downloadUpdate}
             className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500"
           >
-            Download
+            前往下载
           </button>
         </div>
       </div>

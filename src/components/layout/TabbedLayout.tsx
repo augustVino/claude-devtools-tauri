@@ -11,7 +11,6 @@ import { getTrafficLightPaddingForZoom } from "@renderer/constants/layout";
 import { useKeyboardShortcuts } from "@renderer/hooks/useKeyboardShortcuts";
 import { useZoomFactor } from "@renderer/hooks/useZoomFactor";
 
-import { UpdateBanner } from "../common/UpdateBanner";
 import { UpdateDialog } from "../common/UpdateDialog";
 import { WorkspaceIndicator } from "../common/WorkspaceIndicator";
 import { CommandPalette } from "../search/CommandPalette";
@@ -38,7 +37,6 @@ export const TabbedLayout = (): React.JSX.Element => {
       }
     >
       <CustomTitleBar />
-      <UpdateBanner />
       <div className="flex flex-1 overflow-hidden">
         {/* Command Palette (Cmd+K) */}
         <CommandPalette />

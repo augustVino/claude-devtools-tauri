@@ -156,11 +156,24 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           BUNDLE_DIR="src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
 
-          # Find actual artifact names (may include arch suffix)
-          TAR_GZ=$(find "${BUNDLE_DIR}" -maxdepth 1 -name '*.tar.gz' -type f | head -1)
-          TAR_GZ_NAME=$(basename "$TAR_GZ")
+          # Get actual filename from the uploaded release assets
+          # (tauri-action may rename files, so we query the release rather than using local filename)
+          TAR_GZ_NAME=$(gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name' | grep '\.tar\.gz$' | grep -v '\.sig$' | head -1)
 
-          SIG=$(base64 < "${TAR_GZ}.sig" | tr -d '\n')
+          if [ -z "$TAR_GZ_NAME" ]; then
+            echo "Error: Could not find .tar.gz asset in release"
+            exit 1
+          fi
+
+          echo "Found release asset: $TAR_GZ_NAME"
+
+          # Download the signature file from release and extract the signature key
+          # The .sig file uploaded by tauri-action is base64-encoded; decode it and extract
+          # the second line which contains the actual minisign signature (RUST...)
+          SIG_NAME="${TAR_GZ_NAME}.sig"
+          gh release download "${GITHUB_REF_NAME}" -p "$SIG_NAME" -O /tmp/signature.b64
+          SIG=$(base64 -d < /tmp/signature.b64 | sed -n '2p')
+
           DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/${TAR_GZ_NAME}"
 
           cat > latest.json <<EOF
