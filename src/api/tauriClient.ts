@@ -105,18 +105,6 @@ interface ZoomFactorResult {
   factor: number;
 }
 
-/**
- * Updater status events emitted on the `updater:status` channel.
- * Matches the Rust UpdaterStatus enum (serde tag = "status", rename_all = "camelCase").
- */
-type UpdaterStatus =
-  | { status: "checking" }
-  | { status: "available"; version: string }
-  | { status: "downloading"; progress: number; contentLength: number | null }
-  | { status: "downloaded" }
-  | { status: "upToDate" }
-  | { status: "error"; message: string };
-
 export class TauriAPIClient implements ElectronAPI {
   // ===========================================================================
   // Implemented commands
@@ -404,26 +392,6 @@ export class TauriAPIClient implements ElectronAPI {
     scrollToLine: (sessionId: string, lineNumber: number): Promise<void> =>
       invoke("scroll_to_line", { sessionId, lineNumber }),
   };
-  readonly updater = {
-    check: (): Promise<void> => invoke<void>("check_for_updates"),
-    download: (): Promise<void> => invoke<void>("download_and_install_update"),
-    install: (): Promise<void> => invoke<void>("install_update"),
-    onStatus: (
-      cb: (_event: unknown, status: unknown) => void,
-    ): (() => void) => {
-      let unlisten: UnlistenFn | null = null;
-      listen<UpdaterStatus>("updater:status", (e) => cb(e, e.payload))
-        .then((fn) => {
-          unlisten = fn;
-        })
-        .catch((err) => {
-          console.error("Failed to listen to updater:status event:", err);
-        });
-      return () => {
-        if (unlisten) unlisten();
-      };
-    },
-  } as any;
   readonly ssh = {
     connect: (config: SshConnectionConfig): Promise<SshConnectionStatus> =>
       invoke<SshConnectionStatus>("ssh_connect", { config }),

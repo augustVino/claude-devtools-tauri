@@ -38,7 +38,6 @@ import type {
   SshLastConnection,
   TodoChangeEvent,
   TriggerTestResult,
-  UpdaterAPI,
   WaterfallData,
   WslClaudeRootCandidate,
 } from "@shared/types";
@@ -630,25 +629,6 @@ export class HttpAPIClient implements ElectronAPI {
       console.warn(
         "[HttpAPIClient] platform.setDockVisible not available in browser mode",
       );
-    },
-  };
-
-  // ---------------------------------------------------------------------------
-  // Updater (browser no-ops)
-  // ---------------------------------------------------------------------------
-
-  updater: UpdaterAPI = {
-    check: async (): Promise<void> => {
-      console.warn("[HttpAPIClient] updater not available in browser mode");
-    },
-    download: async (): Promise<void> => {
-      console.warn("[HttpAPIClient] updater not available in browser mode");
-    },
-    install: async (): Promise<void> => {
-      console.warn("[HttpAPIClient] updater not available in browser mode");
-    },
-    onStatus: (_callback): (() => void) => {
-      return () => {};
     },
   };
 

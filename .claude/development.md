@@ -27,7 +27,7 @@
 ```bash
 cd src-tauri && cargo test                          # 全部测试
 cd src-tauri && cargo test -- config_manager        # 单模块测试
-cd src-tauri && cargo test -p claude-devtools-tauri -- chunk_builder  # 按名称过滤
+cd src-tauri && cargo test -p claude-devtools -- chunk_builder  # 按名称过滤
 ```
 
 测试覆盖的主要模块：`chunk_builder`、`ssh_connection_manager`、`ssh_config_parser`、`context_manager`、`fs_provider`、`sse`、`server`、`error_trigger_tester`。

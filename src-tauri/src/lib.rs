@@ -48,6 +48,7 @@ pub fn run() {
     .plugin(tauri_plugin_autostart::Builder::new()
       .args(["--minimized"])
       .build())
+    .plugin(tauri_plugin_updater::Builder::new().build())
     .manage(app_state.clone())
     .manage(zoom_factor)
     .on_window_event(|window, event| {
@@ -278,9 +279,6 @@ pub fn run() {
       commands::notifications::get_notification_count,
       commands::notifications::get_notification_stats,
       commands::notifications::handle_notification_click,
-      commands::updater::check_for_updates,
-      commands::updater::download_and_install_update,
-      commands::updater::install_update,
       commands::http_server::get_status,
       commands::http_server::start,
       commands::http_server::stop,

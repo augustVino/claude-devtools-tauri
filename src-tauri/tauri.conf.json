@@ -31,6 +31,14 @@
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost"
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg4QTk1RDY0NDc2RDJGNzlKUldSNUwyMUhaRjJwaU13aTNnbFFqM2svcHc5L1lQUmRWbmtmekZKZ1pjMEJZSDZTaE5WUi9nYysK",
+      "endpoints": [
+        "https://github.com/augustVino/claude-devtools-tauri/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["dmg"],

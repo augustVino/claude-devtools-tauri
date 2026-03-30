@@ -1,5 +1,5 @@
 [package]
-name = "claude-devtools-tauri"
+name = "claude-devtools"
 version = "0.1.0"
 description = "Tauri v2 desktop app for visualizing Claude Code session execution — explore conversations, track context usage, and analyze tool calls"
 authors = ["claude-devtools-tauri contributors"]

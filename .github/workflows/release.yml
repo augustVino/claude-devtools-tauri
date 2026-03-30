@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  release:
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -55,75 +55,25 @@ jobs:
           # package.json
           jq --arg v "$VERSION" '.version = $v' package.json > tmp.json && mv tmp.json package.json
 
-      - name: Build Tauri app
+      - name: Build and Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          args: --target aarch64-apple-darwin
-
-      - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dmg-artifact
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-          retention-days: 1
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Download DMG artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: dmg-artifact
-          path: ./artifacts
-
-      - name: Get version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-
-      - name: Generate Changelog
-        id: changelog
-        run: |
-          # 获取上一个 tag
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-
-          if [ -n "$PREV_TAG" ]; then
-            # 有上一个 tag，获取两个 tag 之间的 commits
-            CHANGELOG=$(git log --pretty=format:"- %h %s" $PREV_TAG..HEAD)
-          else
-            # 首次发布，获取最近 20 条 commits
-            CHANGELOG=$(git log --pretty=format:"- %h %s" -n 20)
-          fi
-
-          # 写入多行变量
-          echo "CONTENT<<EOF" >> $GITHUB_OUTPUT
-          echo "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: claude-devtools-tauri ${{ github.ref_name }}
-          draft: false
-          prerelease: false
-          files: ./artifacts/*.dmg
-          body: |
+          tagName: ${{ github.ref_name }}
+          releaseName: 'claude-devtools ${{ github.ref_name }}'
+          releaseBody: |
             ## 📦 下载
 
             | 平台 | 文件 |
             |------|------|
-            | macOS (Apple Silicon) | `claude-devtools-tauri_${{ steps.version.outputs.VERSION }}_aarch64.dmg` |
+            | macOS (Apple Silicon) | `.dmg` |
 
             > 安装后应用无法打开？
             ```bash
-            xattr -cr /Applications/claude-devtools-tauri.app
+            xattr -cr /Applications/claude-devtools.app
             ```
 
             ## 📄 开源声明
@@ -134,8 +84,7 @@ jobs:
 
             ## 📝 更新日志
 
-            ### ${{ github.ref_name }}
-
-            ${{ steps.changelog.outputs.CONTENT }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            See commits between tags for full changelog.
+          releaseDraft: false
+          prerelease: false
+          args: --target aarch64-apple-darwin

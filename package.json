@@ -1,5 +1,5 @@
 {
-  "name": "claude-devtools-tauri",
+  "name": "claude-devtools",
   "private": true,
   "version": "0.1.0",
   "description": "Tauri v2 desktop app for visualizing Claude Code session execution — explore conversations, track context usage, and analyze tool calls",
@@ -29,6 +29,8 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@tanstack/react-virtual": "^3.13.23",
     "@tauri-apps/plugin-autostart": "^2.5.1",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.0",
     "date-fns": "^4.1.0",
     "idb-keyval": "^6.2.2",
     "lucide-react": "^1.6.0",
