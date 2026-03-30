@@ -59,8 +59,8 @@ impl ServiceContext {
         ));
         let subagent_resolver = SubagentResolver::new(config.projects_dir.clone(), config.fs_provider.clone());
         let cache = DataCache::new();
-        let file_watcher = Arc::new(Mutex::new(FileWatcher::new()));
-        let todo_watcher = Arc::new(Mutex::new(FileWatcher::new()));
+        let file_watcher = Arc::new(Mutex::new(FileWatcher::new(config.fs_provider.clone())));
+        let todo_watcher = Arc::new(Mutex::new(FileWatcher::new(config.fs_provider.clone())));
 
         Self {
             id: config.id,
@@ -174,7 +174,7 @@ impl ServiceContext {
 
             tauri::async_runtime::spawn(async move {
                 let detector = crate::error::error_detector::ErrorDetector::new(config_manager);
-                let mut pipeline_watcher = crate::infrastructure::file_watcher::FileWatcher::new();
+                let mut pipeline_watcher = crate::infrastructure::file_watcher::FileWatcher::new(Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()));
                 if !projects_dir.exists() {
                     return;
                 }

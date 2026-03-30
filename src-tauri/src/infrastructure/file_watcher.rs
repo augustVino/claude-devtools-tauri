@@ -6,17 +6,20 @@
 //! - 解析路径以提取 projectId、sessionId、isSubagent
 //! - 向订阅者广播 FileChangeEvent
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 
 // 从 notify_debouncer_mini 导入所有 notify 类型，以确保版本兼容性
 // (notify-debouncer-mini 使用 notify v7，而直接依赖为 v8)
 use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, DebouncedEvent};
 
+use crate::infrastructure::fs_provider::FsProvider;
 use crate::types::domain::{FileChangeEvent, FileChangeType};
 
 /// 防抖间隔（毫秒），与 Electron 实现保持一致
@@ -25,14 +28,53 @@ const DEBOUNCE_MS: u64 = 100;
 /// 文件变更事件的广播通道容量
 const CHANNEL_CAPACITY: usize = 64;
 
+/// SSH 轮询间隔（毫秒），与 Electron SSH_POLL_INTERVAL_MS 保持一致
+const SSH_POLL_INTERVAL_MS: u64 = 3000;
+
+/// 测试用轮询间隔（毫秒），避免测试等待 3 秒
+#[cfg(test)]
+const TEST_POLL_INTERVAL_MS: u64 = 50;
+
+/// 文件监听模式。
+#[derive(Debug, Clone, PartialEq)]
+enum WatchMode {
+    /// 本地模式：使用 notify_debouncer_mini (OS 级文件事件)
+    Local,
+    /// SSH 轮询模式：通过 FsProvider 定期扫描文件变更
+    SshPolling,
+}
+
+/// SSH 轮询状态。
+struct SshPollState {
+    /// 轮询任务句柄（Option: 无轮询时为 None）
+    timer: Option<JoinHandle<()>>,
+    /// 轮询间隔（毫秒）
+    poll_interval_ms: u64,
+    /// 首次基线扫描是否已完成
+    primed: bool,
+    /// 已追踪的文件大小 {绝对路径 -> 字节数}
+    polled_file_sizes: HashMap<String, u64>,
+    /// 防止重叠轮询的 guard
+    poll_in_progress: bool,
+}
+
 /// 文件监听器，以防抖方式监听目录中的文件变更。
 pub struct FileWatcher {
-    /// 内部防抖监听器（封装以支持异步访问）
-    inner: Arc<Mutex<Option<DebouncedWatcher>>>,
+    /// 监听模式（本地 or SSH 轮询）
+    #[allow(dead_code)]
+    mode: WatchMode,
+    /// 文件系统提供者
+    #[allow(dead_code)]
+    fs_provider: Arc<dyn FsProvider>,
     /// 文件变更事件的广播发送端
     sender: broadcast::Sender<FileChangeEvent>,
     /// 是否正在监听
     is_watching: Arc<Mutex<bool>>,
+    /// 本地模式：防抖监听器
+    local_watcher: Arc<Mutex<Option<DebouncedWatcher>>>,
+    /// SSH 模式：轮询状态
+    #[allow(dead_code)]
+    ssh_poll_state: Arc<Mutex<SshPollState>>,
 }
 
 /// 防抖监听器句柄的包装结构
@@ -43,12 +85,50 @@ struct DebouncedWatcher {
 
 impl FileWatcher {
     /// 创建新的 FileWatcher 实例。
-    pub fn new() -> Self {
+    pub fn new(fs_provider: Arc<dyn FsProvider>) -> Self {
+        let mode = match fs_provider.provider_type() {
+            "ssh" => WatchMode::SshPolling,
+            _ => WatchMode::Local,
+        };
+        let poll_interval_ms = SSH_POLL_INTERVAL_MS;
         let (sender, _) = broadcast::channel(CHANNEL_CAPACITY);
         Self {
-            inner: Arc::new(Mutex::new(None)),
+            mode,
+            fs_provider,
             sender,
             is_watching: Arc::new(Mutex::new(false)),
+            local_watcher: Arc::new(Mutex::new(None)),
+            ssh_poll_state: Arc::new(Mutex::new(SshPollState {
+                timer: None,
+                poll_interval_ms,
+                primed: false,
+                polled_file_sizes: HashMap::new(),
+                poll_in_progress: false,
+            })),
+        }
+    }
+
+    /// 仅用于测试：创建带自定义轮询间隔的 FileWatcher。
+    #[cfg(test)]
+    fn with_poll_interval(fs_provider: Arc<dyn FsProvider>, interval_ms: u64) -> Self {
+        let mode = match fs_provider.provider_type() {
+            "ssh" => WatchMode::SshPolling,
+            _ => WatchMode::Local,
+        };
+        let (sender, _) = broadcast::channel(CHANNEL_CAPACITY);
+        Self {
+            mode,
+            fs_provider,
+            sender,
+            is_watching: Arc::new(Mutex::new(false)),
+            local_watcher: Arc::new(Mutex::new(None)),
+            ssh_poll_state: Arc::new(Mutex::new(SshPollState {
+                timer: None,
+                poll_interval_ms: interval_ms,
+                primed: false,
+                polled_file_sizes: HashMap::new(),
+                poll_in_progress: false,
+            })),
         }
     }
 
@@ -101,7 +181,7 @@ impl FileWatcher {
             }
         });
 
-        *self.inner.lock().await = Some(DebouncedWatcher { watcher: debouncer });
+        *self.local_watcher.lock().await = Some(DebouncedWatcher { watcher: debouncer });
         *is_watching = true;
 
         log::info!("FileWatcher: Started watching {}", path.display());
@@ -110,10 +190,10 @@ impl FileWatcher {
 
     /// 停止监听目录。
     pub async fn stop(&mut self) {
-        let mut inner = self.inner.lock().await;
+        let mut local_watcher = self.local_watcher.lock().await;
         let mut is_watching = self.is_watching.lock().await;
 
-        if inner.take().is_some() {
+        if local_watcher.take().is_some() {
             log::info!("FileWatcher: Stopped watching");
         }
         *is_watching = false;
@@ -214,23 +294,28 @@ impl FileWatcher {
 
 impl Default for FileWatcher {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::infrastructure::fs_provider::LocalFsProvider;
+
+    fn local_provider() -> Arc<dyn FsProvider> {
+        Arc::new(LocalFsProvider::new())
+    }
 
     #[tokio::test]
     async fn test_create_watcher() {
-        let watcher = FileWatcher::new();
+        let watcher = FileWatcher::new(local_provider());
         assert!(!watcher.is_watching().await);
     }
 
     #[tokio::test]
     async fn test_watch_nonexistent_path() {
-        let mut watcher = FileWatcher::new();
+        let mut watcher = FileWatcher::new(local_provider());
         let result = watcher.watch(Path::new("/nonexistent/path/12345")).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("does not exist"));
@@ -238,7 +323,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_without_watch() {
-        let mut watcher = FileWatcher::new();
+        let mut watcher = FileWatcher::new(local_provider());
         // 不应 panic
         watcher.stop().await;
         assert!(!watcher.is_watching().await);
@@ -246,7 +331,7 @@ mod tests {
 
     #[test]
     fn test_receiver_creation() {
-        let watcher = FileWatcher::new();
+        let watcher = FileWatcher::new(local_provider());
         let _receiver = watcher.receiver();
     }
 
