@@ -156,8 +156,12 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           BUNDLE_DIR="src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
 
-          SIG=$(base64 < "${BUNDLE_DIR}/claude-devtools.app.tar.gz.sig" | tr -d '\n')
-          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/claude-devtools.app.tar.gz"
+          # Find actual artifact names (may include arch suffix)
+          TAR_GZ=$(find "${BUNDLE_DIR}" -maxdepth 1 -name '*.tar.gz' -type f | head -1)
+          TAR_GZ_NAME=$(basename "$TAR_GZ")
+
+          SIG=$(base64 < "${TAR_GZ}.sig" | tr -d '\n')
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/${TAR_GZ_NAME}"
 
           cat > latest.json <<EOF
           {
