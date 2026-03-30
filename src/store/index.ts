@@ -458,6 +458,11 @@ export function initializeNotificationListeners(): () => void {
     cleanupFns.push(() => window.removeEventListener("keydown", onZoomKeyDown));
   }
 
+  // Auto-check for updates on startup (desktop only)
+  if (isDesktopMode()) {
+    useStore.getState().checkForUpdates();
+  }
+
   // Return cleanup function
   return () => {
     for (const timer of pendingSessionRefreshTimers.values()) {
