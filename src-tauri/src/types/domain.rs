@@ -319,3 +319,14 @@ pub struct IpcResult<T> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
+
+/// 删除会话操作的结果统计。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DeleteSessionResult {
+    /// 是否删除了主 JSONL 文件
+    pub main_file_deleted: bool,
+    /// 成功删除的关联文件/目录数量
+    pub associated_deleted: u32,
+    /// 失败的删除操作数量（不影响整体成功）
+    pub errors: u32,
+}
