@@ -10,12 +10,15 @@
 
 **Spec:** `docs/superpowers/specs/2026-03-30-search-mutex-memory-fix-design.md`
 
+**Known behavioral change:** `total_matches` in `search_all_projects` return value changes semantics. Previously it counted all matches before truncation. Now it counts the sum of per-project `total_matches` (each already bounded by `max_results`). The `is_partial` flag still works correctly for the frontend. The frontend does not currently display `total_matches` as an exact count — it only uses `is_partial` to show "more results available."
+
 ---
 
 ### Task 1: Add `Ord` trait to `SearchResult`
 
 **Files:**
 - Modify: `src-tauri/src/types/domain.rs:194-218`
+- Modify: `src-tauri/src/discovery/session_searcher.rs` (test only)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -46,8 +49,11 @@ fn test_search_result_ordering() {
         context: "d".into(),
         message_type: "user".into(),
         timestamp: 200,
-        project_id: "p2".into(),
-        // ... same as r1 except timestamp
+        group_id: None,
+        item_type: None,
+        match_index_in_item: None,
+        match_start_offset: None,
+        message_uuid: None,
     };
     // timestamp desc: r2 (200) > r1 (100)
     assert!(r2 > r1);
@@ -108,7 +114,9 @@ In `src-tauri/src/discovery/session_searcher.rs`, add to the `#[cfg(test)] mod t
 fn test_search_all_projects_top_n() {
     let (temp_dir, mut searcher) = setup_test_env();
 
-    // Create 3 projects with different timestamps
+    // Create 3 projects with different timestamps.
+    // Each JSONL has exactly 1 user message with the unique keyword "xyzzy",
+    // so each project produces exactly 1 SearchResult.
     for (project_name, ts) in [
         ("-Users-proj-a", "2024-01-01T00:00:00Z"),  // timestamp 1704067200000
         ("-Users-proj-b", "2025-06-15T12:00:00Z"),  // timestamp 1750000800000
@@ -155,7 +163,7 @@ fn test_search_all_projects_empty_query() {
 fn test_search_all_projects_is_partial() {
     let (temp_dir, mut searcher) = setup_test_env();
 
-    // Create 2 projects each with 2 matches
+    // Create 2 projects each with 2 matches for "alpha"
     for project_name in ["-Users-proj-x", "-Users-proj-y"] {
         let project_dir = temp_dir.path().join("projects").join(project_name);
         fs::create_dir_all(&project_dir).unwrap();
@@ -165,7 +173,7 @@ fn test_search_all_projects_is_partial() {
         fs::write(project_dir.join("session-1.jsonl"), session_content).unwrap();
     }
 
-    // max_results=1, but there are multiple matches
+    // max_results=1, but there are multiple matches across projects
     let result = searcher.search_all_projects("alpha", 1);
     assert_eq!(result.results.len(), 1);
     assert_eq!(result.is_partial, Some(true));
@@ -179,7 +187,7 @@ fn test_search_all_projects_is_partial() {
 - [ ] **Step 2: Run tests to verify they fail (current impl uses unbounded Vec)**
 
 Run: `cd src-tauri && cargo test test_search_all_projects -- --nocapture`
-Expected: `test_search_all_projects_top_n` FAILS — current code returns all results unsorted/unordered by project scan order; `test_search_all_projects_is_partial` may fail because `total_matches` is set after sort+truncate.
+Expected: `test_search_all_projects_top_n` FAILS — current code returns all results in project scan order, not top-N by timestamp.
 
 - [ ] **Step 3: Rewrite `search_all_projects` with BinaryHeap**
 
@@ -242,9 +250,7 @@ Replace the entire `search_all_projects` method in `session_searcher.rs` (lines 
     }
 ```
 
-Also add the necessary imports at the top of the file (they can be inside the method or at the file level — keeping them local to the method avoids import pollution):
-
-Remove the old TODO comment at lines 146-148 (it's being fixed now).
+Also remove the old TODO comment at lines 146-148 (it's being fixed now).
 
 - [ ] **Step 4: Run all search tests**
 
@@ -260,64 +266,35 @@ git commit -m "perf(search): use bounded BinaryHeap in search_all_projects"
 
 ---
 
-### Task 3: Change `create_searcher_state` to return `Arc<Mutex<...>>`
+### Task 3: Migrate to `Arc<Mutex<...>>` and wrap commands in `spawn_blocking`
 
 **Files:**
-- Modify: `src-tauri/src/commands/search.rs:62-64`
+- Modify: `src-tauri/src/commands/search.rs:16-64`
 - Modify: `src-tauri/src/commands/http_server.rs:78`
 
-- [ ] **Step 1: Update `create_searcher_state` return type**
+> Note: `lib.rs` does NOT need changes. `app.manage()` accepts any `Send + Sync` type, and `Arc<Mutex<...>>` satisfies this. The `app.manage(create_searcher_state(...))` call at `lib.rs:177` works unchanged.
 
-In `src-tauri/src/commands/search.rs`, change `create_searcher_state`:
+This task combines the return type change, http_server fix, and spawn_blocking wrapper into a single atomic commit so the code always compiles.
 
-```rust
-// Before:
-pub fn create_searcher_state(projects_dir: PathBuf, todos_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Mutex<SessionSearcher> {
-    Mutex::new(SessionSearcher::new(projects_dir, todos_dir, fs_provider))
-}
+- [ ] **Step 1: Rewrite all of `search.rs`**
 
-// After:
-pub fn create_searcher_state(projects_dir: PathBuf, todos_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Arc<Mutex<SessionSearcher>> {
-    Arc::new(Mutex::new(SessionSearcher::new(projects_dir, todos_dir, fs_provider)))
-}
-```
-
-- [ ] **Step 2: Fix `http_server.rs` double-Arc**
-
-In `src-tauri/src/commands/http_server.rs`, line 78:
+Replace the entire contents of `src-tauri/src/commands/search.rs` with:
 
 ```rust
-// Before:
-let searcher = Arc::new(create_searcher_state(projects_dir, todos_dir, Arc::new(LocalFsProvider::new())));
+//! IPC Handlers for Search Operations.
+//!
+//! Handlers:
+//! - search_sessions: Search sessions in a project
+//! - search_all_projects: Search sessions across all projects
 
-// After:
-let searcher = create_searcher_state(projects_dir, todos_dir, Arc::new(LocalFsProvider::new()));
-```
+use crate::discovery::SessionSearcher;
+use crate::infrastructure::fs_provider::FsProvider;
+use crate::types::domain::SearchSessionsResult;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use tauri::State;
 
-- [ ] **Step 3: Verify compile (will fail — command handlers still use `State<Mutex<...>>`)**
-
-Run: `cd src-tauri && cargo check 2>&1 | head -30`
-Expected: compile errors in `search.rs` — `Mutex<SessionSearcher>` vs `Arc<Mutex<SessionSearcher>>` type mismatch. This confirms the command handlers need updating next.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add src-tauri/src/commands/search.rs src-tauri/src/commands/http_server.rs
-git commit -m "refactor(search): change create_searcher_state to return Arc<Mutex<...>>"
-```
-
----
-
-### Task 4: Wrap search commands in `spawn_blocking`
-
-**Files:**
-- Modify: `src-tauri/src/commands/search.rs:16-59`
-
-- [ ] **Step 1: Rewrite `search_sessions` command handler**
-
-Replace the `search_sessions` function body (lines 16-36):
-
-```rust
+/// Search sessions in a project.
 #[tauri::command]
 pub async fn search_sessions(
     project_id: String,
@@ -345,13 +322,8 @@ pub async fn search_sessions(
     .await
     .map_err(|e| e.to_string())?
 }
-```
 
-- [ ] **Step 2: Rewrite `search_all_projects` command handler**
-
-Replace the `search_all_projects` function body (lines 39-59):
-
-```rust
+/// Search sessions across all projects.
 #[tauri::command]
 pub async fn search_all_projects(
     query: String,
@@ -378,6 +350,38 @@ pub async fn search_all_projects(
     .await
     .map_err(|e| e.to_string())?
 }
+
+/// Create a SessionSearcher state.
+pub fn create_searcher_state(
+    projects_dir: PathBuf,
+    todos_dir: PathBuf,
+    fs_provider: Arc<dyn FsProvider>,
+) -> Arc<Mutex<SessionSearcher>> {
+    Arc::new(Mutex::new(SessionSearcher::new(
+        projects_dir,
+        todos_dir,
+        fs_provider,
+    )))
+}
+```
+
+Key changes from the original:
+- `create_searcher_state` returns `Arc<Mutex<SessionSearcher>>` instead of `Mutex<SessionSearcher>`
+- Both command handlers use `State<'_, Arc<Mutex<SessionSearcher>>>` and wrap the synchronous call in `spawn_blocking`
+- Empty query early-return is preserved before `spawn_blocking`
+- `query` is moved (not cloned) into the return struct — correct since it's not used after the early return
+- `.min(100).max(1)` input validation preserved
+
+- [ ] **Step 2: Fix `http_server.rs` double-Arc**
+
+In `src-tauri/src/commands/http_server.rs`, line 78:
+
+```rust
+// Before:
+let searcher = Arc::new(create_searcher_state(projects_dir, todos_dir, Arc::new(LocalFsProvider::new())));
+
+// After:
+let searcher = create_searcher_state(projects_dir, todos_dir, Arc::new(LocalFsProvider::new()));
 ```
 
 - [ ] **Step 3: Verify full compile**
@@ -393,13 +397,13 @@ Expected: ALL PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src-tauri/src/commands/search.rs
-git commit -m "fix(search): wrap search commands in spawn_blocking to unblock async runtime"
+git add src-tauri/src/commands/search.rs src-tauri/src/commands/http_server.rs
+git commit -m "fix(search): wrap search commands in spawn_blocking, return Arc<Mutex<...>> from factory"
 ```
 
 ---
 
-### Task 5: Add TODO comment to HTTP search route
+### Task 4: Add TODO comment to HTTP search route
 
 **Files:**
 - Modify: `src-tauri/src/http/routes/search.rs:37`
@@ -427,7 +431,7 @@ git commit -m "docs(search): add TODO for HTTP route spawn_blocking fix"
 
 ---
 
-### Task 6: Final verification
+### Task 5: Final verification
 
 - [ ] **Step 1: Run full test suite**
 
