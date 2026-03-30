@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { MAX_PANES } from '@renderer/types/panes';
 import { formatShortcut } from '@renderer/utils/stringUtils';
-import { Check, ClipboardCopy, Eye, EyeOff, Pin, PinOff, Terminal } from 'lucide-react';
+import { Check, ClipboardCopy, Eye, EyeOff, Pin, PinOff, Terminal, Trash2 } from 'lucide-react';
 
 interface SessionContextMenuProps {
   x: number;
@@ -25,6 +25,7 @@ interface SessionContextMenuProps {
   onSplitRightAndOpen: () => void;
   onTogglePin: () => void;
   onToggleHide: () => void;
+  onDelete: () => void;
 }
 
 export const SessionContextMenu = ({
@@ -40,6 +41,7 @@ export const SessionContextMenu = ({
   onSplitRightAndOpen,
   onTogglePin,
   onToggleHide,
+  onDelete,
 }: SessionContextMenuProps): React.JSX.Element => {
   const menuRef = useRef<HTMLDivElement>(null);
   const [copiedField, setCopiedField] = useState<'id' | 'command' | null>(null);
@@ -62,7 +64,7 @@ export const SessionContextMenu = ({
   }, [onClose]);
 
   const menuWidth = 240;
-  const menuHeight = 290;
+  const menuHeight = 330;
   const clampedX = Math.min(x, window.innerWidth - menuWidth - 8);
   const clampedY = Math.min(y, window.innerHeight - menuHeight - 8);
 
@@ -81,6 +83,20 @@ export const SessionContextMenu = ({
       }, 600);
     } catch {
       // Silently fail
+    }
+  };
+
+  const handleDelete = async () => {
+    const { confirm } = await import('@renderer/components/common/ConfirmDialog');
+    const confirmed = await confirm({
+      title: '删除 Session',
+      message: '确定要删除此 session 吗？此操作不可撤销，将删除所有关联文件。',
+      confirmLabel: '删除',
+      cancelLabel: '取消',
+      variant: 'danger',
+    });
+    if (confirmed) {
+      onDelete();
     }
   };
 
@@ -140,6 +156,13 @@ export const SessionContextMenu = ({
         }
         onClick={handleCopy(`claude --resume ${sessionId}`, 'command')}
       />
+      <div className="mx-2 my-1 border-t" style={{ borderColor: 'var(--color-border)' }} />
+      <MenuItem
+        label="Delete Session"
+        icon={<Trash2 className="size-4" style={{ color: 'rgb(248, 113, 113)' }} />}
+        onClick={handleDelete}
+        labelStyle={{ color: 'rgb(248, 113, 113)' }}
+      />
     </div>
   );
 };
@@ -150,12 +173,14 @@ const MenuItem = ({
   icon,
   onClick,
   disabled,
+  labelStyle,
 }: {
   label: string;
   shortcut?: string;
   icon?: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
+  labelStyle?: React.CSSProperties;
 }): React.JSX.Element => {
   return (
     <button
@@ -166,7 +191,7 @@ const MenuItem = ({
     >
       <span className="flex items-center gap-2">
         {icon}
-        {label}
+        <span style={labelStyle}>{label}</span>
       </span>
       {shortcut && (
         <span className="ml-4 text-xs" style={{ color: 'var(--color-text-muted)' }}>

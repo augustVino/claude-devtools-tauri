@@ -147,6 +147,7 @@ export const SessionItem = React.memo(function SessionItem({
     splitPane,
     togglePinSession,
     toggleHideSession,
+    deleteSession,
   } = useStore(
     useShallow((s) => ({
       openTab: s.openTab,
@@ -156,6 +157,7 @@ export const SessionItem = React.memo(function SessionItem({
       splitPane: s.splitPane,
       togglePinSession: s.togglePinSession,
       toggleHideSession: s.toggleHideSession,
+      deleteSession: s.deleteSession,
     }))
   );
 
@@ -316,6 +318,7 @@ export const SessionItem = React.memo(function SessionItem({
             onSplitRightAndOpen={handleSplitRightAndOpen}
             onTogglePin={() => void togglePinSession(session.id)}
             onToggleHide={() => void toggleHideSession(session.id)}
+            onDelete={() => void deleteSession(activeProjectId, session.id)}
           />,
           document.body
         )}
