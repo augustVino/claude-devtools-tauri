@@ -297,6 +297,12 @@ export class TauriAPIClient implements ElectronAPI {
   ): Promise<Session[]> =>
     invoke("get_sessions_by_ids", { projectId, sessionIds });
 
+  readonly deleteSession = (
+    projectId: string,
+    sessionId: string,
+  ): Promise<{ mainFileDeleted: boolean; associatedDeleted: number; errors: number }> =>
+    invoke("delete_session", { projectId, sessionId });
+
   // ===========================================================================
   // CLAUDE.md and Agent Config commands
   // ===========================================================================
