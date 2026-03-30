@@ -87,6 +87,7 @@ export const SessionContextMenu = ({
   };
 
   const handleDelete = async () => {
+    onClose();
     const { confirm } = await import('@renderer/components/common/ConfirmDialog');
     const confirmed = await confirm({
       title: '删除 Session',
