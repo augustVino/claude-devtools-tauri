@@ -1,4 +1,4 @@
-# claude-devtools-tauri
+# Claude DevTools
 
 [![Download](https://img.shields.io/github/v/release/augustVino/claude-devtools-tauri?label=Download&style=for-the-badge)](https://github.com/augustVino/claude-devtools-tauri/releases/latest)
 

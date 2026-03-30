@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "claude-devtools-tauri",
+  "productName": "claude-devtools",
   "version": "0.1.0",
   "identifier": "com.augustvino.claude-devtools-tauri",
   "build": {
@@ -45,6 +45,6 @@
     },
     "shortDescription": "Visualize Claude Code session execution",
     "longDescription": "A lightweight desktop app for browsing, searching, and analyzing Claude Code sessions.",
-    "copyright": "Copyright © 2025-2026 augustVino"
+    "copyright": "Copyright © 2025-2026 Vino"
   }
 }
