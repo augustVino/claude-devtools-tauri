@@ -231,6 +231,7 @@ pub fn run() {
       commands::sessions::get_sessions_by_ids,
       commands::sessions::get_session_groups,
       commands::sessions::get_waterfall_data,
+      commands::sessions::delete_session,
       commands::sessions::get_projects,
       commands::config::get_config,
       commands::config::update_config,
