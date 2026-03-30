@@ -3,21 +3,25 @@ name: Release
 on:
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v*'
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   release:
     runs-on: macos-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Install Rust
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
@@ -27,7 +31,7 @@ jobs:
         with:
           workspaces: ./src-tauri -> ./target
 
-      - name: Install pnpm
+      - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -45,94 +49,56 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           echo "Updating version to $VERSION"
-
-          # tauri.conf.json
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
-
-          # Cargo.toml
           sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
-
-          # package.json
           jq --arg v "$VERSION" '.version = $v' package.json > tmp.json && mv tmp.json package.json
 
-      - name: Diagnostic - check signing key length
+      - name: Prepare Tauri signing key
+        shell: bash
         run: |
-          KEY_LEN="${#TAURI_SIGNING_PRIVATE_KEY}"
-          echo "TAURI_SIGNING_PRIVATE_KEY length: ${KEY_LEN} chars"
-          if [ -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
-            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD: set (${#TAURI_SIGNING_PRIVATE_KEY_PASSWORD} chars)"
+          if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY secret is empty or missing"
+            exit 1
+          fi
+
+          RAW="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
+          KEY_PATH="$RUNNER_TEMP/tauri_signing.key"
+
+          # Case 1: original two-line text (first line starts with "untrusted comment:")
+          if echo "$RAW" | head -n1 | grep -q '^untrusted comment:'; then
+            printf '%s\n' "$RAW" > "$KEY_PATH"
+            echo "Using raw two-line key format"
+          # Case 2: wrapped in base64
+          elif DECODED=$(printf '%s' "$RAW" | (base64 --decode 2>/dev/null || base64 -D 2>/dev/null)) \
+            && echo "$DECODED" | head -n1 | grep -q '^untrusted comment:'; then
+            printf '%s\n' "$DECODED" > "$KEY_PATH"
+            echo "Decoded base64-wrapped key"
+          # Case 3: single base64 line (pure key body)
+          elif echo "$RAW" | grep -Eq '^[A-Za-z0-9+/=]+$'; then
+            printf '%s\n%s\n' "untrusted comment: tauri signing key" "$(echo "$RAW" | tr -d '\r\n')" > "$KEY_PATH"
+            echo "Using single-line base64 key, constructed two-line file"
           else
-            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD: NOT SET"
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY format not recognized"
+            exit 1
           fi
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ''
-          releaseName: ''
-          releaseBody: ''
-          releaseDraft: false
-          prerelease: false
-          args: --target aarch64-apple-darwin
+          # Export as env var for tauri-action
+          KEY_B64=$(base64 < "$KEY_PATH" | tr -d '\r\n')
+          echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_B64" >> "$GITHUB_ENV"
 
-      - name: Upload updater JSON
+          if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          fi
+
+          echo "Tauri signing key prepared"
+
+      - name: Create release
+        id: create_release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          BUNDLE_DIR="src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
-
-          SIG=$(base64 < "${BUNDLE_DIR}/claude-devtools.app.tar.gz.sig" | tr -d '\n')
-          DOWNLOAD_URL="https://github.com/augustVino/claude-devtools-tauri/releases/download/${GITHUB_REF_NAME}/claude-devtools.app.tar.gz"
-
-          cat > latest.json <<EOF
-          {
-            "version": "${VERSION}",
-            "notes": "",
-            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "platforms": {
-              "darwin-aarch64": {
-                "signature": "${SIG}",
-                "url": "${DOWNLOAD_URL}"
-              }
-            }
-          }
-          EOF
-
-          # Get or create release
-          RELEASE_ID=$(gh api "repos/augustVino/claude-devtools-tauri/releases/tags/${GITHUB_REF_NAME}" --jq '.id' 2>/dev/null)
-
-          if [ -z "$RELEASE_ID" ]; then
-            echo "Release not found, skipping updater JSON upload"
-            exit 0
-          fi
-
-          # Delete existing latest.json if present
-          ASSET_ID=$(gh api "repos/augustVino/claude-devtools-tauri/releases/${RELEASE_ID}/assets" --jq '.[] | select(.name == "latest.json") | .id' 2>/dev/null)
-          if [ -n "$ASSET_ID" ]; then
-            gh api "repos/augustVino/claude-devtools-tauri/releases/assets/${ASSET_ID}" -X DELETE
-          fi
-
-          # Upload new latest.json
-          gh api "repos/augustVino/claude-devtools-tauri/releases/${RELEASE_ID}/assets" \
-            -f latest.json \
-            -H "Content-Type: application/octet-stream" \
-            --input latest.json
-
-          echo "latest.json uploaded successfully"
-
-      - name: Create Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
 
           # Generate changelog
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
@@ -142,14 +108,11 @@ jobs:
             CHANGELOG=$(git log --pretty=format:"- %h %s" -n 20)
           fi
 
-          # Update release notes (release already created by tauri-action if tagName was set)
-          RELEASE_ID=$(gh api "repos/augustVino/claude-devtools-tauri/releases/tags/${GITHUB_REF_NAME}" --jq '.id' 2>/dev/null)
-
-          if [ -n "$RELEASE_ID" ]; then
-            gh api "repos/augustVino/claude-devtools-tauri/releases/${RELEASE_ID}" \
-              -X PATCH \
-              -f name="claude-devtools ${GITHUB_REF_NAME}" \
-              -f body="$(cat <<BODY
+          RELEASE_ID=$(gh api "repos/${{ github.repository }}/releases" \
+            -X POST \
+            -f tag_name="$TAG" \
+            -f name="claude-devtools ${TAG}" \
+            -f body="$(cat <<BODY
           ## 📦 下载
 
           | 平台 | 文件 |
@@ -171,8 +134,44 @@ jobs:
 
           ${CHANGELOG}
           BODY
-          )"
-          else
-            echo "Release not found, something went wrong"
-            exit 1
-          fi
+          )" --jq '.id')
+
+          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+          echo "Release created: id=$RELEASE_ID"
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ steps.create_release.outputs.release_id }}
+          args: --target aarch64-apple-darwin
+
+      - name: Upload updater JSON
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          BUNDLE_DIR="src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+
+          SIG=$(base64 < "${BUNDLE_DIR}/claude-devtools.app.tar.gz.sig" | tr -d '\n')
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/claude-devtools.app.tar.gz"
+
+          cat > latest.json <<EOF
+          {
+            "version": "${VERSION}",
+            "notes": "",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "darwin-aarch64": {
+                "signature": "${SIG}",
+                "url": "${DOWNLOAD_URL}"
+              }
+            }
+          }
+          EOF
+
+          gh release upload "${GITHUB_REF_NAME}" latest.json --clobber
+          echo "latest.json uploaded successfully"
