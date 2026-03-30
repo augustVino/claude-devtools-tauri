@@ -6,7 +6,7 @@
 //! - 解析路径以提取 projectId、sessionId、isSubagent
 //! - 向订阅者广播 FileChangeEvent
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -61,10 +61,8 @@ struct SshPollState {
 /// 文件监听器，以防抖方式监听目录中的文件变更。
 pub struct FileWatcher {
     /// 监听模式（本地 or SSH 轮询）
-    #[allow(dead_code)]
     mode: WatchMode,
     /// 文件系统提供者
-    #[allow(dead_code)]
     fs_provider: Arc<dyn FsProvider>,
     /// 文件变更事件的广播发送端
     sender: broadcast::Sender<FileChangeEvent>,
@@ -73,7 +71,6 @@ pub struct FileWatcher {
     /// 本地模式：防抖监听器
     local_watcher: Arc<Mutex<Option<DebouncedWatcher>>>,
     /// SSH 模式：轮询状态
-    #[allow(dead_code)]
     ssh_poll_state: Arc<Mutex<SshPollState>>,
 }
 
@@ -196,6 +193,13 @@ impl FileWatcher {
         if local_watcher.take().is_some() {
             log::info!("FileWatcher: Stopped watching");
         }
+
+        // SSH 轮询模式：取消轮询任务
+        if let Some(handle) = self.ssh_poll_state.lock().await.timer.take() {
+            handle.abort();
+            log::info!("FileWatcher: Stopped SSH polling");
+        }
+
         *is_watching = false;
     }
 
@@ -290,6 +294,198 @@ impl FileWatcher {
 
         (project_id, None, false)
     }
+
+    /// 启动 SSH 轮询模式。
+    async fn start_ssh_polling(&mut self, path: &Path) -> Result<(), String> {
+        if !self
+            .fs_provider
+            .exists(path)
+            .map_err(|e| format!("SSH exists check: {}", e))?
+        {
+            return Err(format!("Path does not exist (SSH): {}", path.display()));
+        }
+
+        let mut is_watching = self.is_watching.lock().await;
+        if *is_watching {
+            return Err("Already watching a directory".to_string());
+        }
+
+        let sender = self.sender.clone();
+        let fs_provider = self.fs_provider.clone();
+        let poll_state = self.ssh_poll_state.clone();
+        let projects_path = path.to_path_buf();
+
+        // 读取间隔（允许测试覆盖）
+        let poll_interval = self.ssh_poll_state.lock().await.poll_interval_ms;
+
+        // 重置状态以确保全新开始
+        {
+            let mut state = poll_state.lock().await;
+            state.primed = false;
+            state.polled_file_sizes.clear();
+            state.poll_in_progress = false;
+        }
+
+        let handle = tokio::spawn(async move {
+            // 立即执行首次基线扫描
+            Self::poll_for_changes(&fs_provider, &projects_path, &poll_state, &sender).await;
+
+            loop {
+                tokio::time::sleep(Duration::from_millis(poll_interval)).await;
+                Self::poll_for_changes(&fs_provider, &projects_path, &poll_state, &sender).await;
+            }
+        });
+
+        self.ssh_poll_state.lock().await.timer = Some(handle);
+        *is_watching = true;
+
+        log::info!(
+            "FileWatcher: Started SSH polling {} (interval={}ms)",
+            path.display(),
+            poll_interval
+        );
+        Ok(())
+    }
+
+    /// 执行一次 SSH 轮询扫描。
+    async fn poll_for_changes(
+        fs_provider: &Arc<dyn FsProvider>,
+        projects_path: &Path,
+        poll_state: &Arc<Mutex<SshPollState>>,
+        sender: &broadcast::Sender<FileChangeEvent>,
+    ) {
+        // Guard: 防止重叠轮询
+        {
+            let mut state = poll_state.lock().await;
+            if state.poll_in_progress {
+                return;
+            }
+            state.poll_in_progress = true;
+        }
+
+        let result = Self::do_poll(fs_provider, projects_path, poll_state, sender).await;
+
+        poll_state.lock().await.poll_in_progress = false;
+
+        if let Err(e) = result {
+            log::error!("SSH poll error: {}", e);
+        }
+    }
+
+    /// 实际的轮询逻辑。
+    ///
+    /// 注意：SSH 轮询只做 2 层 readdir（projects/ → projectId/），
+    /// 与 Electron 行为一致。不递归进入 subagents/ 子目录。
+    async fn do_poll(
+        fs_provider: &Arc<dyn FsProvider>,
+        projects_path: &Path,
+        poll_state: &Arc<Mutex<SshPollState>>,
+        sender: &broadcast::Sender<FileChangeEvent>,
+    ) -> Result<(), String> {
+        let mut state = poll_state.lock().await;
+        let primed = state.primed;
+        let mut seen_files = HashSet::new();
+        let mut pending_events: Vec<(std::path::PathBuf, FileChangeType)> = Vec::new();
+
+        // 读取项目目录列表
+        let project_dirs = fs_provider
+            .read_dir(projects_path)
+            .map_err(|e| format!("SSH read_dir failed: {}", e))?;
+
+        for dir in &project_dirs {
+            if !dir.is_directory {
+                continue;
+            }
+            let project_path = projects_path.join(&dir.name);
+
+            let entries = match fs_provider.read_dir(&project_path) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            for entry in &entries {
+                if !entry.is_file || !entry.name.ends_with(".jsonl") {
+                    continue;
+                }
+                let full_path = project_path.join(&entry.name);
+                let path_str = full_path.to_string_lossy().to_string();
+                seen_files.insert(path_str.clone());
+
+                let observed_size = entry
+                    .size
+                    .or_else(|| fs_provider.stat(&full_path).ok().map(|s| s.size))
+                    .unwrap_or(0);
+
+                match state.polled_file_sizes.get(&path_str) {
+                    None => {
+                        state.polled_file_sizes.insert(path_str.clone(), observed_size);
+                        if primed {
+                            pending_events.push((full_path, FileChangeType::Add));
+                        }
+                    }
+                    Some(&last_size) if observed_size != last_size => {
+                        state.polled_file_sizes.insert(path_str, observed_size);
+                        pending_events.push((full_path, FileChangeType::Change));
+                    }
+                    _ => {} // 无变化
+                }
+            }
+        }
+
+        // 删除检测（仅基线之后）
+        if primed {
+            let removed: Vec<String> = state
+                .polled_file_sizes
+                .keys()
+                .filter(|k| !seen_files.contains(*k))
+                .cloned()
+                .collect();
+            for removed_path in removed {
+                state.polled_file_sizes.remove(&removed_path);
+                pending_events.push((
+                    std::path::PathBuf::from(&removed_path),
+                    FileChangeType::Unlink,
+                ));
+            }
+        } else {
+            state.primed = true;
+        }
+
+        // 统一释放锁后发送事件（减少锁竞争）
+        drop(state);
+        for (path, event_type) in pending_events {
+            Self::emit_event(sender, &path, projects_path, event_type);
+        }
+
+        Ok(())
+    }
+
+    /// 构造并发送 FileChangeEvent。
+    fn emit_event(
+        sender: &broadcast::Sender<FileChangeEvent>,
+        file_path: &Path,
+        projects_path: &Path,
+        event_type: FileChangeType,
+    ) {
+        let relative = match file_path.strip_prefix(projects_path) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let parts: Vec<&str> = relative
+            .components()
+            .filter_map(|c| c.as_os_str().to_str())
+            .collect();
+        let (project_id, session_id, is_subagent) = Self::parse_path_parts(&parts);
+
+        let event = FileChangeEvent {
+            event_type,
+            path: file_path.to_string_lossy().to_string(),
+            project_id,
+            session_id,
+            is_subagent,
+        };
+        let _ = sender.send(event);
+    }
 }
 
 impl Default for FileWatcher {
@@ -301,10 +497,94 @@ impl Default for FileWatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::fs_provider::LocalFsProvider;
+    use crate::infrastructure::fs_provider::{FsDirent, FsStatResult, LocalFsProvider};
+    use std::sync::Mutex as StdMutex;
 
     fn local_provider() -> Arc<dyn FsProvider> {
         Arc::new(LocalFsProvider::new())
+    }
+
+    // ── MockFsProvider ──────────────────────────────────────────
+
+    #[derive(Debug)]
+    struct MockFsProvider {
+        provider_type_str: &'static str,
+        entries: Arc<StdMutex<HashMap<String, Vec<MockDirent>>>>,
+    }
+
+    #[derive(Debug, Clone)]
+    struct MockDirent {
+        name: String,
+        is_file: bool,
+        is_directory: bool,
+        size: Option<u64>,
+    }
+
+    impl MockFsProvider {
+        fn new(provider_type_str: &'static str) -> Self {
+            Self {
+                provider_type_str,
+                entries: Arc::new(StdMutex::new(HashMap::new())),
+            }
+        }
+
+        fn set_entries(&self, path: &str, dirents: Vec<MockDirent>) {
+            self.entries
+                .lock()
+                .unwrap()
+                .insert(path.to_string(), dirents);
+        }
+
+        fn clear_entries(&self) {
+            self.entries.lock().unwrap().clear();
+        }
+    }
+
+    impl FsProvider for MockFsProvider {
+        fn provider_type(&self) -> &'static str {
+            self.provider_type_str
+        }
+        fn exists(&self, _path: &std::path::Path) -> Result<bool, String> {
+            Ok(true)
+        }
+        fn read_file(&self, _path: &std::path::Path) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn read_file_head(
+            &self,
+            _path: &std::path::Path,
+            _max_lines: usize,
+        ) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn stat(&self, _path: &std::path::Path) -> Result<FsStatResult, String> {
+            Ok(FsStatResult {
+                size: 100,
+                mtime_ms: 0,
+                birthtime_ms: 0,
+                is_file: true,
+                is_directory: false,
+            })
+        }
+        fn read_dir(&self, path: &std::path::Path) -> Result<Vec<FsDirent>, String> {
+            let key = path.to_string_lossy().to_string();
+            let entries = self.entries.lock().unwrap();
+            entries
+                .get(&key)
+                .map(|ents| {
+                    ents.iter()
+                        .map(|e| FsDirent {
+                            name: e.name.clone(),
+                            is_file: e.is_file,
+                            is_directory: e.is_directory,
+                            size: e.size,
+                            mtime_ms: None,
+                            birthtime_ms: None,
+                        })
+                        .collect()
+                })
+                .ok_or_else(|| format!("No mock entries for {}", key))
+        }
     }
 
     #[tokio::test]
@@ -392,5 +672,115 @@ mod tests {
         assert_eq!(project_id, Some("-Users-name-project".to_string()));
         assert_eq!(session_id, None);
         assert!(!is_subagent);
+    }
+
+    // ── SSH 轮询模式测试 ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_ssh_watcher_mode_selection() {
+        let ssh_provider = Arc::new(MockFsProvider::new("ssh"));
+        let watcher = FileWatcher::new(ssh_provider);
+        assert_eq!(watcher.mode, WatchMode::SshPolling);
+
+        let local_provider = Arc::new(MockFsProvider::new("local"));
+        let local_watcher = FileWatcher::new(local_provider);
+        assert_eq!(local_watcher.mode, WatchMode::Local);
+    }
+
+    #[tokio::test]
+    async fn test_ssh_poll_baseline_priming() {
+        let provider = Arc::new(MockFsProvider::new("ssh"));
+        provider.set_entries(
+            "/projects",
+            vec![MockDirent {
+                name: "proj1".into(),
+                is_file: false,
+                is_directory: true,
+                size: None,
+            }],
+        );
+        provider.set_entries(
+            "/projects/proj1",
+            vec![MockDirent {
+                name: "session-abc.jsonl".into(),
+                is_file: true,
+                is_directory: false,
+                size: Some(1000),
+            }],
+        );
+        let mut watcher =
+            FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
+        let mut rx = watcher.receiver();
+
+        watcher
+            .start_ssh_polling(std::path::Path::new("/projects"))
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // 基线扫描不应产生事件
+        assert!(rx.try_recv().is_err());
+        watcher.stop().await;
+    }
+
+    #[tokio::test]
+    async fn test_ssh_poll_detects_new_file() {
+        let provider = Arc::new(MockFsProvider::new("ssh"));
+        provider.set_entries(
+            "/projects",
+            vec![MockDirent {
+                name: "proj1".into(),
+                is_file: false,
+                is_directory: true,
+                size: None,
+            }],
+        );
+        provider.set_entries(
+            "/projects/proj1",
+            vec![MockDirent {
+                name: "session-existing.jsonl".into(),
+                is_file: true,
+                is_directory: false,
+                size: Some(500),
+            }],
+        );
+        let mut watcher =
+            FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
+        let mut rx = watcher.receiver();
+
+        watcher
+            .start_ssh_polling(std::path::Path::new("/projects"))
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        while rx.try_recv().is_ok() {} // 排空基线（无事件）
+
+        // 添加新文件 — 下一次轮询（50ms）将检测到
+        provider.set_entries(
+            "/projects/proj1",
+            vec![
+                MockDirent {
+                    name: "session-existing.jsonl".into(),
+                    is_file: true,
+                    is_directory: false,
+                    size: Some(500),
+                },
+                MockDirent {
+                    name: "session-new.jsonl".into(),
+                    is_file: true,
+                    is_directory: false,
+                    size: Some(200),
+                },
+            ],
+        );
+
+        let event = rx
+            .recv()
+            .await
+            .expect("Should receive Add event within 100ms");
+        assert_eq!(event.event_type, FileChangeType::Add);
+        assert_eq!(event.session_id.as_deref(), Some("session-new"));
+
+        watcher.stop().await;
     }
 }
