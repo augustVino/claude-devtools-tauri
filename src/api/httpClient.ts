@@ -291,6 +291,14 @@ export class HttpAPIClient implements ElectronAPI {
       },
     );
 
+  deleteSession = (
+    projectId: string,
+    sessionId: string,
+  ): Promise<{ mainFileDeleted: boolean; associatedDeleted: number; errors: number }> =>
+    this.del<{ mainFileDeleted: boolean; associatedDeleted: number; errors: number }>(
+      `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}`,
+    );
+
   // ---------------------------------------------------------------------------
   // Repository grouping
   // ---------------------------------------------------------------------------

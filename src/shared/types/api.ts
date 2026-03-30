@@ -382,6 +382,11 @@ export interface ElectronAPI {
     sessionIds: string[],
     options?: SessionsByIdsOptions,
   ) => Promise<Session[]>;
+  /** Delete a session and all associated files */
+  deleteSession: (
+    projectId: string,
+    sessionId: string,
+  ) => Promise<{ mainFileDeleted: boolean; associatedDeleted: number; errors: number }>;
 
   // Repository grouping (worktree support)
   getRepositoryGroups: () => Promise<RepositoryGroup[]>;

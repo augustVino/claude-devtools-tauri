@@ -76,6 +76,8 @@ export interface SessionSlice {
   toggleSidebarMultiSelect: () => void;
   /** Bulk pin for multi-select */
   pinMultipleSessions: (sessionIds: string[]) => Promise<void>;
+  /** Delete a session and all associated files */
+  deleteSession: (projectId: string, sessionId: string) => Promise<void>;
 }
 
 // =============================================================================
@@ -516,6 +518,35 @@ export const createSessionSlice: StateCreator<AppState, [], [], SessionSlice> = 
     } catch (error) {
       set({ pinnedSessionIds: previousPinnedIds });
       logger.error('pinMultipleSessions error:', error);
+    }
+  },
+
+  // Delete a session (non-optimistic — wait for backend confirmation)
+  deleteSession: async (projectId: string, sessionId: string) => {
+    const state = get();
+
+    try {
+      await api.deleteSession(projectId, sessionId);
+
+      // Remove from sessions list
+      set((prev) => ({
+        sessions: prev.sessions.filter((s) => s.id !== sessionId),
+        pinnedSessionIds: prev.pinnedSessionIds.filter((id) => id !== sessionId),
+        hiddenSessionIds: prev.hiddenSessionIds.filter((id) => id !== sessionId),
+        sidebarSelectedSessionIds: prev.sidebarSelectedSessionIds.filter((id) => id !== sessionId),
+        // Clear selection if this was the active session
+        ...(prev.selectedSessionId === sessionId
+          ? { selectedSessionId: null, sessionDetail: null, sessionContextStats: null }
+          : {}),
+      }));
+
+      // Refresh to update counts and pagination
+      if (state.selectedProjectId) {
+        void get().refreshSessionsInPlace(state.selectedProjectId);
+      }
+    } catch (error) {
+      logger.error('deleteSession error:', error);
+      throw error; // Re-throw so UI can show error
     }
   },
 });
