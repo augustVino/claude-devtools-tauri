@@ -91,7 +91,7 @@ export const createUpdateSlice: StateCreator<AppState, [], [], UpdateSlice> = (s
       return;
     }
 
-    set({ showUpdateDialog: false, showUpdateBanner: true, downloadProgress: 0 });
+    set({ updateStatus: 'downloading', showUpdateDialog: false, showUpdateBanner: true, downloadProgress: 0 });
 
     let downloaded = 0;
     let contentLength = 0;
