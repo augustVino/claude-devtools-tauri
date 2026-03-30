@@ -71,7 +71,6 @@ Also add at the top of the file (after existing imports):
 ```rust
 use crate::infrastructure::ContextManager;
 use crate::types::domain::DeleteSessionResult;
-use tauri::Manager;
 ```
 
 - [ ] **Step 2: Add the `delete_session` command**
@@ -88,8 +87,8 @@ Add after the `get_sessions_by_ids` function (after line 348):
 /// 仅支持本地上下文，SSH 远程上下文会返回错误。
 #[command]
 pub async fn delete_session(
-    app: tauri::AppHandle,
     state: State<'_, Arc<RwLock<AppState>>>,
+    context_manager: State<'_, Arc<RwLock<ContextManager>>>,
     project_id: String,
     session_id: String,
 ) -> Result<DeleteSessionResult, String> {
@@ -100,8 +99,7 @@ pub async fn delete_session(
 
     // Reject SSH contexts — SFTP delete not yet supported
     {
-        let ctx_mgr = app.state::<Arc<RwLock<ContextManager>>>();
-        let mgr = ctx_mgr.read().await;
+        let mgr = context_manager.read().await;
         if let Some(active_ctx) = mgr.get_active() {
             let ctx = active_ctx.read().await;
             if ctx.context_type == crate::infrastructure::service_context::ContextType::Ssh {
@@ -475,21 +473,38 @@ import { Check, ClipboardCopy, Eye, EyeOff, Pin, PinOff, Terminal, Trash2 } from
 
 4. Update `menuHeight` from `290` to `330` to account for the new menu item.
 
-5. Add the delete menu item before the closing `</div>` of the menu (after the "Copy Resume Command" item, after line 142):
+5. Add a `handleDelete` callback (after `handleCopy` function, before `atMaxPanes`):
+```typescript
+  const handleDelete = async () => {
+    const { confirm } = await import('@renderer/components/common/ConfirmDialog');
+    const confirmed = await confirm({
+      title: '删除 Session',
+      message: '确定要删除此 session 吗？此操作不可撤销，将删除所有关联文件。',
+      confirmLabel: '删除',
+      cancelLabel: '取消',
+      variant: 'danger',
+    });
+    if (confirmed) {
+      onDelete();
+    }
+  };
+```
+
+6. Add the delete menu item before the closing `</div>` of the menu (after the "Copy Resume Command" item, after line 142):
 
 ```tsx
       <div className="mx-2 my-1 border-t" style={{ borderColor: 'var(--color-border)' }} />
       <MenuItem
         label="Delete Session"
-        icon={<Trash2 className="size-4 text-red-400" />}
-        onClick={handleClick(onDelete)}
-        labelClassName="text-red-400"
+        icon={<Trash2 className="size-4" style={{ color: 'rgb(248, 113, 113)' }} />}
+        onClick={handleDelete}
+        labelStyle={{ color: 'rgb(248, 113, 113)' }}
       />
 ```
 
-6. Add `labelClassName` support to the `MenuItem` component (after `disabled` in the MenuItem props type):
+7. Add `labelStyle` support to the `MenuItem` component. Add to the props type:
 ```typescript
-  labelClassName?: string;
+  labelStyle?: React.CSSProperties;
 ```
 
 And apply it in the label span:
@@ -498,36 +513,42 @@ And apply it in the label span:
 ```
 Change to:
 ```tsx
-        <span className={labelClassName}>{label}</span>
+        <span style={labelStyle}>{label}</span>
 ```
 
 - [ ] **Step 2: Wire up in SessionItem.tsx**
 
-In `SessionItem.tsx`, find where `SessionContextMenu` is rendered (around line 304). Add the `onDelete` prop:
+In `SessionItem.tsx`:
 
-```tsx
-            onDelete={async () => {
-              setContextMenu(null);
-              const { confirm } = await import('@renderer/components/common/ConfirmDialog');
-              const confirmed = await confirm({
-                title: '删除 Session',
-                message: '确定要删除此 session 吗？此操作不可撤销，将删除所有关联文件。',
-                confirmLabel: '删除',
-                cancelLabel: '取消',
-                variant: 'danger',
-              });
-              if (confirmed) {
-                try {
-                  await deleteSession(activeProjectId, session.id);
-                } catch (e) {
-                  // Error already logged by store; could add toast notification here
-                  console.error('Failed to delete session:', e);
-                }
-              }
-            }}
+1. Add `deleteSession` to the `useShallow` destructuring (alongside `togglePinSession` and `toggleHideSession`):
+```typescript
+  const {
+    openTab,
+    activeProjectId,
+    selectSession,
+    paneCount,
+    splitPane,
+    togglePinSession,
+    toggleHideSession,
+    deleteSession,
+  } = useStore(
+    useShallow((s) => ({
+      openTab: s.openTab,
+      activeProjectId: s.activeProjectId,
+      selectSession: s.selectSession,
+      paneCount: s.paneLayout.panes.length,
+      splitPane: s.splitPane,
+      togglePinSession: s.togglePinSession,
+      toggleHideSession: s.toggleHideSession,
+      deleteSession: s.deleteSession,
+    }))
+  );
 ```
 
-Also add `deleteSession` to the store destructuring. Find the `useStore` call in `SessionItem` and add `deleteSession` to the destructured values. Look for the existing pattern — it likely destructures `togglePinSession` and `toggleHideSession` from the store. Add `deleteSession` alongside them.
+2. Add the `onDelete` prop to `<SessionContextMenu>` (after `onToggleHide`):
+```tsx
+            onDelete={() => void deleteSession(activeProjectId, session.id)}
+```
 
 - [ ] **Step 3: Verify the app builds and runs**
 
