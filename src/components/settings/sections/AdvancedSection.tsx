@@ -77,13 +77,10 @@ export const AdvancedSection = ({
           </>
         );
       case "available":
-      case "downloaded":
         return (
           <>
             <Download className="size-3.5" />
-            {updateStatus === "downloaded"
-              ? "Update ready"
-              : `v${availableVersion ?? "unknown"} available`}
+            v{availableVersion ?? "unknown"} available
           </>
         );
       default:
@@ -172,8 +169,7 @@ export const AdvancedSection = ({
                   color:
                     updateStatus === "not-available"
                       ? "var(--color-text-muted)"
-                      : updateStatus === "available" ||
-                          updateStatus === "downloaded"
+                      : updateStatus === "available"
                         ? "#60a5fa"
                         : "var(--color-text-secondary)",
                 }}
