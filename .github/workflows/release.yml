@@ -55,11 +55,25 @@ jobs:
           # package.json
           jq --arg v "$VERSION" '.version = $v' package.json > tmp.json && mv tmp.json package.json
 
+      - name: Diagnostic - check signing key length
+        run: |
+          KEY_LEN="${#TAURI_SIGNING_PRIVATE_KEY}"
+          echo "TAURI_SIGNING_PRIVATE_KEY length: ${KEY_LEN} chars"
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD: set (${#TAURI_SIGNING_PRIVATE_KEY_PASSWORD} chars)"
+          else
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD: NOT SET"
+          fi
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ''
           releaseName: ''

@@ -33,7 +33,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg4QTk1RDY0NDc2RDJGNzlKUldSNUwyMUhaRjJwaU13aTNnbFFqM2svcHc5L1lQUmRWbmtmekZKZ1pjMEJZSDZTaE5WUi9nYysK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRGMzZFRkM4RTU5RDgzOTMKUldTVGc1M2x5TzgyVHhKUE9zVDcvNnZqOWFTWlVnTDRPdGUzY0l2dHlmQ2E0SlZnRkkwK215N2MK",
       "endpoints": [
         "https://github.com/augustVino/claude-devtools-tauri/releases/latest/download/latest.json"
       ]
