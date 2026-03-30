@@ -40,7 +40,7 @@ pub async fn search_sessions(
 pub async fn search_all_projects(
     query: String,
     max_results: Option<u32>,
-    _searcher: State<'_, Mutex<SessionSearcher>>,
+    searcher: State<'_, Mutex<SessionSearcher>>,
 ) -> Result<SearchSessionsResult, String> {
     let max = max_results.unwrap_or(50).min(100).max(1);
 
@@ -54,18 +54,11 @@ pub async fn search_all_projects(
         });
     }
 
-    // TODO: Implement cross-project search
-    // For now, return empty results
-    Ok(SearchSessionsResult {
-        results: Vec::new(),
-        total_matches: 0,
-        sessions_searched: 0,
-        query,
-        is_partial: None,
-    })
+    let mut searcher = searcher.lock().map_err(|e| e.to_string())?;
+    Ok(searcher.search_all_projects(&query, max))
 }
 
 /// Create a SessionSearcher state.
-pub fn create_searcher_state(projects_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Mutex<SessionSearcher> {
-    Mutex::new(SessionSearcher::new(projects_dir, fs_provider))
+pub fn create_searcher_state(projects_dir: PathBuf, todos_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Mutex<SessionSearcher> {
+    Mutex::new(SessionSearcher::new(projects_dir, todos_dir, fs_provider))
 }

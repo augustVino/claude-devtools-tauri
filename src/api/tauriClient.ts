@@ -54,33 +54,6 @@ import type {
   NotificationStats,
 } from "@shared/types/notifications";
 
-const NOT_IMPLEMENTED = new Error("Not yet implemented in Tauri backend");
-
-function notImplemented(): Promise<never> {
-  return Promise.reject(NOT_IMPLEMENTED);
-}
-
-/**
- * Creates a stub object that returns safe no-op values for event listeners.
- * Event listener methods (onXxx) return a no-op cleanup function.
- * Other methods return a rejected Promise.
- *
- * This allows frontend code to safely check `if (!api.ssh?.onStatus)` and
- * use event listeners without breaking useEffect cleanup patterns.
- */
-function stubEventAPI(): Record<string, unknown> {
-  return new Proxy({} as Record<string, unknown>, {
-    get(_target, prop) {
-      // Event listener methods return a no-op cleanup function
-      if (typeof prop === "string" && prop.startsWith("on")) {
-        return () => () => {};
-      }
-      // Other methods return rejected Promise
-      return notImplemented;
-    },
-  });
-}
-
 /**
  * Context API — delegates to Tauri invoke commands.
  */
@@ -171,10 +144,10 @@ export class TauriAPIClient implements ElectronAPI {
       invoke("set_dock_visible", { visible }),
   };
 
-  readonly getZoomFactor = async (): Promise<number> => {
-    const result = await invoke<ZoomFactorResult>("get_zoom_factor");
-    return result.factor;
-  };
+  readonly getZoomFactor = (): Promise<number> =>
+    invoke<ZoomFactorResult>("get_zoom_factor").then((r) => r.factor);
+  readonly setZoomFactor = (factor: number): Promise<void> =>
+    invoke("set_zoom_factor", { factor });
   readonly onZoomFactorChanged = (): (() => void) => () => {};
 
   // ===========================================================================
@@ -427,7 +400,10 @@ export class TauriAPIClient implements ElectronAPI {
       };
     },
   };
-  readonly session = stubEventAPI() as any;
+  readonly session = {
+    scrollToLine: (sessionId: string, lineNumber: number): Promise<void> =>
+      invoke("scroll_to_line", { sessionId, lineNumber }),
+  };
   readonly updater = {
     check: (): Promise<void> => invoke<void>("check_for_updates"),
     download: (): Promise<void> => invoke<void>("download_and_install_update"),
@@ -464,7 +440,7 @@ export class TauriAPIClient implements ElectronAPI {
     resolveHost: (alias: string): Promise<SshConfigHostEntry | null> =>
       invoke<SshConfigHostEntry | null>("ssh_resolve_host", { alias }),
     saveLastConnection: (config: SshLastConnection): Promise<void> =>
-      invoke<void>("ssh_save_last_connection", { config }),
+      invoke<void>("ssh_save_last_connection", { connection: config }),
     getLastConnection: (): Promise<SshLastConnection | null> =>
       invoke<SshLastConnection | null>("ssh_get_last_connection"),
     // IPC signature: (event: unknown, status: SshConnectionStatus) => void

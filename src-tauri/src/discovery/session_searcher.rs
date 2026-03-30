@@ -5,6 +5,7 @@
 //! - Search within a single session file
 //! - Extract context around each match occurrence
 
+use crate::discovery::project_scanner::ProjectScanner;
 use crate::infrastructure::fs_provider::FsProvider;
 use crate::types::domain::{SearchResult, SearchSessionsResult};
 use crate::utils::path_decoder;
@@ -18,6 +19,8 @@ pub struct SessionSearcher {
     fs_provider: Arc<dyn FsProvider>,
     // Simple cache: file_path -> (mtime, entries)
     cache: HashMap<String, (u64, Vec<SearchableEntry>)>,
+    /// ProjectScanner used for cross-project search.
+    project_scanner: ProjectScanner,
 }
 
 /// A searchable entry extracted from a message.
@@ -30,11 +33,17 @@ struct SearchableEntry {
 
 impl SessionSearcher {
     /// Create a new SessionSearcher.
-    pub fn new(projects_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Self {
+    pub fn new(projects_dir: PathBuf, todos_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Self {
+        let project_scanner = ProjectScanner::with_paths(
+            projects_dir.clone(),
+            todos_dir,
+            fs_provider.clone(),
+        );
         Self {
             projects_dir,
             fs_provider,
             cache: HashMap::new(),
+            project_scanner,
         }
     }
 
@@ -127,6 +136,59 @@ impl SessionSearcher {
             sessions_searched,
             query: query.to_string(),
             is_partial: None,
+        }
+    }
+
+    /// Search sessions across all projects.
+    /// Iterates projects in batches of 8, collects all results,
+    /// sorts by timestamp descending, and limits to max_results.
+    ///
+    /// TODO: Memory is O(total_matches) — should use BinaryHeap<Reverse<SearchResult>>
+    /// to maintain only top `max_results` entries, reducing to O(max_results).
+    /// Requires implementing `Ord` on `SearchResult` (sort by timestamp desc).
+    pub fn search_all_projects(
+        &mut self,
+        query: &str,
+        max_results: u32,
+    ) -> SearchSessionsResult {
+        let projects = self.project_scanner.scan();
+
+        if projects.is_empty() || query.trim().is_empty() {
+            return SearchSessionsResult {
+                results: Vec::new(),
+                total_matches: 0,
+                sessions_searched: 0,
+                query: query.to_string(),
+                is_partial: None,
+            };
+        }
+
+        let batch_size = 8usize;
+        let mut all_results: Vec<SearchResult> = Vec::new();
+        let mut sessions_searched = 0u32;
+
+        for chunk in projects.chunks(batch_size) {
+            let batch_results: Vec<SearchSessionsResult> = chunk
+                .iter()
+                .map(|project| self.search_sessions(&project.id, query, max_results))
+                .collect();
+
+            for result in batch_results {
+                sessions_searched += result.sessions_searched;
+                all_results.extend(result.results);
+            }
+        }
+
+        all_results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        let total_matches = all_results.len() as u32;
+        let limited: Vec<SearchResult> = all_results.into_iter().take(max_results as usize).collect();
+
+        SearchSessionsResult {
+            results: limited,
+            total_matches,
+            sessions_searched,
+            query: query.to_string(),
+            is_partial: if total_matches > max_results { Some(true) } else { None },
         }
     }
 
@@ -312,9 +374,11 @@ mod tests {
     fn setup_test_env() -> (TempDir, SessionSearcher) {
         let temp_dir = TempDir::new().unwrap();
         let projects_dir = temp_dir.path().join("projects");
+        let todos_dir = temp_dir.path().join("todos");
         fs::create_dir_all(&projects_dir).unwrap();
+        fs::create_dir_all(&todos_dir).unwrap();
 
-        let searcher = SessionSearcher::new(projects_dir, Arc::new(LocalFsProvider::new()));
+        let searcher = SessionSearcher::new(projects_dir, todos_dir, Arc::new(LocalFsProvider::new()));
         (temp_dir, searcher)
     }
 

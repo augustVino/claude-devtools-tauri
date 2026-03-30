@@ -5,7 +5,7 @@
 
 use tauri::{AppHandle, Emitter};
 
-use crate::types::config::{DetectedError, StoredNotification};
+use crate::types::config::StoredNotification;
 use crate::types::domain::FileChangeEvent;
 use crate::infrastructure::context_manager::ContextInfo;
 
@@ -54,13 +54,6 @@ pub fn emit_notification_updated(
     let payload = NotificationUpdatedPayload { total, unread_count };
     if let Err(e) = app.emit("notification:updated", &payload) {
         log::error!("Failed to emit notification:updated event: {}", e);
-    }
-}
-
-/// 通知前端错误检测事件。
-pub fn emit_error_detected(app: &AppHandle, error: &DetectedError) {
-    if let Err(e) = app.emit("error:detected", error) {
-        log::error!("Failed to emit error:detected event: {}", e);
     }
 }
 

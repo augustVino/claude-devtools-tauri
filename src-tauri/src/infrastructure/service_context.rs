@@ -55,7 +55,7 @@ impl ServiceContext {
             config.fs_provider.clone(),
         );
         let session_searcher = Arc::new(Mutex::new(
-            SessionSearcher::new(config.projects_dir.clone(), config.fs_provider.clone()),
+            SessionSearcher::new(config.projects_dir.clone(), config.todos_dir.clone(), config.fs_provider.clone()),
         ));
         let subagent_resolver = SubagentResolver::new(config.projects_dir.clone(), config.fs_provider.clone());
         let cache = DataCache::new();
@@ -208,7 +208,6 @@ impl ServiceContext {
                                     ).await;
                                     let mgr = notification_manager.read().await;
                                     for detected_error in errors {
-                                        crate::events::emit_error_detected(&app, &detected_error);
                                         let _ = mgr.add_error(detected_error).await;
                                     }
                                 }

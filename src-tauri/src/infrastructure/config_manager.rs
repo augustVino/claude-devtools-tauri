@@ -161,7 +161,7 @@ impl ConfigManager {
             let current_json = serde_json::to_value(&*config)
                 .map_err(|e| format!("failed to serialize current config: {e}"))?;
 
-            let valid_sections = ["notifications", "general", "display", "sessions"];
+            let valid_sections = ["notifications", "general", "display", "sessions", "ssh"];
             if !valid_sections.contains(&section) {
                 return Err(format!("unknown config section: {section}"));
             }

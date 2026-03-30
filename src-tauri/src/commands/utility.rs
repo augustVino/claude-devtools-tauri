@@ -12,12 +12,17 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
+use tauri::{AppHandle, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::parsing::claude_md_reader::{ClaudeMdReader, ClaudeMdFileInfo};
 
 /// Open a path in the system file manager.
 #[tauri::command]
-pub async fn open_path(path: String) -> Result<(), String> {
+pub async fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
     let expanded = if path.starts_with('~') {
         if let Some(home) = dirs::home_dir() {
             let remainder = path[1..].trim_start_matches('/');
@@ -34,16 +39,21 @@ pub async fn open_path(path: String) -> Result<(), String> {
         return Err(format!("Path does not exist: {}", expanded));
     }
 
-    // Use tauri-plugin-opener to open the path
+    app.opener()
+        .open_path(&expanded, None::<&str>)
+        .map_err(|e| format!("Failed to open path: {}", e))?;
     Ok(())
 }
 
 /// Open a URL in the system browser.
 #[tauri::command]
-pub async fn open_external(url: String) -> Result<(), String> {
+pub async fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err("Invalid URL: must start with http:// or https://".to_string());
     }
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -53,10 +63,34 @@ pub struct ZoomFactorResult {
     pub factor: f64,
 }
 
-/// Get the current zoom factor.
+/// Get the current zoom factor from app state.
+/// Tauri v2 has set_zoom() but no zoom() getter, so we track it ourselves.
 #[tauri::command]
-pub async fn get_zoom_factor() -> Result<ZoomFactorResult, String> {
-    Ok(ZoomFactorResult { factor: 1.0 })
+pub async fn get_zoom_factor(
+    zoom_state: State<'_, Arc<AtomicU64>>,
+) -> Result<ZoomFactorResult, String> {
+    let bits = zoom_state.load(Ordering::Relaxed);
+    Ok(ZoomFactorResult {
+        factor: f64::from_bits(bits),
+    })
+}
+
+/// Set the zoom factor and persist it in app state.
+/// Clamps to [0.5, 3.0] range (~50% to ~300%).
+#[tauri::command]
+pub async fn set_zoom_factor(
+    app: AppHandle,
+    zoom_state: State<'_, Arc<AtomicU64>>,
+    factor: f64,
+) -> Result<(), String> {
+    let clamped = factor.clamp(0.5, 3.0);
+    if let Some(window) = app.get_webview_window("main") {
+        window
+            .set_zoom(clamped)
+            .map_err(|e| e.to_string())?;
+    }
+    zoom_state.store(clamped.to_bits(), Ordering::Relaxed);
+    Ok(())
 }
 
 // =============================================================================

@@ -554,6 +554,10 @@ export class HttpAPIClient implements ElectronAPI {
 
   getZoomFactor = async (): Promise<number> => 1.0;
 
+  setZoomFactor = async (_factor: number): Promise<void> => {
+    // No-op in browser mode — zoom is managed by the browser itself
+  };
+
   onZoomFactorChanged = (
     _callback: (zoomFactor: number) => void,
   ): (() => void) => {

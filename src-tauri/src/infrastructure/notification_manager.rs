@@ -9,7 +9,7 @@
 //! - Respect config.notifications.enabled and snoozedUntil
 //! - Filter errors matching ignoredRegex patterns
 //! - Auto-prune notifications over 100 on startup
-//! - Emit Tauri events to frontend: notification:new, notification:updated, error:detected
+//! - Emit Tauri events to frontend: notification:new, notification:updated
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -61,6 +61,8 @@ pub struct NotificationManager {
     persistence_path: PathBuf,
     /// 初始化是否已完成。
     is_initialized: bool,
+    /// 最后显示的原生通知对应的错误（独立于 RwLock 包装，供同步回调使用）。
+    last_shown_error: Arc<Mutex<Option<DetectedError>>>,
 }
 
 impl NotificationManager {
@@ -74,6 +76,7 @@ impl NotificationManager {
     pub fn new(
         app_handle: tauri::AppHandle,
         config_manager: Arc<ConfigManager>,
+        last_shown_error: Arc<Mutex<Option<DetectedError>>>,
     ) -> Self {
         let persistence_path = dirs::home_dir()
             .expect("home directory must exist")
@@ -87,6 +90,7 @@ impl NotificationManager {
             throttle_map: Arc::new(Mutex::new(HashMap::new())),
             persistence_path,
             is_initialized: false,
+            last_shown_error,
         }
     }
 
@@ -106,6 +110,7 @@ impl NotificationManager {
             throttle_map: Arc::new(Mutex::new(HashMap::new())),
             persistence_path,
             is_initialized: false,
+            last_shown_error: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -610,6 +615,29 @@ impl NotificationManager {
         let Some(ref app_handle) = self.app_handle else {
             return;
         };
+
+        // Store error for click detection (independent Arc<Mutex<>> for sync access)
+        {
+            let mut last = match self.last_shown_error.lock() {
+                Ok(guard) => guard,
+                Err(e) => {
+                    error!("Failed to acquire last_shown_error lock: {e}");
+                    return;
+                }
+            };
+            *last = Some(error.clone());
+        }
+
+        // Clear last_shown_error after 30 seconds to avoid stale click handling
+        {
+            let clear_handle = self.last_shown_error.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                if let Ok(mut last) = clear_handle.lock() {
+                    *last = None;
+                }
+            });
+        }
 
         let sound_enabled = self.config_manager.get_config().notifications.sound_enabled;
         let body = truncate_str(&error.message, 200);

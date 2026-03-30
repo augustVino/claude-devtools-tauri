@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 use crate::discovery::ProjectScanner;
 use crate::infrastructure::{DataCache, ConfigManager};
 use crate::parsing::{parse_session_file, ParsedSession};
-use crate::types::domain::{Session, SessionMetrics, PaginatedSessionsResult};
+use crate::types::domain::{Session, SessionMetrics, PaginatedSessionsResult, SessionsPaginationOptions};
 use crate::types::chunks::SessionDetail;
 use crate::utils::content_sanitizer::{
     extract_command_display, sanitize_display_content, is_command_output_content, is_command_content,
@@ -286,13 +286,19 @@ pub async fn get_sessions_paginated(
     project_id: String,
     cursor: Option<String>,
     limit: Option<u32>,
+    options: Option<SessionsPaginationOptions>,
 ) -> Result<PaginatedSessionsResult, String> {
     let page_limit = limit.unwrap_or(50).min(100).max(1) as usize;
 
     let scanner = ProjectScanner::new();
     let all_sessions = scanner.list_sessions(&project_id);
 
-    let total_count = all_sessions.len() as u32;
+    let opts = options.unwrap_or_default();
+    let total_count = if opts.include_total_count.unwrap_or(true) {
+        all_sessions.len() as u32
+    } else {
+        0
+    };
 
     // 定位游标位置
     let start_idx = if let Some(ref c) = cursor {

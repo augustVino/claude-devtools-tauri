@@ -1,10 +1,11 @@
-use tauri::{command, State};
+use tauri::{command, Emitter, Manager, State};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::infrastructure::NotificationManager;
 use crate::types::config::{
-    GetNotificationsOptions, GetNotificationsResult, NotificationCountResult, NotificationStats,
+    DetectedError, GetNotificationsOptions, GetNotificationsResult, NotificationCountResult,
+    NotificationStats,
 };
 
 // =============================================================================
@@ -120,6 +121,53 @@ pub async fn get_notification_stats(
 ) -> Result<NotificationStats, String> {
     let mgr = notification_manager.read().await;
     Ok(mgr.get_stats())
+}
+
+/// Handle a notification click event from the frontend.
+///
+/// When the user clicks a native OS notification, the window gains focus.
+/// The frontend detects this via a `focus` event listener and calls this command.
+/// If a `last_shown_error` is present (set within the last 30 seconds),
+/// this command focuses the window, emits `notification:clicked` with the error,
+/// and clears the stored error.
+#[command]
+pub async fn handle_notification_click(
+    app_handle: tauri::AppHandle,
+    last_shown_error: State<'_, Arc<std::sync::Mutex<Option<DetectedError>>>>,
+) -> Result<bool, String> {
+    let error = {
+        let mut guard = last_shown_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        guard.take()
+    };
+
+    let Some(error) = error else {
+        return Ok(false);
+    };
+
+    // Focus the window
+    if let Some(window) = app_handle.get_webview_window("main") {
+        window
+            .set_focus()
+            .map_err(|e| format!("Failed to focus window: {e}"))?;
+        #[cfg(target_os = "macos")]
+        {
+            use cocoa::appkit::NSApplication;
+            use cocoa::base::nil;
+            unsafe {
+                let ns_app = NSApplication::sharedApplication(nil);
+                NSApplication::activateIgnoringOtherApps_(ns_app, true);
+            }
+        }
+    }
+
+    // Emit notification:clicked event for the frontend
+    app_handle
+        .emit("notification:clicked", &error)
+        .map_err(|e| format!("Failed to emit notification:clicked event: {e}"))?;
+
+    Ok(true)
 }
 
 #[cfg(test)]

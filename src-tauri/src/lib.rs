@@ -15,6 +15,7 @@ mod parsing;
 mod types;
 mod utils;
 
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 use tauri::{Emitter, Manager};
@@ -23,7 +24,7 @@ use infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConn
 use infrastructure::fs_provider::LocalFsProvider;
 use infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
 use commands::tray::TrayIconManager;
-use utils::get_projects_base_path;
+use utils::{get_projects_base_path, get_todos_base_path};
 
 /// 运行 Tauri 应用。
 ///
@@ -35,6 +36,10 @@ pub fn run() {
   let config_manager = Arc::new(ConfigManager::new());
   let app_state = Arc::new(RwLock::new(AppState::new(config_manager.clone())));
 
+  // Zoom factor state: track zoom since Tauri v2 has set_zoom() but no zoom() getter.
+  // Store f64 as bits in AtomicU64 for lock-free concurrent access.
+  let zoom_factor: Arc<AtomicU64> = Arc::new(AtomicU64::new(1.0f64.to_bits()));
+
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_opener::init())
@@ -44,6 +49,7 @@ pub fn run() {
       .args(["--minimized"])
       .build())
     .manage(app_state.clone())
+    .manage(zoom_factor)
     .on_window_event(|window, event| {
       if let tauri::WindowEvent::CloseRequested { api, .. } = event {
         #[cfg(target_os = "macos")]
@@ -120,12 +126,15 @@ pub fn run() {
       ));
 
       // 创建并注册 NotificationManager
+      let last_shown_error = std::sync::Arc::new(std::sync::Mutex::new(None::<crate::types::config::DetectedError>));
       let notification_manager = NotificationManager::new(
         app.handle().clone(),
         config_manager.clone(),
+        last_shown_error.clone(),
       );
       let notification_manager = Arc::new(RwLock::new(notification_manager));
       app.manage(notification_manager.clone());
+      app.manage(last_shown_error);
 
       // 异步初始化 NotificationManager
       let init_notification_mgr = notification_manager.clone();
@@ -141,11 +150,7 @@ pub fn run() {
           id: "local".to_string(),
           context_type: ContextType::Local,
           projects_dir: get_projects_base_path(),
-          todos_dir: if let Some(home) = dirs::home_dir() {
-            home.join(".claude").join("todos")
-          } else {
-            std::path::PathBuf::from("/tmp/claude-todos")
-          },
+          todos_dir: get_todos_base_path(),
           fs_provider: Arc::new(LocalFsProvider::new()),
         });
         mgr.register_context(local_context)
@@ -168,8 +173,10 @@ pub fn run() {
       // ========== 注册 SessionSearcher（供 Tauri IPC search 命令使用）==========
       {
         let local_fs: Arc<dyn infrastructure::fs_provider::FsProvider> = Arc::new(LocalFsProvider::new());
+        let todos_dir = get_todos_base_path();
         app.manage(commands::search::create_searcher_state(
           get_projects_base_path(),
+          todos_dir,
           local_fs,
         ));
       }
@@ -254,6 +261,7 @@ pub fn run() {
       commands::utility::open_path,
       commands::utility::open_external,
       commands::utility::get_zoom_factor,
+      commands::utility::set_zoom_factor,
       commands::utility::read_claude_md_files,
       commands::utility::read_directory_claude_md,
       commands::utility::read_mentioned_file,
@@ -269,6 +277,7 @@ pub fn run() {
       commands::notifications::clear_notifications,
       commands::notifications::get_notification_count,
       commands::notifications::get_notification_stats,
+      commands::notifications::handle_notification_click,
       commands::updater::check_for_updates,
       commands::updater::download_and_install_update,
       commands::updater::install_update,

@@ -7,6 +7,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use serde_json::json;
 use tauri::{command, AppHandle, Manager, State};
 use tokio::sync::RwLock;
 
@@ -274,24 +275,37 @@ pub async fn ssh_resolve_host(
     Ok(ssh_manager.read().await.resolve_host_config(&alias))
 }
 
-/// Save the last SSH connection configuration (stub).
-///
-/// TODO: Persist to a local file (e.g., `~/.claude-devtools/last-ssh-connection.json`).
+/// Save the last SSH connection configuration via ConfigManager.
 #[command]
 pub async fn ssh_save_last_connection(
-    _connection: SshLastConnection,
+    connection: SshLastConnection,
+    config_manager: State<'_, Arc<crate::infrastructure::ConfigManager>>,
 ) -> Result<(), String> {
-    // TODO: Persist to disk
-    log::info!("ssh_save_last_connection: stub (not yet implemented)");
+    let connection_value = serde_json::json!({
+        "lastConnection": {
+            "host": connection.host,
+            "port": connection.port,
+            "username": connection.username,
+            "authMethod": connection.auth_method,
+            "privateKeyPath": connection.private_key_path,
+        }
+    });
+    config_manager.update_config("ssh", connection_value)?;
     Ok(())
 }
 
-/// Get the last SSH connection configuration (stub).
-///
-/// TODO: Load from a local file.
+/// Get the last SSH connection configuration from ConfigManager.
 #[command]
-pub async fn ssh_get_last_connection() -> Result<Option<SshLastConnection>, String> {
-    // TODO: Load from disk
-    log::info!("ssh_get_last_connection: stub (not yet implemented)");
-    Ok(None)
+pub async fn ssh_get_last_connection(
+    config_manager: State<'_, Arc<crate::infrastructure::ConfigManager>>,
+) -> Result<Option<SshLastConnection>, String> {
+    let config = config_manager.get_config();
+    let last = config.ssh.as_ref().and_then(|s| s.last_connection.as_ref());
+    Ok(last.map(|c| SshLastConnection {
+        host: c.host.clone(),
+        port: c.port,
+        username: c.username.clone(),
+        auth_method: c.auth_method.clone(),
+        private_key_path: c.private_key_path.clone(),
+    }))
 }

@@ -11,7 +11,7 @@ use crate::http::sse::SSEBroadcaster;
 use crate::http::state::HttpState;
 use crate::infrastructure::fs_provider::LocalFsProvider;
 use crate::infrastructure::{ContextManager, NotificationManager, SshConnectionManager};
-use crate::utils::get_projects_base_path;
+use crate::utils::{get_projects_base_path, get_todos_base_path};
 
 /// 获取 HTTP 服务器状态。
 #[command]
@@ -74,7 +74,8 @@ pub async fn start(
             .clone();
 
         let projects_dir = get_projects_base_path();
-        let searcher = Arc::new(create_searcher_state(projects_dir, Arc::new(LocalFsProvider::new())));
+        let todos_dir = get_todos_base_path();
+        let searcher = Arc::new(create_searcher_state(projects_dir, todos_dir, Arc::new(LocalFsProvider::new())));
 
         let http_state = HttpState {
             app_state: state.inner().clone(),
