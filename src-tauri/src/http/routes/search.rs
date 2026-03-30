@@ -34,6 +34,8 @@ pub async fn search_sessions(
         }));
     }
 
+    // TODO: Wrap in tokio::task::spawn_blocking to avoid blocking the async runtime
+    // (same issue as Tauri IPC commands — see commands/search.rs for the pattern).
     let mut searcher = state
         .searcher
         .lock()

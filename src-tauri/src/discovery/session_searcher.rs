@@ -140,12 +140,8 @@ impl SessionSearcher {
     }
 
     /// Search sessions across all projects.
-    /// Iterates projects in batches of 8, collects all results,
-    /// sorts by timestamp descending, and limits to max_results.
-    ///
-    /// TODO: Memory is O(total_matches) — should use BinaryHeap<Reverse<SearchResult>>
-    /// to maintain only top `max_results` entries, reducing to O(max_results).
-    /// Requires implementing `Ord` on `SearchResult` (sort by timestamp desc).
+    /// Uses a bounded BinaryHeap to maintain only the top `max_results` entries
+    /// by timestamp, keeping memory at O(max_results) instead of O(total_matches).
     pub fn search_all_projects(
         &mut self,
         query: &str,
@@ -163,32 +159,43 @@ impl SessionSearcher {
             };
         }
 
-        let batch_size = 8usize;
-        let mut all_results: Vec<SearchResult> = Vec::new();
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+
+        let capacity = max_results as usize;
+        let mut heap: BinaryHeap<Reverse<SearchResult>> = BinaryHeap::with_capacity(capacity);
+        let mut matches_found = 0u32;
         let mut sessions_searched = 0u32;
 
-        for chunk in projects.chunks(batch_size) {
-            let batch_results: Vec<SearchSessionsResult> = chunk
-                .iter()
-                .map(|project| self.search_sessions(&project.id, query, max_results))
-                .collect();
+        for project in &projects {
+            let result = self.search_sessions(&project.id, query, max_results);
+            matches_found += result.total_matches;
+            sessions_searched += result.sessions_searched;
 
-            for result in batch_results {
-                sessions_searched += result.sessions_searched;
-                all_results.extend(result.results);
+            for r in result.results {
+                if heap.len() < capacity {
+                    heap.push(Reverse(r));
+                } else if r.timestamp > heap.peek().unwrap().0.timestamp {
+                    heap.pop();
+                    heap.push(Reverse(r));
+                }
             }
         }
 
-        all_results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-        let total_matches = all_results.len() as u32;
-        let limited: Vec<SearchResult> = all_results.into_iter().take(max_results as usize).collect();
+        let mut results: Vec<SearchResult> = heap.into_iter().map(|Reverse(r)| r).collect();
+        results.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
+        let results_len = results.len() as u32;
         SearchSessionsResult {
-            results: limited,
-            total_matches,
+            results,
+            total_matches: matches_found,
             sessions_searched,
             query: query.to_string(),
-            is_partial: if total_matches > max_results { Some(true) } else { None },
+            is_partial: if matches_found > results_len {
+                Some(true)
+            } else {
+                None
+            },
         }
     }
 
@@ -429,5 +436,40 @@ mod tests {
 
         let result = searcher.search_sessions("-Users-test-project", "test", 2);
         assert!(result.results.len() <= 2);
+    }
+
+    #[test]
+    fn test_search_result_ordering() {
+        let r1 = SearchResult {
+            session_id: "s1".into(),
+            project_id: "p1".into(),
+            session_title: "t1".into(),
+            matched_text: "a".into(),
+            context: "c".into(),
+            message_type: "user".into(),
+            timestamp: 100,
+            group_id: None,
+            item_type: None,
+            match_index_in_item: None,
+            match_start_offset: None,
+            message_uuid: None,
+        };
+        let r2 = SearchResult {
+            session_id: "s2".into(),
+            project_id: "p2".into(),
+            session_title: "t2".into(),
+            matched_text: "b".into(),
+            context: "d".into(),
+            message_type: "user".into(),
+            timestamp: 200,
+            group_id: None,
+            item_type: None,
+            match_index_in_item: None,
+            match_start_offset: None,
+            message_uuid: None,
+        };
+        // Ord: ascending by timestamp, so r2 (200) > r1 (100)
+        assert!(r2 > r1);
+        assert!(r1 < r2);
     }
 }

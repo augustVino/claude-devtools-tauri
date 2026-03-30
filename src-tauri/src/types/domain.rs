@@ -229,6 +229,20 @@ pub struct SearchSessionsResult {
     pub is_partial: Option<bool>,
 }
 
+impl Eq for SearchResult {}
+
+impl Ord for SearchResult {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.timestamp.cmp(&other.timestamp)
+    }
+}
+
+impl PartialOrd for SearchResult {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 // =============================================================================
 // Pagination
 // =============================================================================

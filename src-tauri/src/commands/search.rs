@@ -12,12 +12,15 @@ use std::sync::{Arc, Mutex};
 use tauri::State;
 
 /// Search sessions in a project.
+///
+/// Uses `spawn_blocking` to avoid holding `std::sync::Mutex` across `.await`
+/// points on the tokio async runtime.
 #[tauri::command]
 pub async fn search_sessions(
     project_id: String,
     query: String,
     max_results: Option<u32>,
-    searcher: State<'_, Mutex<SessionSearcher>>,
+    searcher: State<'_, Arc<Mutex<SessionSearcher>>>,
 ) -> Result<SearchSessionsResult, String> {
     let max = max_results.unwrap_or(50).min(100).max(1);
 
@@ -31,16 +34,25 @@ pub async fn search_sessions(
         });
     }
 
-    let mut searcher = searcher.lock().map_err(|e| e.to_string())?;
-    Ok(searcher.search_sessions(&project_id, &query, max))
+    let searcher = searcher.inner().clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<SearchSessionsResult, String> {
+        let mut searcher = searcher.lock().map_err(|e| e.to_string())?;
+        Ok(searcher.search_sessions(&project_id, &query, max))
+    })
+    .await
+    .map_err(|e| format!("search task panicked: {}", e))?;
+    result
 }
 
 /// Search sessions across all projects.
+///
+/// Uses `spawn_blocking` to avoid holding `std::sync::Mutex` across `.await`
+/// points on the tokio async runtime.
 #[tauri::command]
 pub async fn search_all_projects(
     query: String,
     max_results: Option<u32>,
-    searcher: State<'_, Mutex<SessionSearcher>>,
+    searcher: State<'_, Arc<Mutex<SessionSearcher>>>,
 ) -> Result<SearchSessionsResult, String> {
     let max = max_results.unwrap_or(50).min(100).max(1);
 
@@ -54,11 +66,22 @@ pub async fn search_all_projects(
         });
     }
 
-    let mut searcher = searcher.lock().map_err(|e| e.to_string())?;
-    Ok(searcher.search_all_projects(&query, max))
+    let searcher = searcher.inner().clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<SearchSessionsResult, String> {
+        let mut searcher = searcher.lock().map_err(|e| e.to_string())?;
+        Ok(searcher.search_all_projects(&query, max))
+    })
+    .await
+    .map_err(|e| format!("search task panicked: {}", e))?;
+    result
 }
 
-/// Create a SessionSearcher state.
-pub fn create_searcher_state(projects_dir: PathBuf, todos_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Mutex<SessionSearcher> {
-    Mutex::new(SessionSearcher::new(projects_dir, todos_dir, fs_provider))
+/// Create a SessionSearcher state wrapped in `Arc<Mutex<...>>` so it can be
+/// cloned into `spawn_blocking` closures without holding the lock.
+pub fn create_searcher_state(
+    projects_dir: PathBuf,
+    todos_dir: PathBuf,
+    fs_provider: Arc<dyn FsProvider>,
+) -> Arc<Mutex<SessionSearcher>> {
+    Arc::new(Mutex::new(SessionSearcher::new(projects_dir, todos_dir, fs_provider)))
 }
