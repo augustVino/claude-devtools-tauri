@@ -554,6 +554,9 @@ pub async fn delete_session(
         app_state.cache.invalidate_session(&project_id, &session_id).await;
     }
 
+    // Small delay to ensure filesystem sync before returning
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
     log::info!(
         "Session deleted: {} (main={}, associated={}, errors={})",
         session_id, main_file_deleted, associated_deleted, errors

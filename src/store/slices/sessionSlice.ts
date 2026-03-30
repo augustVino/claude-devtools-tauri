@@ -540,7 +540,8 @@ export const createSessionSlice: StateCreator<AppState, [], [], SessionSlice> = 
           : {}),
       }));
 
-      // Refresh to update counts and pagination
+      // Wait a bit for filesystem sync, then refresh to update counts and pagination
+      await new Promise((resolve) => setTimeout(resolve, 150));
       if (state.selectedProjectId) {
         void get().refreshSessionsInPlace(state.selectedProjectId);
       }

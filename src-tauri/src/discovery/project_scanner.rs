@@ -273,6 +273,12 @@ impl ProjectScanner {
             let entry_path = project_path.join(&info.name);
             let preview = self.extract_session_preview(&entry_path);
 
+            // Skip sessions that couldn't be read (file may have been deleted or is empty)
+            if preview.message_count == 0 && preview.first_message.is_none() {
+                log::debug!("Skipping empty or unreadable session file: {}", entry_path.display());
+                continue;
+            }
+
             let decoded_path = preview
                 .cwd
                 .unwrap_or_else(|| self.resolve_project_path(&base_dir));
