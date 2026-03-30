@@ -246,7 +246,7 @@ export const SessionItem = React.memo(function SessionItem({
       <button
         onClick={handleClick}
         onContextMenu={handleContextMenu}
-        className={`h-[48px] w-full overflow-hidden border-b px-3 py-2 text-left transition-all duration-150 ${isActive ? '' : 'bg-transparent hover:opacity-80'} `}
+        className={`h-[48px] w-full select-none overflow-hidden border-b px-3 py-2 text-left transition-all duration-150 ${isActive ? '' : 'bg-transparent hover:opacity-80'} `}
         style={{
           borderColor: 'var(--color-border)',
           ...(isActive ? { backgroundColor: 'var(--color-surface-raised)' } : {}),
