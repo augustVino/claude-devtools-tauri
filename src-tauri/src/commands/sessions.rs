@@ -39,12 +39,12 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// 使用给定的配置管理器创建新的应用状态。
-    pub fn new(config_manager: Arc<ConfigManager>) -> Self {
-        Self {
-            cache: DataCache::new(),
-            config_manager,
-        }
+    /// 创建应用状态。
+    ///
+    /// 必须传入外部共享的 `cache`，确保 AppState（IPC 命令层）与
+    /// ServiceContext（文件监听器层）使用同一个缓存实例。
+    pub fn new(config_manager: Arc<ConfigManager>, cache: DataCache) -> Self {
+        Self { cache, config_manager }
     }
 
     /// 初始化应用状态，包括异步加载配置文件。

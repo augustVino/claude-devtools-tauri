@@ -18,6 +18,7 @@ use crate::infrastructure::{ContextManager, SshConnectionManager, SshFsProvider}
 use crate::types::ssh::{
     SshConfigHostEntry, SshConnectionConfig, SshConnectionStatus, SshLastConnection, SshTestResult,
 };
+use super::sessions::AppState;
 
 /// SSH context ID (single-connection model).
 const SSH_CONTEXT_ID: &str = "ssh";
@@ -69,12 +70,17 @@ pub async fn ssh_connect(
         }
     };
 
+    let shared_cache = {
+        let state: tauri::State<Arc<tokio::sync::RwLock<AppState>>> = app.state();
+        state.inner().read().await.cache.clone()
+    };
     let ssh_context = ServiceContext::new(ServiceContextConfig {
         id: SSH_CONTEXT_ID.to_string(),
         context_type: ContextType::Ssh,
         projects_dir: PathBuf::from(&remote_projects_path),
         todos_dir: remote_todos_path,
         fs_provider,
+        cache: Some(shared_cache),
     });
 
     // 3. If already on SSH context, tear down and switch back to local first

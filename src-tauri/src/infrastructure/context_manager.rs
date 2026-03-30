@@ -154,6 +154,7 @@ mod tests {
             fs_provider: std::sync::Arc::new(
                 crate::infrastructure::fs_provider::LocalFsProvider::new(),
             ),
+            cache: None,
         }
     }
 

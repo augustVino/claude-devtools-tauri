@@ -90,12 +90,14 @@ pub async fn ssh_connect(
         }
     };
 
+    let shared_cache = state.app_state.read().await.cache.clone();
     let ssh_context = ServiceContext::new(ServiceContextConfig {
         id: SSH_CONTEXT_ID.to_string(),
         context_type: ContextType::Ssh,
         projects_dir: PathBuf::from(&remote_projects_path),
         todos_dir: remote_todos_path,
         fs_provider,
+        cache: Some(shared_cache),
     });
 
     // 3. If already on SSH context, tear down and switch back to local first

@@ -13,13 +13,16 @@ use crate::infrastructure::fs_provider::FsProvider;
 use tauri::Manager;
 
 /// 服务上下文配置。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ServiceContextConfig {
     pub id: String,
     pub context_type: ContextType,
     pub projects_dir: PathBuf,
     pub todos_dir: PathBuf,
     pub fs_provider: Arc<dyn FsProvider>,
+    /// 可选的共享缓存。若提供，与 AppState 共享同一缓存实例，
+    /// 确保文件监听器的缓存失效能被 IPC 命令感知。
+    pub cache: Option<DataCache>,
 }
 
 /// 上下文类型。
@@ -58,7 +61,7 @@ impl ServiceContext {
             SessionSearcher::new(config.projects_dir.clone(), config.todos_dir.clone(), config.fs_provider.clone()),
         ));
         let subagent_resolver = SubagentResolver::new(config.projects_dir.clone(), config.fs_provider.clone());
-        let cache = DataCache::new();
+        let cache = config.cache.unwrap_or_else(DataCache::new);
         let file_watcher = Arc::new(Mutex::new(FileWatcher::new(config.fs_provider.clone())));
         let todo_watcher = Arc::new(Mutex::new(FileWatcher::new(config.fs_provider.clone())));
 

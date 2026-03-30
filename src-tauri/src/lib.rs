@@ -34,7 +34,8 @@ use utils::{get_projects_base_path, get_todos_base_path};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let config_manager = Arc::new(ConfigManager::new());
-  let app_state = Arc::new(RwLock::new(AppState::new(config_manager.clone())));
+  let shared_cache = infrastructure::DataCache::new();
+  let app_state = Arc::new(RwLock::new(AppState::new(config_manager.clone(), shared_cache.clone())));
 
   // Zoom factor state: track zoom since Tauri v2 has set_zoom() but no zoom() getter.
   // Store f64 as bits in AtomicU64 for lock-free concurrent access.
@@ -153,6 +154,7 @@ pub fn run() {
           projects_dir: get_projects_base_path(),
           todos_dir: get_todos_base_path(),
           fs_provider: Arc::new(LocalFsProvider::new()),
+          cache: Some(shared_cache.clone()),
         });
         mgr.register_context(local_context)
           .expect("Failed to register local context");
