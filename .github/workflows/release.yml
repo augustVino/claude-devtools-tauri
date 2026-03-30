@@ -55,36 +55,111 @@ jobs:
           # package.json
           jq --arg v "$VERSION" '.version = $v' package.json > tmp.json && mv tmp.json package.json
 
-      - name: Build and Release
+      - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'claude-devtools ${{ github.ref_name }}'
-          releaseBody: |
-            ## 📦 下载
-
-            | 平台 | 文件 |
-            |------|------|
-            | macOS (Apple Silicon) | `.dmg` |
-
-            > 安装后应用无法打开？
-            ```bash
-            xattr -cr /Applications/claude-devtools.app
-            ```
-
-            ## 📄 开源声明
-
-            本项目衍生自 [claude-devtools](https://github.com/matt1398/claude-devtools)，原作者 matt1398 及贡献者，采用 MIT 协议。
-
-            ---
-
-            ## 📝 更新日志
-
-            See commits between tags for full changelog.
+          tagName: ''
+          releaseName: ''
+          releaseBody: ''
           releaseDraft: false
           prerelease: false
           args: --target aarch64-apple-darwin
+
+      - name: Upload updater JSON
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          BUNDLE_DIR="src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+
+          SIG=$(base64 < "${BUNDLE_DIR}/claude-devtools.app.tar.gz.sig" | tr -d '\n')
+          DOWNLOAD_URL="https://github.com/augustVino/claude-devtools-tauri/releases/download/${GITHUB_REF_NAME}/claude-devtools.app.tar.gz"
+
+          cat > latest.json <<EOF
+          {
+            "version": "${VERSION}",
+            "notes": "",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "darwin-aarch64": {
+                "signature": "${SIG}",
+                "url": "${DOWNLOAD_URL}"
+              }
+            }
+          }
+          EOF
+
+          # Get or create release
+          RELEASE_ID=$(gh api "repos/augustVino/claude-devtools-tauri/releases/tags/${GITHUB_REF_NAME}" --jq '.id' 2>/dev/null)
+
+          if [ -z "$RELEASE_ID" ]; then
+            echo "Release not found, skipping updater JSON upload"
+            exit 0
+          fi
+
+          # Delete existing latest.json if present
+          ASSET_ID=$(gh api "repos/augustVino/claude-devtools-tauri/releases/${RELEASE_ID}/assets" --jq '.[] | select(.name == "latest.json") | .id' 2>/dev/null)
+          if [ -n "$ASSET_ID" ]; then
+            gh api "repos/augustVino/claude-devtools-tauri/releases/assets/${ASSET_ID}" -X DELETE
+          fi
+
+          # Upload new latest.json
+          gh api "repos/augustVino/claude-devtools-tauri/releases/${RELEASE_ID}/assets" \
+            -f latest.json \
+            -H "Content-Type: application/octet-stream" \
+            --input latest.json
+
+          echo "latest.json uploaded successfully"
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          # Generate changelog
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log --pretty=format:"- %h %s" "${PREV_TAG}..HEAD")
+          else
+            CHANGELOG=$(git log --pretty=format:"- %h %s" -n 20)
+          fi
+
+          # Update release notes (release already created by tauri-action if tagName was set)
+          RELEASE_ID=$(gh api "repos/augustVino/claude-devtools-tauri/releases/tags/${GITHUB_REF_NAME}" --jq '.id' 2>/dev/null)
+
+          if [ -n "$RELEASE_ID" ]; then
+            gh api "repos/augustVino/claude-devtools-tauri/releases/${RELEASE_ID}" \
+              -X PATCH \
+              -f name="claude-devtools ${GITHUB_REF_NAME}" \
+              -f body="$(cat <<BODY
+          ## 📦 下载
+
+          | 平台 | 文件 |
+          |------|------|
+          | macOS (Apple Silicon) | `.dmg` |
+
+          > 安装后应用无法打开？
+          \`\`\`bash
+          xattr -cr /Applications/claude-devtools.app
+          \`\`\`
+
+          ## 📄 开源声明
+
+          本项目衍生自 [claude-devtools](https://github.com/matt1398/claude-devtools)，原作者 matt1398 及贡献者，采用 MIT 协议。
+
+          ---
+
+          ## 📝 更新日志
+
+          ${CHANGELOG}
+          BODY
+          )"
+          else
+            echo "Release not found, something went wrong"
+            exit 1
+          fi
