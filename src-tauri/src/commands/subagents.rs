@@ -1,84 +1,91 @@
 //! IPC Handlers for Subagent Operations.
-//!
-//! Handlers:
-//! - get_subagent_detail: Get detailed info about a subagent session
 
-use serde::Serialize;
-use tauri::command;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tauri::{command, State};
 
-use crate::discovery::SubagentResolver;
-use crate::parsing::parse_session_file;
-use crate::types::domain::SessionMetrics;
-use crate::utils::get_projects_base_path;
+use crate::commands::guards;
+use crate::commands::AppState;
+use crate::types::chunks::SubagentDetail;
 
-/// Subagent detail with full session data.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SubagentDetail {
-    pub id: String,
-    pub file_path: String,
-    pub start_time_ms: u64,
-    pub end_time_ms: u64,
-    pub duration_ms: u64,
-    pub is_parallel: bool,
-    pub is_ongoing: bool,
-    pub metrics: SessionMetrics,
-    pub messages: Vec<crate::types::messages::ParsedMessage>,
-    pub task_id: Option<String>,
-}
-
-/// Get detailed information about a subagent.
 #[command]
 pub async fn get_subagent_detail(
+    state: State<'_, Arc<RwLock<AppState>>>,
     project_id: String,
     session_id: String,
     subagent_id: String,
-) -> Option<SubagentDetail> {
-    let projects_dir = get_projects_base_path();
+) -> Result<Option<SubagentDetail>, String> {
+    // Validate inputs
+    let safe_project_id = guards::validate_project_id(&project_id)
+        .map_err(|e| { log::error!("Invalid projectId: {e}"); e })?;
+    let safe_session_id = guards::validate_session_id(&session_id)
+        .map_err(|e| { log::error!("Invalid sessionId: {e}"); e })?;
+    let safe_subagent_id = guards::validate_subagent_id(&subagent_id)
+        .map_err(|e| { log::error!("Invalid subagentId: {e}"); e })?;
 
-    // Construct path to subagent file (files are named "agent-{id}.jsonl")
-    let base_dir = crate::utils::path_decoder::extract_base_dir(&project_id);
-    let subagent_path = projects_dir
-        .join(base_dir)
-        .join(&session_id)
-        .join("subagents")
-        .join(format!("agent-{}.jsonl", subagent_id));
+    let app_state = state.read().await;
 
-    if !subagent_path.exists() {
-        return None;
+    let projects_dir = crate::utils::path_decoder::get_projects_base_path();
+
+    // Check cache — DataCache stores serde_json::Value, deserialize back
+    if let Some(cached_value) = app_state.cache.get_subagent(
+        &safe_project_id, &safe_session_id, &safe_subagent_id
+    ).await {
+        drop(app_state);
+        if let Ok(cached) = serde_json::from_value::<SubagentDetail>(cached_value) {
+            return Ok(Some(cached));
+        }
+        // cache corruption — fall through to rebuild
     }
 
-    // Parse subagent file
-    let parsed = parse_session_file(&subagent_path).await;
+    // Build subagent path
+    let base_dir = crate::utils::path_decoder::extract_base_dir(&safe_project_id);
+    let subagent_path = projects_dir
+        .join(&base_dir)
+        .join(&safe_session_id)
+        .join("subagents")
+        .join(format!("agent-{safe_subagent_id}.jsonl"));
 
-    // Resolve subagent to get timing/parallel info
-    let resolver = SubagentResolver::new(projects_dir, std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()));
-    let processes = resolver.resolve_subagents(&project_id, &session_id, None, None);
+    if !subagent_path.exists() {
+        return Ok(None);
+    }
 
-    // Find matching process
-    let process = processes.iter().find(|p| p.id == subagent_id);
+    // Parse
+    let messages = crate::parsing::jsonl_parser::parse_jsonl_file(&subagent_path).await;
+    if messages.is_empty() {
+        return Ok(None);
+    }
 
-    let (start_time_ms, end_time_ms, duration_ms, is_parallel, is_ongoing, task_id) = process
-        .map(|p| (
-            p.start_time_ms,
-            p.end_time_ms,
-            p.duration_ms,
-            p.is_parallel,
-            p.is_ongoing,
-            p.task_id.clone()
-        ))
-        .unwrap_or((0, 0, 0, false, false, None));
+    // Resolve nested subagents using SubagentResolver
+    let fs_provider: Arc<dyn crate::infrastructure::fs_provider::FsProvider> = Arc::new(
+        crate::infrastructure::fs_provider::LocalFsProvider::new()
+    );
+    let resolver = crate::discovery::subagent_resolver::SubagentResolver::new(
+        projects_dir.clone(),
+        fs_provider,
+    );
+    // Pass subagent_id as session_id to resolve nested subagents under the subagent's own directory
+    let nested = resolver.resolve_subagents(
+        &safe_project_id, &safe_subagent_id, None, None
+    );
 
-    Some(SubagentDetail {
-        id: subagent_id,
-        file_path: subagent_path.to_string_lossy().to_string(),
-        start_time_ms,
-        end_time_ms,
-        duration_ms,
-        is_parallel,
-        is_ongoing,
-        metrics: parsed.metrics,
-        messages: parsed.messages,
-        task_id,
-    })
+    // Convert resolver::Process → types::chunks::Process via From trait
+    let nested_chunks: Vec<crate::types::chunks::Process> =
+        nested.into_iter().map(Into::into).collect();
+
+    // Build detail — ChunkBuilder is a unit struct
+    let detail = crate::analysis::chunk_builder::ChunkBuilder::build_subagent_detail(
+        &safe_subagent_id, &messages, &nested_chunks
+    );
+
+    // Cache — serialize to serde_json::Value for DataCache
+    // Re-acquire read lock for cache write
+    let app_state = state.read().await;
+    if let Ok(value) = serde_json::to_value(&detail) {
+        app_state.cache.set_subagent(
+            &safe_project_id, &safe_session_id, &safe_subagent_id, value
+        ).await;
+    }
+
+    Ok(Some(detail))
 }
