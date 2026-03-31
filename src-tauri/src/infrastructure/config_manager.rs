@@ -152,7 +152,8 @@ impl ConfigManager {
 
     /// 分区更新配置。
     ///
-    /// 仅支持 `notifications`、`general`、`display`、`sessions` 四个分区。
+    /// 支持六个分区：`notifications`、`general`、`display`、`sessions`、`ssh`、`httpServer`。
+    /// 更新前会对 payload 进行字段级校验（与 Electron 端对齐），包括类型、枚举、范围和路径检查。
     /// 更新后自动与默认值合并，确保新增字段有默认值。
     /// 更新完成后自动持久化到磁盘。
     pub fn update_config(
@@ -174,36 +175,8 @@ impl ConfigManager {
                 return Err(format!("unknown config section: {section}"));
             }
 
-            // Validate general section fields
-            if section == "general" {
-                if let Some(theme) = data.get("theme").and_then(|v| v.as_str()) {
-                    if !["dark", "light", "system"].contains(&theme) {
-                        return Err(format!("Invalid theme value: {theme}. Must be one of: dark, light, system"));
-                    }
-                }
-                if let Some(default_tab) = data.get("defaultTab").and_then(|v| v.as_str()) {
-                    if !["dashboard", "last-session"].contains(&default_tab) {
-                        return Err(format!("Invalid defaultTab value: {default_tab}. Must be one of: dashboard, last-session"));
-                    }
-                }
-                if let Some(path) = data.get("claudeRootPath").and_then(|v| v.as_str()) {
-                    if !path.is_empty() {
-                        let p = std::path::Path::new(path);
-                        if !p.is_absolute() {
-                            return Err("claudeRootPath must be an absolute path".to_string());
-                        }
-                    }
-                }
-            }
-
-            // Validate notifications section fields
-            if section == "notifications" {
-                if let Some(snooze) = data.get("snoozeMinutes").and_then(|v| v.as_u64()) {
-                    if snooze < 1 || snooze > 1440 {
-                        return Err("notifications.snoozeMinutes must be between 1 and 1440".to_string());
-                    }
-                }
-            }
+            // Unified payload validation (aligned with Electron's validateConfigUpdatePayload)
+            validate_update_payload(section, &data)?;
 
             let updated = update_section(&current_json, section, &data);
             let merged: AppConfig = merge_with_defaults(&updated)?;
@@ -599,6 +572,358 @@ fn json_merge(base: &serde_json::Value, patch: &serde_json::Value) -> serde_json
     }
 }
 
+/// 校验 `config:update` 的 payload，与 Electron 端 `validateConfigUpdatePayload` 对齐。
+///
+/// 返回 `Ok(())` 表示校验通过，`Err(message)` 表示校验失败。
+fn validate_update_payload(section: &str, data: &serde_json::Value) -> Result<(), String> {
+    let obj = match data {
+        serde_json::Value::Object(map) if !map.is_empty() => map,
+        serde_json::Value::Object(_) => return Ok(()), // 空对象，无字段需要校验
+        _ => return Err(format!("{section} update must be an object")),
+    };
+
+    match section {
+        "notifications" => validate_notifications_payload(obj),
+        "general" => validate_general_payload(obj),
+        "display" => validate_display_payload(obj),
+        "httpServer" => validate_http_server_payload(obj),
+        "ssh" => validate_ssh_payload(obj),
+        "sessions" => Ok(()), // sessions 分区由内部逻辑管理，不对外暴露更新
+        _ => Ok(()), // 其他 section 已在 update_config 白名单中拦截
+    }
+}
+
+/// 校验 notifications 分区的 payload
+fn validate_notifications_payload(data: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    let allowed_keys = [
+        "enabled",
+        "soundEnabled",
+        "includeSubagentErrors",
+        "ignoredRegex",
+        "ignoredRepositories",
+        "snoozedUntil",
+        "snoozeMinutes",
+        "triggers",
+    ];
+
+    for key in data.keys() {
+        if !allowed_keys.contains(&key.as_str()) {
+            return Err(format!("notifications.{key} is not supported via config:update"));
+        }
+    }
+
+    // enabled, soundEnabled, includeSubagentErrors: must be boolean
+    for bool_key in &["enabled", "soundEnabled", "includeSubagentErrors"] {
+        if let Some(v) = data.get(*bool_key) {
+            if !v.is_boolean() {
+                return Err(format!("notifications.{bool_key} must be a boolean"));
+            }
+        }
+    }
+
+    // ignoredRegex: must be string[]
+    if let Some(v) = data.get("ignoredRegex") {
+        if !v.is_array() || !v.as_array().unwrap().iter().all(|item| item.is_string()) {
+            return Err("notifications.ignoredRegex must be a string[]".to_string());
+        }
+    }
+
+    // ignoredRepositories: must be string[]
+    if let Some(v) = data.get("ignoredRepositories") {
+        if !v.is_array() || !v.as_array().unwrap().iter().all(|item| item.is_string()) {
+            return Err("notifications.ignoredRepositories must be a string[]".to_string());
+        }
+    }
+
+    // snoozedUntil: must be number >= 0 or null
+    if let Some(v) = data.get("snoozedUntil") {
+        match v {
+            serde_json::Value::Null => {}
+            serde_json::Value::Number(n) => {
+                if n.as_f64().is_none_or(|f| f.is_nan() || f.is_infinite() || f < 0.0) {
+                    return Err("notifications.snoozedUntil must be a non-negative number or null".to_string());
+                }
+            }
+            _ => return Err("notifications.snoozedUntil must be a non-negative number or null".to_string()),
+        }
+    }
+
+    // snoozeMinutes: must be integer 1-1440
+    if let Some(v) = data.get("snoozeMinutes") {
+        match v.as_i64() {
+            Some(n) => {
+                if n < 1 || n > 1440 {
+                    return Err("notifications.snoozeMinutes must be between 1 and 1440".to_string());
+                }
+            }
+            None => return Err("notifications.snoozeMinutes must be an integer".to_string()),
+        }
+    }
+
+    // triggers: must be valid trigger array
+    if let Some(v) = data.get("triggers") {
+        let arr = match v.as_array() {
+            Some(a) => a,
+            None => return Err("notifications.triggers must be an array".to_string()),
+        };
+        for (i, trigger) in arr.iter().enumerate() {
+            validate_trigger_payload(trigger).map_err(|e| format!("notifications.triggers[{i}]: {e}"))?;
+        }
+    }
+
+    Ok(())
+}
+
+/// 校验单个 trigger 对象（与 Electron 端 isValidTrigger 对齐）
+fn validate_trigger_payload(trigger: &serde_json::Value) -> Result<(), String> {
+    let obj = trigger
+        .as_object()
+        .ok_or("trigger must be an object")?;
+
+    // id: non-empty string
+    match obj.get("id").and_then(|v| v.as_str()) {
+        Some(s) if !s.trim().is_empty() => {}
+        _ => return Err("trigger.id must be a non-empty string".to_string()),
+    }
+
+    // name: non-empty string
+    match obj.get("name").and_then(|v| v.as_str()) {
+        Some(s) if !s.trim().is_empty() => {}
+        _ => return Err("trigger.name must be a non-empty string".to_string()),
+    }
+
+    // enabled: boolean (required)
+    match obj.get("enabled").and_then(|v| v.as_bool()) {
+        Some(_) => {}
+        None => return Err("trigger.enabled must be a boolean".to_string()),
+    }
+
+    // contentType: must be one of valid values (required)
+    let valid_content_types = ["tool_result", "tool_use", "thinking", "text"];
+    match obj.get("contentType").and_then(|v| v.as_str()) {
+        Some(s) if valid_content_types.contains(&s) => {}
+        _ => return Err("trigger.contentType must be one of: tool_result, tool_use, thinking, text".to_string()),
+    }
+
+    // mode: must be one of valid values (required)
+    let valid_modes = ["error_status", "content_match", "token_threshold"];
+    match obj.get("mode").and_then(|v| v.as_str()) {
+        Some(s) if valid_modes.contains(&s) => {}
+        _ => return Err("trigger.mode must be one of: error_status, content_match, token_threshold".to_string()),
+    }
+
+    Ok(())
+}
+
+/// 校验 general 分区的 payload
+fn validate_general_payload(data: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    let allowed_keys = [
+        "launchAtLogin",
+        "showDockIcon",
+        "theme",
+        "defaultTab",
+        "claudeRootPath",
+        "autoExpandAIGroups",
+        "useNativeTitleBar",
+    ];
+
+    for key in data.keys() {
+        if !allowed_keys.contains(&key.as_str()) {
+            return Err(format!("general.{key} is not a valid setting"));
+        }
+    }
+
+    // launchAtLogin, showDockIcon, autoExpandAIGroups, useNativeTitleBar: must be boolean
+    for bool_key in &["launchAtLogin", "showDockIcon", "autoExpandAIGroups", "useNativeTitleBar"] {
+        if let Some(v) = data.get(*bool_key) {
+            if !v.is_boolean() {
+                return Err(format!("general.{bool_key} must be a boolean"));
+            }
+        }
+    }
+
+    // theme: enum
+    if let Some(v) = data.get("theme") {
+        let valid = ["dark", "light", "system"];
+        match v.as_str() {
+            Some(s) if valid.contains(&s) => {}
+            _ => return Err("general.theme must be one of: dark, light, system".to_string()),
+        }
+    }
+
+    // defaultTab: enum
+    if let Some(v) = data.get("defaultTab") {
+        let valid = ["dashboard", "last-session"];
+        match v.as_str() {
+            Some(s) if valid.contains(&s) => {}
+            _ => return Err("general.defaultTab must be one of: dashboard, last-session".to_string()),
+        }
+    }
+
+    // claudeRootPath: must be absolute path or null
+    if let Some(v) = data.get("claudeRootPath") {
+        match v {
+            serde_json::Value::Null => {}
+            serde_json::Value::String(s) if s.trim().is_empty() => {}
+            serde_json::Value::String(s) => {
+                if !std::path::Path::new(s.trim()).is_absolute() {
+                    return Err("general.claudeRootPath must be an absolute path".to_string());
+                }
+            }
+            _ => return Err("general.claudeRootPath must be an absolute path string or null".to_string()),
+        }
+    }
+
+    Ok(())
+}
+
+/// 校验 display 分区的 payload
+fn validate_display_payload(data: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    let allowed_keys = ["showTimestamps", "compactMode", "syntaxHighlighting"];
+
+    for key in data.keys() {
+        if !allowed_keys.contains(&key.as_str()) {
+            return Err(format!("display.{key} is not a valid setting"));
+        }
+    }
+
+    // All fields must be boolean
+    for bool_key in &allowed_keys {
+        if let Some(v) = data.get(*bool_key) {
+            if !v.is_boolean() {
+                return Err(format!("display.{bool_key} must be a boolean"));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// 校验 httpServer 分区的 payload
+fn validate_http_server_payload(data: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    let allowed_keys = ["enabled", "port"];
+
+    for key in data.keys() {
+        if !allowed_keys.contains(&key.as_str()) {
+            return Err(format!("httpServer.{key} is not a valid setting"));
+        }
+    }
+
+    // enabled: must be boolean
+    if let Some(v) = data.get("enabled") {
+        if !v.is_boolean() {
+            return Err("httpServer.enabled must be a boolean".to_string());
+        }
+    }
+
+    // port: must be integer 1024-65535
+    if let Some(v) = data.get("port") {
+        match v.as_i64() {
+            Some(n) => {
+                if n < 1024 || n > 65535 {
+                    return Err("httpServer.port must be an integer between 1024 and 65535".to_string());
+                }
+            }
+            None => return Err("httpServer.port must be an integer".to_string()),
+        }
+    }
+
+    Ok(())
+}
+
+/// 校验 ssh 分区的 payload
+fn validate_ssh_payload(data: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    let allowed_keys = ["autoReconnect", "lastConnection", "profiles", "lastActiveContextId"];
+
+    for key in data.keys() {
+        if !allowed_keys.contains(&key.as_str()) {
+            return Err(format!("ssh.{key} is not a valid setting"));
+        }
+    }
+
+    // autoReconnect: must be boolean
+    if let Some(v) = data.get("autoReconnect") {
+        if !v.is_boolean() {
+            return Err("ssh.autoReconnect must be a boolean".to_string());
+        }
+    }
+
+    // lastActiveContextId: must be string
+    if let Some(v) = data.get("lastActiveContextId") {
+        if !v.is_string() {
+            return Err("ssh.lastActiveContextId must be a string".to_string());
+        }
+    }
+
+    // lastConnection: must be object or null
+    if let Some(v) = data.get("lastConnection") {
+        match v {
+            serde_json::Value::Null => {}
+            serde_json::Value::Object(_) => {}
+            _ => return Err("ssh.lastConnection must be an object or null".to_string()),
+        }
+    }
+
+    // profiles: must be valid profile array
+    if let Some(v) = data.get("profiles") {
+        let arr = match v.as_array() {
+            Some(a) => a,
+            None => return Err("ssh.profiles must be an array".to_string()),
+        };
+        for (i, profile) in arr.iter().enumerate() {
+            validate_ssh_profile_payload(profile).map_err(|e| format!("ssh.profiles[{i}]: {e}"))?;
+        }
+    }
+
+    Ok(())
+}
+
+/// 校验单个 SSH profile 对象
+fn validate_ssh_profile_payload(profile: &serde_json::Value) -> Result<(), String> {
+    let obj = profile
+        .as_object()
+        .ok_or("SSH profile must be an object")?;
+
+    // id: non-empty string (required)
+    match obj.get("id").and_then(|v| v.as_str()) {
+        Some(s) if !s.trim().is_empty() => {}
+        _ => return Err("id must be a non-empty string".to_string()),
+    }
+
+    // name: must be string (required)
+    match obj.get("name") {
+        Some(v) if v.is_string() => {}
+        _ => return Err("name must be a string".to_string()),
+    }
+
+    // host: must be string (required)
+    match obj.get("host") {
+        Some(v) if v.is_string() => {}
+        _ => return Err("host must be a string".to_string()),
+    }
+
+    // port: must be number (required)
+    match obj.get("port") {
+        Some(v) if v.is_number() => {}
+        _ => return Err("port must be a number".to_string()),
+    }
+
+    // username: must be string (required)
+    match obj.get("username") {
+        Some(v) if v.is_string() => {}
+        _ => return Err("username must be a string".to_string()),
+    }
+
+    // authMethod: must be one of valid values (required)
+    let valid_methods = ["password", "privateKey", "agent", "auto"];
+    match obj.get("authMethod").and_then(|v| v.as_str()) {
+        Some(s) if valid_methods.contains(&s) => {}
+        _ => return Err("authMethod must be one of: password, privateKey, agent, auto".to_string()),
+    }
+
+    Ok(())
+}
+
 /// 更新 JSON 中指定分区的值（深度合并）
 fn update_section(current: &serde_json::Value, section: &str, data: &serde_json::Value) -> serde_json::Value {
     let mut updated = current.clone();
@@ -750,5 +1075,264 @@ mod tests {
         assert!(triggers.iter().any(|t| t.id == "builtin-bash-command"));
         assert!(triggers.iter().any(|t| t.id == "builtin-high-token-usage"));
         cleanup(&p);
+    }
+
+    // ========== validate_update_payload tests ==========
+
+    #[test]
+    fn test_validate_rejects_unknown_key_in_notifications() {
+        let data = serde_json::json!({"unknownKey": true});
+        let err = validate_update_payload("notifications", &data).unwrap_err();
+        assert!(err.contains("notifications.unknownKey is not supported"));
+    }
+
+    #[test]
+    fn test_validate_rejects_unknown_key_in_general() {
+        let data = serde_json::json!({"unknownKey": "foo"});
+        let err = validate_update_payload("general", &data).unwrap_err();
+        assert!(err.contains("general.unknownKey is not a valid setting"));
+    }
+
+    #[test]
+    fn test_validate_rejects_unknown_key_in_display() {
+        let data = serde_json::json!({"unknownKey": 42});
+        let err = validate_update_payload("display", &data).unwrap_err();
+        assert!(err.contains("display.unknownKey is not a valid setting"));
+    }
+
+    #[test]
+    fn test_validate_rejects_unknown_key_in_http_server() {
+        let data = serde_json::json!({"unknownKey": true});
+        let err = validate_update_payload("httpServer", &data).unwrap_err();
+        assert!(err.contains("httpServer.unknownKey is not a valid setting"));
+    }
+
+    #[test]
+    fn test_validate_rejects_unknown_key_in_ssh() {
+        let data = serde_json::json!({"unknownKey": true});
+        let err = validate_update_payload("ssh", &data).unwrap_err();
+        assert!(err.contains("ssh.unknownKey is not a valid setting"));
+    }
+
+    #[test]
+    fn test_validate_empty_object_passes() {
+        assert!(validate_update_payload("notifications", &serde_json::json!({})).is_ok());
+        assert!(validate_update_payload("general", &serde_json::json!({})).is_ok());
+        assert!(validate_update_payload("display", &serde_json::json!({})).is_ok());
+        assert!(validate_update_payload("httpServer", &serde_json::json!({})).is_ok());
+        assert!(validate_update_payload("ssh", &serde_json::json!({})).is_ok());
+    }
+
+    #[test]
+    fn test_validate_non_object_rejects() {
+        let err = validate_update_payload("general", &serde_json::json!("string")).unwrap_err();
+        assert!(err.contains("must be an object"));
+    }
+
+    // --- notifications ---
+
+    #[test]
+    fn test_validate_notifications_bool_fields() {
+        // valid
+        assert!(validate_update_payload("notifications", &serde_json::json!({"enabled": true})).is_ok());
+        assert!(validate_update_payload("notifications", &serde_json::json!({"soundEnabled": false})).is_ok());
+        assert!(validate_update_payload("notifications", &serde_json::json!({"includeSubagentErrors": true})).is_ok());
+        // invalid
+        let err = validate_update_payload("notifications", &serde_json::json!({"enabled": "true"})).unwrap_err();
+        assert!(err.contains("must be a boolean"));
+        let err = validate_update_payload("notifications", &serde_json::json!({"includeSubagentErrors": 1})).unwrap_err();
+        assert!(err.contains("must be a boolean"));
+    }
+
+    #[test]
+    fn test_validate_notifications_snooze_minutes_range() {
+        assert!(validate_update_payload("notifications", &serde_json::json!({"snoozeMinutes": 1})).is_ok());
+        assert!(validate_update_payload("notifications", &serde_json::json!({"snoozeMinutes": 1440})).is_ok());
+        let err = validate_update_payload("notifications", &serde_json::json!({"snoozeMinutes": 0})).unwrap_err();
+        assert!(err.contains("between 1 and 1440"));
+        let err = validate_update_payload("notifications", &serde_json::json!({"snoozeMinutes": 1441})).unwrap_err();
+        assert!(err.contains("between 1 and 1440"));
+        let err = validate_update_payload("notifications", &serde_json::json!({"snoozeMinutes": 3.5})).unwrap_err();
+        assert!(err.contains("must be an integer"));
+    }
+
+    #[test]
+    fn test_validate_notifications_ignored_regex_type() {
+        assert!(validate_update_payload("notifications", &serde_json::json!({"ignoredRegex": ["pat1", "pat2"]})).is_ok());
+        let err = validate_update_payload("notifications", &serde_json::json!({"ignoredRegex": "not-array"})).unwrap_err();
+        assert!(err.contains("must be a string[]"));
+    }
+
+    #[test]
+    fn test_validate_notifications_ignored_repositories_type() {
+        assert!(validate_update_payload("notifications", &serde_json::json!({"ignoredRepositories": ["repo1", "repo2"]})).is_ok());
+        let err = validate_update_payload("notifications", &serde_json::json!({"ignoredRepositories": "not-array"})).unwrap_err();
+        assert!(err.contains("must be a string[]"));
+        let err = validate_update_payload("notifications", &serde_json::json!({"ignoredRepositories": [1, 2]})).unwrap_err();
+        assert!(err.contains("must be a string[]"));
+    }
+
+    #[test]
+    fn test_validate_notifications_snoozed_until() {
+        assert!(validate_update_payload("notifications", &serde_json::json!({"snoozedUntil": null})).is_ok());
+        assert!(validate_update_payload("notifications", &serde_json::json!({"snoozedUntil": 1234567890})).is_ok());
+        let err = validate_update_payload("notifications", &serde_json::json!({"snoozedUntil": -1})).unwrap_err();
+        assert!(err.contains("non-negative number or null"));
+    }
+
+    #[test]
+    fn test_validate_notifications_triggers() {
+        let valid_trigger = serde_json::json!({"id": "t1", "name": "Test", "enabled": true, "contentType": "tool_result", "mode": "error_status"});
+        assert!(validate_update_payload("notifications", &serde_json::json!({"triggers": [valid_trigger]})).is_ok());
+
+        // trigger without id
+        let bad_trigger = serde_json::json!({"name": "Test", "enabled": true, "contentType": "tool_result", "mode": "error_status"});
+        let err = validate_update_payload("notifications", &serde_json::json!({"triggers": [bad_trigger]})).unwrap_err();
+        assert!(err.contains("triggers[0]"));
+
+        // trigger without enabled (required)
+        let bad_trigger = serde_json::json!({"id": "t1", "name": "Test", "contentType": "tool_result", "mode": "error_status"});
+        let err = validate_update_payload("notifications", &serde_json::json!({"triggers": [bad_trigger]})).unwrap_err();
+        assert!(err.contains("enabled must be a boolean"));
+
+        // trigger without contentType (required)
+        let bad_trigger = serde_json::json!({"id": "t1", "name": "Test", "enabled": true, "mode": "error_status"});
+        let err = validate_update_payload("notifications", &serde_json::json!({"triggers": [bad_trigger]})).unwrap_err();
+        assert!(err.contains("contentType must be one of"));
+
+        // invalid contentType
+        let bad_content_type = serde_json::json!({"id": "t1", "name": "Test", "enabled": true, "contentType": "invalid", "mode": "error_status"});
+        let err = validate_update_payload("notifications", &serde_json::json!({"triggers": [bad_content_type]})).unwrap_err();
+        assert!(err.contains("contentType must be one of"));
+
+        // invalid mode
+        let bad_mode = serde_json::json!({"id": "t1", "name": "Test", "enabled": true, "contentType": "tool_result", "mode": "invalid"});
+        let err = validate_update_payload("notifications", &serde_json::json!({"triggers": [bad_mode]})).unwrap_err();
+        assert!(err.contains("mode must be one of"));
+    }
+
+    // --- general ---
+
+    #[test]
+    fn test_validate_general_theme_enum() {
+        assert!(validate_update_payload("general", &serde_json::json!({"theme": "dark"})).is_ok());
+        assert!(validate_update_payload("general", &serde_json::json!({"theme": "light"})).is_ok());
+        assert!(validate_update_payload("general", &serde_json::json!({"theme": "system"})).is_ok());
+        let err = validate_update_payload("general", &serde_json::json!({"theme": "invalid"})).unwrap_err();
+        assert!(err.contains("theme must be one of"));
+    }
+
+    #[test]
+    fn test_validate_general_default_tab_enum() {
+        assert!(validate_update_payload("general", &serde_json::json!({"defaultTab": "dashboard"})).is_ok());
+        assert!(validate_update_payload("general", &serde_json::json!({"defaultTab": "last-session"})).is_ok());
+        let err = validate_update_payload("general", &serde_json::json!({"defaultTab": "invalid"})).unwrap_err();
+        assert!(err.contains("defaultTab must be one of"));
+    }
+
+    #[test]
+    fn test_validate_general_claude_root_path() {
+        assert!(validate_update_payload("general", &serde_json::json!({"claudeRootPath": null})).is_ok());
+        assert!(validate_update_payload("general", &serde_json::json!({"claudeRootPath": ""})).is_ok());
+        assert!(validate_update_payload("general", &serde_json::json!({"claudeRootPath": "/absolute/path"})).is_ok());
+        let err = validate_update_payload("general", &serde_json::json!({"claudeRootPath": "relative/path"})).unwrap_err();
+        assert!(err.contains("must be an absolute path"));
+        // non-string type
+        let err = validate_update_payload("general", &serde_json::json!({"claudeRootPath": 42})).unwrap_err();
+        assert!(err.contains("must be an absolute path string or null"));
+    }
+
+    #[test]
+    fn test_validate_general_bool_fields() {
+        assert!(validate_update_payload("general", &serde_json::json!({"launchAtLogin": true})).is_ok());
+        assert!(validate_update_payload("general", &serde_json::json!({"showDockIcon": false})).is_ok());
+        assert!(validate_update_payload("general", &serde_json::json!({"autoExpandAIGroups": true})).is_ok());
+        assert!(validate_update_payload("general", &serde_json::json!({"useNativeTitleBar": false})).is_ok());
+        let err = validate_update_payload("general", &serde_json::json!({"launchAtLogin": "true"})).unwrap_err();
+        assert!(err.contains("must be a boolean"));
+    }
+
+    // --- httpServer ---
+
+    #[test]
+    fn test_validate_http_server_port_range() {
+        assert!(validate_update_payload("httpServer", &serde_json::json!({"port": 1024})).is_ok());
+        assert!(validate_update_payload("httpServer", &serde_json::json!({"port": 65535})).is_ok());
+        let err = validate_update_payload("httpServer", &serde_json::json!({"port": 0})).unwrap_err();
+        assert!(err.contains("between 1024 and 65535"));
+        let err = validate_update_payload("httpServer", &serde_json::json!({"port": 1023})).unwrap_err();
+        assert!(err.contains("between 1024 and 65535"));
+        let err = validate_update_payload("httpServer", &serde_json::json!({"port": 65536})).unwrap_err();
+        assert!(err.contains("between 1024 and 65535"));
+    }
+
+    // --- ssh ---
+
+    #[test]
+    fn test_validate_ssh_auth_method_enum() {
+        let valid_profiles = serde_json::json!([{"id": "p1", "name": "Test", "host": "h", "port": 22, "username": "u", "authMethod": "password"}]);
+        assert!(validate_update_payload("ssh", &serde_json::json!({"profiles": valid_profiles})).is_ok());
+
+        for valid in &["privateKey", "agent", "auto"] {
+            let profiles = serde_json::json!([{"id": "p1", "name": "Test", "host": "h", "port": 22, "username": "u", "authMethod": valid}]);
+            assert!(validate_update_payload("ssh", &serde_json::json!({"profiles": profiles})).is_ok());
+        }
+
+        let bad_profiles = serde_json::json!([{"id": "p1", "name": "Test", "host": "h", "port": 22, "username": "u", "authMethod": "invalid"}]);
+        let err = validate_update_payload("ssh", &serde_json::json!({"profiles": bad_profiles})).unwrap_err();
+        assert!(err.contains("authMethod must be one of"));
+    }
+
+    #[test]
+    fn test_validate_ssh_profile_required_fields() {
+        // missing id
+        let bad = serde_json::json!([{"name": "Test", "host": "h", "port": 22, "username": "u", "authMethod": "password"}]);
+        let err = validate_update_payload("ssh", &serde_json::json!({"profiles": bad})).unwrap_err();
+        assert!(err.contains("id must be a non-empty string"));
+
+        // empty id
+        let bad = serde_json::json!([{"id": "", "name": "Test"}]);
+        let err = validate_update_payload("ssh", &serde_json::json!({"profiles": bad})).unwrap_err();
+        assert!(err.contains("id must be a non-empty string"));
+
+        // missing name (required)
+        let bad = serde_json::json!([{"id": "p1", "host": "h", "port": 22, "username": "u", "authMethod": "password"}]);
+        let err = validate_update_payload("ssh", &serde_json::json!({"profiles": bad})).unwrap_err();
+        assert!(err.contains("name must be a string"));
+
+        // missing host (required)
+        let bad = serde_json::json!([{"id": "p1", "name": "Test", "port": 22, "username": "u", "authMethod": "password"}]);
+        let err = validate_update_payload("ssh", &serde_json::json!({"profiles": bad})).unwrap_err();
+        assert!(err.contains("host must be a string"));
+
+        // missing authMethod (required)
+        let bad = serde_json::json!([{"id": "p1", "name": "Test", "host": "h", "port": 22, "username": "u"}]);
+        let err = validate_update_payload("ssh", &serde_json::json!({"profiles": bad})).unwrap_err();
+        assert!(err.contains("authMethod must be one of"));
+    }
+
+    #[test]
+    fn test_validate_ssh_last_connection_types() {
+        assert!(validate_update_payload("ssh", &serde_json::json!({"lastConnection": null})).is_ok());
+        assert!(validate_update_payload("ssh", &serde_json::json!({"lastConnection": {}})).is_ok());
+        let err = validate_update_payload("ssh", &serde_json::json!({"lastConnection": "string"})).unwrap_err();
+        assert!(err.contains("must be an object or null"));
+    }
+
+    // --- display ---
+
+    #[test]
+    fn test_validate_display_bool_fields() {
+        assert!(validate_update_payload("display", &serde_json::json!({"showTimestamps": true})).is_ok());
+        let err = validate_update_payload("display", &serde_json::json!({"showTimestamps": "true"})).unwrap_err();
+        assert!(err.contains("must be a boolean"));
+    }
+
+    // --- sessions ---
+
+    #[test]
+    fn test_validate_sessions_always_passes() {
+        assert!(validate_update_payload("sessions", &serde_json::json!({"anything": "goes"})).is_ok());
+        assert!(validate_update_payload("sessions", &serde_json::json!({})).is_ok());
     }
 }
