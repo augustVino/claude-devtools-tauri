@@ -65,7 +65,7 @@ impl FsProvider for SshFsProvider {
     }
 
     fn read_dir(&self, _path: &Path) -> Result<Vec<FsDirent>, String> {
-        Ok(Vec::new())
+        Err("SFTP not yet implemented".into())
     }
 }
 
@@ -137,11 +137,11 @@ mod tests {
     // ── placeholder empty ────────────────────────────────────────
 
     #[test]
-    fn test_read_dir_returns_empty() {
+    fn test_read_dir_returns_error() {
         let p = provider();
         let result = p.read_dir(PathBuf::from("/some/dir").as_path());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "SFTP not yet implemented");
     }
 
     // ── Debug trait ──────────────────────────────────────────────
