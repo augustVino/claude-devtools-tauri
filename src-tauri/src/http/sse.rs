@@ -7,8 +7,9 @@ use tokio::sync::broadcast;
 
 use crate::events::{NotificationUpdatedPayload, TodoChangeEvent};
 use crate::infrastructure::context_manager::ContextInfo;
-use crate::types::config::StoredNotification;
+use crate::types::config::{DetectedError, StoredNotification};
 use crate::types::domain::{FileChangeEvent, FileChangeType};
+use crate::types::ssh::SshConnectionStatus;
 
 /// 后端事件类型 — 从各事件源统一收集后广播给 SSE 客户端。
 #[derive(Debug, Clone, Serialize)]
@@ -18,7 +19,9 @@ pub enum BackendEvent {
     TodoChange(TodoChangeEvent),
     NotificationNew(StoredNotification),
     NotificationUpdated(NotificationUpdatedPayload),
+    NotificationClicked(DetectedError),
     ContextChanged(ContextInfo),
+    SshStatusChanged(SshConnectionStatus),
 }
 
 impl BackendEvent {
@@ -29,7 +32,9 @@ impl BackendEvent {
             BackendEvent::TodoChange(_) => "todo-change",
             BackendEvent::NotificationNew(_) => "notification:new",
             BackendEvent::NotificationUpdated(_) => "notification:updated",
+            BackendEvent::NotificationClicked(_) => "notification:clicked",
             BackendEvent::ContextChanged(_) => "context:changed",
+            BackendEvent::SshStatusChanged(_) => "ssh:status",
         }
     }
 }

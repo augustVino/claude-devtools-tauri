@@ -10,7 +10,7 @@ use crate::http::server::{self, HttpServerHandle, HttpServerStatus};
 use crate::http::sse::SSEBroadcaster;
 use crate::http::state::HttpState;
 use crate::infrastructure::fs_provider::LocalFsProvider;
-use crate::infrastructure::{ContextManager, NotificationManager, SshConnectionManager};
+use crate::infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConnectionManager};
 use crate::utils::{get_projects_base_path, get_todos_base_path};
 
 /// 获取 HTTP 服务器状态。
@@ -81,6 +81,10 @@ pub async fn start(
             app_handle: app.clone(),
             app_state: state.inner().clone(),
             broadcaster,
+            config_manager: app
+                .state::<Arc<ConfigManager>>()
+                .inner()
+                .clone(),
             notification_manager,
             searcher,
             context_manager,

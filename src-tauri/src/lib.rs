@@ -200,12 +200,15 @@ pub fn run() {
 
       // 启动 SSH 状态事件转发任务
       let app_handle_for_ssh = app.handle().clone();
+      let ssh_broadcaster = app_handle_for_ssh.state::<crate::http::sse::SSEBroadcaster>().inner().clone();
       tauri::async_runtime::spawn(async move {
         loop {
           match ssh_status_rx.recv().await {
             Ok(status) => {
-              let event = crate::types::ssh::SshStatusChangedEvent { status };
+              let event = crate::types::ssh::SshStatusChangedEvent { status: status.clone() };
               let _ = app_handle_for_ssh.emit("ssh:status", event);
+              // Bridge to SSE broadcaster for HTTP-only clients
+              ssh_broadcaster.send(crate::http::sse::BackendEvent::SshStatusChanged(status));
             }
             Err(broadcast::error::RecvError::Closed) => break,
             Err(_) => continue,

@@ -167,6 +167,10 @@ pub async fn handle_notification_click(
         .emit("notification:clicked", &error)
         .map_err(|e| format!("Failed to emit notification:clicked event: {e}"))?;
 
+    // Bridge to SSE broadcaster for HTTP-only clients
+    let broadcaster = app_handle.state::<crate::http::sse::SSEBroadcaster>().inner().clone();
+    broadcaster.send(crate::http::sse::BackendEvent::NotificationClicked(error));
+
     Ok(true)
 }
 
