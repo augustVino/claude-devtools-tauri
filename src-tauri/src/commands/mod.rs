@@ -11,6 +11,7 @@ pub mod sessions;
 pub mod config;
 pub mod search;
 pub mod validation;
+pub mod guards;
 pub mod utility;
 pub mod projects;
 pub mod subagents;
