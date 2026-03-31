@@ -10,7 +10,7 @@
 
 ```toml
 # Cargo.toml — new dependency
-russh-sftp = "2.0"   # SFTP v3 client (no runtime dependency on russh, only needs AsyncRead+AsyncWrite stream)
+russh-sftp = "2.0"   # SFTP v3 client
 
 # Existing (already declared)
 russh = "0.46"
@@ -18,7 +18,7 @@ russh-keys = "0.46"
 ssh_config = "0.1"
 ```
 
-`russh` has no built-in SFTP module. `russh-sftp` is the official companion crate. Integration pattern:
+`russh` has no built-in SFTP module. `russh-sftp` is the official companion crate. Note: `russh-sftp` lists `russh` only as a **dev dependency** (for examples/tests), not a runtime dependency — it accepts any `AsyncRead + AsyncWrite + Unpin + Send` stream, so there is no version conflict with our `russh = "0.46"`. Integration pattern:
 
 ```
 russh channel → request_subsystem("sftp") → into_stream() → SftpSession::new(stream)
@@ -44,7 +44,7 @@ russh channel → request_subsystem("sftp") → into_stream() → SftpSession::n
 fn read_file(&self, path: &Path) -> Result<String, String> {
     let path = path.to_path_buf();
     self.handle.block_on(async {
-        let data = self.sftp.lock().await.read(&path).await
+        let data = self.sftp.read(&path).await
             .map_err(|e| format!("SFTP read error: {}", e))?;
         String::from_utf8(data).map_err(|e| format!("UTF-8 error: {}", e))
     })
@@ -53,12 +53,21 @@ fn read_file(&self, path: &Path) -> Result<String, String> {
 
 ### SftpSession Thread Safety
 
-`russh-sftp::client::SftpSession` methods require `&mut self`, but `FsProvider` trait is `&self`. Solution: wrap in `tokio::sync::Mutex`:
+`russh-sftp::client::SftpSession` methods take `&self` (not `&mut self`) and the struct is `Send + Sync`. This aligns well with `FsProvider: Send + Sync + Debug`. No Mutex wrapper needed:
 
 ```rust
 pub struct SshFsProvider {
-    sftp: tokio::sync::Mutex<SftpSession>,
+    sftp: Arc<SftpSession>,   // Shared reference, &self methods are safe
     handle: tokio::runtime::Handle,
+}
+```
+
+Note: `SftpSession` must implement `Debug` (required by `FsProvider` trait). If the auto-derived impl is not available due to private fields, implement `Debug` manually:
+```rust
+impl std::fmt::Debug for SshFsProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshFsProvider").finish_non_exhaustive()
+    }
 }
 ```
 
@@ -165,7 +174,26 @@ client.on('close', () => { this.handleDisconnect(); });
 client.on('error', (err) => { this.lastError = err.message; this.setState('error'); });
 ```
 
-Implementation: spawn a background tokio task after successful connect that monitors the SSH session for disconnect. When detected:
+Implementation: spawn a background tokio task after successful connect that monitors the SSH session for disconnect. In russh, unlike ssh2's event-based `client.on('end')`, there is no callback mechanism. The approach is to periodically check the session state or attempt a no-op channel operation that fails when disconnected:
+
+```rust
+// Option A: Monitor via periodic session check
+tokio::spawn(async move {
+    loop {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        // Try to open a channel — fails if session is disconnected
+        if session.channel_open_session().await.is_err() {
+            // Connection lost — trigger handle_disconnect()
+            break;
+        }
+    }
+});
+
+// Option B: Store session in Arc, check Handle::is_connected() if available
+// (verify russh 0.46 API during implementation)
+```
+
+When detected:
 
 ```
 1. Switch provider back to local (via callback or direct ContextManager access)
@@ -331,17 +359,36 @@ pub async fn exec_remote_command(
     channel.exec(true, command).await
         .map_err(|e| format!("Failed to exec command: {}", e))?;
 
+    // russh Channel implements AsyncRead for stdout data
+    // Use channel.stderr() for stderr stream (if available)
     let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
+    let mut stdout_reader = channel.make_reader();  // consumes channel data stream
+    use tokio::io::AsyncReadExt;
+    stdout_reader.read_to_end(&mut stdout).await
+        .map_err(|e| format!("Failed to read command output: {}", e))?;
 
-    // Read from channel data stream until EOF
-    // Collect exit status
+    // Wait for exit status via channel exit_status()
+    // russh sends exit-status as a channel request, not via stream EOF
+    let exit_code = channel.exit_status().await
+        .map_err(|e| format!("Failed to get exit status: {}", e))?;
 
-    // Exit code 0 → Ok(stdout as string)
-    // Exit code null → Err("Remote command failed with unknown exit code")
-    // Exit code != 0 → Err(stderr or "Remote command failed with exit code N")
+    match exit_code {
+        Some(0) => Ok(String::from_utf8_lossy(&stdout).to_string()),
+        Some(code) => {
+            let stderr = String::from_utf8_lossy(&stdout).trim().to_string();
+            let msg = if stderr.is_empty() {
+                format!("Remote command failed with exit code {}", code)
+            } else {
+                stderr
+            };
+            Err(msg)
+        }
+        None => Err("Remote command failed with unknown exit code".to_string()),
+    }
 }
 ```
+
+Note: russh's channel API differs from ssh2's event-based `stream.on('data', ...)`. In russh, `channel.make_reader()` returns an `AsyncRead` impl that reads from the channel's data stream. The exit status arrives as a separate `channel.exit_status()` future. The exact API may need adjustment based on russh 0.46's actual `Handle` and `Channel` method signatures — consult russh docs during implementation.
 
 Usage:
 - `resolve_remote_home_directory()`: `exec_remote_command('printf %s "$HOME"')`
@@ -414,7 +461,7 @@ Aligns with Electron (lines 66-85):
 ```rust
 fn exists(&self, path: &Path) -> Result<bool, String> {
     self.handle.block_on(async {
-        match self.sftp.lock().await.try_exists(path).await {
+        match self.sftp.try_exists(path).await {
             Ok(true) => Ok(true),
             Ok(false) => Ok(false),
             Err(e) => match classify_sftp_error(&e) {
@@ -437,7 +484,7 @@ fn read_file(&self, path: &Path) -> Result<String, String> {
     self.handle.block_on(async {
         let mut last_error = None;
         for attempt in 1..=MAX_RETRIES {
-            match self.sftp.lock().await.read(&path).await {
+            match self.sftp.read(&path).await {
                 Ok(data) => return String::from_utf8(data)
                     .map_err(|e| format!("UTF-8 error: {}", e)),
                 Err(e) => {
@@ -459,17 +506,24 @@ fn read_file(&self, path: &Path) -> Result<String, String> {
 
 #### read_file_head()
 
-No direct Electron equivalent (Electron uses createReadStream with byte offset). Implementation: open file with SFTP, read line by line up to max_lines.
+No direct Electron equivalent (Electron uses createReadStream with byte offset). Implementation using russh-sftp's `open()` to get a `File` handle, then `AsyncReadExt` to read content and split into lines:
 
 ```rust
 fn read_file_head(&self, path: &Path, max_lines: usize) -> Result<String, String> {
     let path = path.to_path_buf();
     self.handle.block_on(async {
-        // Open file, read N lines, close
-        // Apply retry logic for transient errors
+        // With retry for transient errors (same pattern as read_file)
+        let data = self.sftp.read(&path).await
+            .map_err(|e| format!("SFTP read error: {}", e))?;
+        let text = String::from_utf8(data)
+            .map_err(|e| format!("UTF-8 error: {}", e))?;
+        let lines: Vec<&str> = text.lines().take(max_lines).collect();
+        Ok(lines.join("\n"))
     })
 }
 ```
+
+Note: This reads the full file into memory then truncates. For large files, `sftp.open()` returns a `File` handle implementing `AsyncRead`, which could be used for streaming reads. The full-read approach is acceptable since session files are typically <50MB and `read_file_head` is used for metadata preview.
 
 #### stat()
 
@@ -495,10 +549,33 @@ Aligns with Electron (lines 155-190):
 
 ```rust
 fn read_dir(&self, path: &Path) -> Result<Vec<FsDirent>, String> {
-    // With retry for transient errors
-    // SFTP readdir returns entries with attrs directly (size, mtime, mode)
-    // No need for additional stat calls (unlike LocalFsProvider)
-    // Convert each DirEntry → FsDirent with size and mtime_ms from SFTP attrs
+    let path = path.to_path_buf();
+    self.handle.block_on(async {
+        // With retry for transient errors (same pattern as read_file)
+        let entries = self.sftp.read_dir(&path).await
+            .map_err(|e| format!("SFTP readdir error: {}", e))?;
+        // russh-sftp returns ReadDir which iterates DirEntry items
+        // Each DirEntry has file_name() and metadata()
+        // Convert to FsDirent: name, is_file (from mode bitmask), is_directory,
+        //   size, mtime_ms, birthtime_ms — all from SFTP attrs inline
+        // No additional stat calls needed (unlike LocalFsProvider)
+        let result: Vec<FsDirent> = entries.iter().map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let metadata = entry.metadata();
+            let mode = metadata.file_type().as_raw_mode();
+            let is_file = (mode & 0o170000) == 0o100000; // S_IFREG
+            let is_directory = (mode & 0o170000) == 0o040000; // S_IFDIR
+            FsDirent {
+                name,
+                is_file,
+                is_directory,
+                size: Some(metadata.len()),
+                mtime_ms: Some(metadata.modified().as_millis()),
+                birthtime_ms: Some(metadata.modified().as_millis()), // mtime fallback
+            }
+        }).collect();
+        Ok(result)
+    })
 }
 ```
 
@@ -518,8 +595,8 @@ impl Drop for SshFsProvider {
 `SshFsProvider` must be `Clone` so it can be wrapped in `Arc` for `get_provider()`:
 
 ```rust
-// SshFsProvider wraps Arc<Mutex<SftpSession>> internally
-// Or: get_provider() returns Arc<dyn FsProvider> wrapping the provider
+// SshFsProvider wraps Arc<SftpSession> internally
+// Arc<SftpSession> is Clone, so SshFsProvider derives Clone automatically
 ```
 
 ## Changes to Existing Files
