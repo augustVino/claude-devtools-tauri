@@ -1,6 +1,13 @@
 use crate::types::domain::{MessageCategory, MessageType};
 use crate::types::messages::ParsedMessage;
 
+/// Check if a raw JSON line represents a user chunk message for message_count counting.
+/// Simpler than is_user_chunk() — used in extract_session_preview() line-level loop
+/// where we only have msg_type string and is_sidechain bool.
+pub fn is_user_chunk_message(msg_type: &str, is_sidechain: bool) -> bool {
+    msg_type == "user" && !is_sidechain
+}
+
 /// Classify a message into a category based on priority-ordered type guards.
 ///
 /// Priority order (aligned with Electron's MessageClassifier):
