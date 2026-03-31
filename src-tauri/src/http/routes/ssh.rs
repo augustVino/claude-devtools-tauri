@@ -5,13 +5,10 @@
 //! - test: `Json<SshTestResult>` direct
 //! - config-hosts/resolve-host/last-connection: `{ success: true, data: T }` wrapped
 //! - save-last-connection: `{ success: true }` wrapped
-//!
-//! Context switching in HTTP routes follows the same pattern as `contexts.rs`:
-//! register/switch contexts and emit SSE events, but cannot start watcher tasks
-//! (no AppHandle available). Watcher lifecycle is managed by Tauri IPC commands.
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use tauri::Manager;
 
 use axum::{
     Json,
@@ -107,7 +104,7 @@ pub async fn ssh_connect(
         if mgr.get_active_id() == SSH_CONTEXT_ID {
             log::info!("SSH connect (HTTP): already on SSH context, tearing down before reconnect");
             if let Some(ssh_ctx) = mgr.get(SSH_CONTEXT_ID) {
-                ssh_ctx.read().await.stop_watcher_tasks();
+                ssh_ctx.read().await.stop_watcher_tasks().await;
             }
             let _ = mgr.switch("local");
             let _ = mgr.destroy_context(SSH_CONTEXT_ID).await;
@@ -130,11 +127,20 @@ pub async fn ssh_connect(
 
         // Stop old context's watcher tasks
         if let Some(old_ctx) = mgr.get(&result.previous_id) {
-            old_ctx.read().await.stop_watcher_tasks();
+            old_ctx.read().await.stop_watcher_tasks().await;
         }
 
-        // Note: HTTP routes don't have AppHandle, so we can't spawn watcher tasks here.
-        // Watcher lifecycle is managed by Tauri IPC commands.
+        // Start new context's watcher tasks
+        if let Some(new_ctx) = mgr.get(&result.current_id) {
+            let new = new_ctx.read().await;
+            let config_manager = state.app_handle
+                .state::<std::sync::Arc<crate::infrastructure::ConfigManager>>()
+                .inner().clone();
+            let notification_manager = state.app_handle
+                .state::<std::sync::Arc<tokio::sync::RwLock<crate::infrastructure::NotificationManager>>>()
+                .inner().clone();
+            new.spawn_watcher_tasks(state.app_handle.clone(), config_manager, notification_manager).await;
+        }
 
         // Emit context:changed via SSE
         let ctx_arc = mgr
@@ -173,10 +179,20 @@ pub async fn ssh_disconnect(
 
             // Stop old context's (SSH) watcher tasks
             if let Some(old_ctx) = mgr.get(&result.previous_id) {
-                old_ctx.read().await.stop_watcher_tasks();
+                old_ctx.read().await.stop_watcher_tasks().await;
             }
 
-            // Note: HTTP routes don't have AppHandle, so we can't spawn watcher tasks here.
+            // Start local context's watcher tasks
+            if let Some(new_ctx) = mgr.get(&result.current_id) {
+                let new = new_ctx.read().await;
+                let config_manager = state.app_handle
+                    .state::<std::sync::Arc<crate::infrastructure::ConfigManager>>()
+                    .inner().clone();
+                let notification_manager = state.app_handle
+                    .state::<std::sync::Arc<tokio::sync::RwLock<crate::infrastructure::NotificationManager>>>()
+                    .inner().clone();
+                new.spawn_watcher_tasks(state.app_handle.clone(), config_manager, notification_manager).await;
+            }
 
             // Emit context:changed via SSE
             let ctx_arc = mgr

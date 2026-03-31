@@ -223,10 +223,10 @@ export class TauriAPIClient implements ElectronAPI {
 
   readonly openPath = async (
     targetPath: string,
-    _projectRoot?: string,
+    projectRoot?: string,
   ): Promise<{ success: boolean; error?: string }> => {
     try {
-      await invoke("open_path", { path: targetPath });
+      await invoke("open_path", { path: targetPath, projectRoot: projectRoot ?? null });
       return { success: true };
     } catch (e) {
       return { success: false, error: String(e) };

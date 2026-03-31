@@ -16,6 +16,7 @@ use crate::infrastructure::{ContextManager, NotificationManager, SshConnectionMa
 /// 因此将 AppState、SSEBroadcaster、NotificationManager、SessionSearcher 合并到一个结构体。
 #[derive(Clone)]
 pub struct HttpState {
+    pub app_handle: tauri::AppHandle,
     pub app_state: Arc<RwLock<AppState>>,
     pub broadcaster: SSEBroadcaster,
     pub notification_manager: Arc<RwLock<NotificationManager>>,

@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::discovery::{ProjectScanner, SessionSearcher, SubagentResolver};
@@ -46,7 +46,9 @@ pub struct ServiceContext {
     pub session_searcher: Arc<Mutex<SessionSearcher>>,
     pub file_watcher: Arc<Mutex<FileWatcher>>,
     pub todo_watcher: Arc<Mutex<FileWatcher>>,
-    pub watcher_cancel_token: CancellationToken,
+    /// 当前 watcher 使用的取消令牌。每次 spawn 创建新令牌，stop 时取消。
+    /// 使用 `RwLock<Option<...>>` 使 token 可替换，支持可逆的 stop/start 生命周期。
+    pub watcher_cancel_token: RwLock<Option<CancellationToken>>,
     pub is_started: AtomicBool,
 }
 
@@ -77,7 +79,7 @@ impl ServiceContext {
             session_searcher,
             file_watcher,
             todo_watcher,
-            watcher_cancel_token: CancellationToken::new(),
+            watcher_cancel_token: RwLock::new(None),
             is_started: AtomicBool::new(false),
         }
     }
@@ -90,13 +92,22 @@ impl ServiceContext {
     /// 3. Todo 监听器（Todo 文件变更 → 事件发射 + SSE 广播）
     ///
     /// 所有任务在 `watcher_cancel_token` 取消时退出。
-    pub fn spawn_watcher_tasks(
+    pub async fn spawn_watcher_tasks(
         &self,
         app_handle: tauri::AppHandle,
         config_manager: Arc<crate::infrastructure::ConfigManager>,
         notification_manager: Arc<tokio::sync::RwLock<crate::infrastructure::NotificationManager>>,
     ) {
-        let cancel_token = self.watcher_cancel_token.clone();
+        // 每次启动时创建新令牌，确保 stop/start 可逆（与 Electron 的 isWatching 标志对齐）
+        let cancel_token = CancellationToken::new();
+        {
+            let mut guard = self.watcher_cancel_token.write().await;
+            // 如果有旧 token 未取消，先取消
+            if let Some(old) = guard.take() {
+                old.cancel();
+            }
+            *guard = Some(cancel_token.clone());
+        }
         let projects_dir = self.projects_dir.clone();
         let todos_dir = self.todos_dir.clone();
         let file_watcher = self.file_watcher.clone();
@@ -278,9 +289,13 @@ impl ServiceContext {
     }
 
     /// 停止所有文件监听器任务。
-    pub fn stop_watcher_tasks(&self) {
-        if !self.watcher_cancel_token.is_cancelled() {
-            self.watcher_cancel_token.cancel();
+    ///
+    /// 取消当前 token 并清除引用。后续 `spawn_watcher_tasks` 会创建新 token，
+    /// 确保可重复的 stop/start 生命周期（与 Electron 行为对齐）。
+    pub async fn stop_watcher_tasks(&self) {
+        let mut guard = self.watcher_cancel_token.write().await;
+        if let Some(token) = guard.take() {
+            token.cancel();
             log::info!("ServiceContext '{}': watcher tasks cancelled", self.id);
         }
     }

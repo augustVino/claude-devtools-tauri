@@ -166,10 +166,12 @@ pub fn run() {
         // 启动本地上下文的 watcher 任务（在同步 setup 闭包中使用 block_on）
         let local_ctx = mgr.get("local").unwrap();
         let local = local_ctx.blocking_read();
-        local.spawn_watcher_tasks(
-          app.handle().clone(),
-          config_manager.clone(),
-          notification_manager.clone(),
+        tauri::async_runtime::block_on(
+          local.spawn_watcher_tasks(
+            app.handle().clone(),
+            config_manager.clone(),
+            notification_manager.clone(),
+          )
         );
 
         mgr

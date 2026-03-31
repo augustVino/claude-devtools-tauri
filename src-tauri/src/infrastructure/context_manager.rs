@@ -14,6 +14,13 @@ pub struct ContextInfo {
     pub context_type: String,
 }
 
+/// 上下文切换返回值（与前端类型 `{ contextId: string }` 对齐）。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchResponse {
+    pub context_id: String,
+}
+
 impl ContextInfo {
     pub fn from_context(ctx: &ServiceContext) -> Self {
         Self {
@@ -64,7 +71,11 @@ impl ContextManager {
             return Err(format!("Context '{}' not found", context_id));
         }
         if let Some(old) = self.contexts.get(context_id) {
-            old.read().await.watcher_cancel_token.cancel();
+            let read_guard = old.read().await;
+            let mut token_guard = read_guard.watcher_cancel_token.write().await;
+            if let Some(token) = token_guard.take() {
+                token.cancel();
+            }
         }
         let id = replacement.id.clone();
         self.contexts.insert(id, Arc::new(RwLock::new(replacement)));
@@ -72,12 +83,10 @@ impl ContextManager {
     }
 
     pub fn switch(&mut self, target_id: &str) -> Result<SwitchResult, String> {
-        if target_id == self.active_id {
-            return Err(format!("Already on context '{}'", target_id));
-        }
         if !self.contexts.contains_key(target_id) {
             return Err(format!("Context '{}' not found", target_id));
         }
+        // 与 Electron 对齐：切换到已激活的 context 时 no-op 成功
         let previous_id = std::mem::replace(&mut self.active_id, target_id.to_string());
         Ok(SwitchResult { previous_id, current_id: target_id.to_string() })
     }
@@ -88,7 +97,13 @@ impl ContextManager {
         }
         let context = self.contexts.remove(context_id)
             .ok_or_else(|| format!("Context '{}' not found", context_id))?;
-        context.read().await.watcher_cancel_token.cancel();
+        {
+            let read_guard = context.read().await;
+            let mut token_guard = read_guard.watcher_cancel_token.write().await;
+            if let Some(token) = token_guard.take() {
+                token.cancel();
+            }
+        }
         if self.active_id == context_id {
             self.active_id = "local".to_string();
         }
@@ -126,8 +141,12 @@ impl ContextManager {
 
     pub async fn dispose(&mut self) {
         for ctx in self.contexts.values() {
-            if let Ok(guard) = ctx.try_read() {
-                guard.watcher_cancel_token.cancel();
+            if let Ok(read_guard) = ctx.try_read() {
+                if let Ok(mut token_guard) = read_guard.watcher_cancel_token.try_write() {
+                    if let Some(token) = token_guard.take() {
+                        token.cancel();
+                    }
+                }
             }
         }
         self.contexts.clear();
@@ -196,12 +215,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_switch_to_same_is_error() {
+    async fn test_switch_to_same_is_noop() {
         let mut mgr = ContextManager::new();
         mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        // 与 Electron 对齐：切换到已激活 context 时 no-op 成功
         let result = mgr.switch("local");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Already on context"));
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert_eq!(result.previous_id, "local");
+        assert_eq!(result.current_id, "local");
+        assert_eq!(mgr.get_active_id(), "local");
     }
 
     #[tokio::test]

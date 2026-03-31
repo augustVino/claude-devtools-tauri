@@ -11,7 +11,7 @@
 //! - write_text_file: Write text content to a file
 
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -21,35 +21,195 @@ use tauri_plugin_opener::OpenerExt;
 use crate::parsing::claude_md_reader::{ClaudeMdReader, ClaudeMdFileInfo};
 
 /// Open a path in the system file manager.
+///
+/// 包含与 Electron 对齐的安全校验：
+/// - 路径归一化（消除 traversal）
+/// - 敏感文件模式匹配
+/// - 目录白名单限制（~/.claude 和可选的项目目录）
+/// - Symlink escape 防护
 #[tauri::command]
-pub async fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+pub async fn open_path(app: tauri::AppHandle, path: String, project_root: Option<String>) -> Result<(), String> {
     let expanded = if path.starts_with('~') {
         if let Some(home) = dirs::home_dir() {
             let remainder = path[1..].trim_start_matches('/');
-            home.join(remainder).to_string_lossy().to_string()
+            home.join(remainder)
         } else {
-            path.clone()
+            std::path::PathBuf::from(&path)
         }
     } else {
-        path.clone()
+        std::path::PathBuf::from(&path)
     };
 
-    let p = Path::new(&expanded);
+    let p = expanded;
+
+    // 必须是绝对路径
+    if !p.is_absolute() {
+        return Err("Path must be absolute".to_string());
+    }
+
+    // 归一化路径（消除 .. traversal）
+    let normalized = normalize_path(&p);
+
+    // 敏感文件模式匹配
+    if matches_sensitive_pattern(&normalized) {
+        return Err("Cannot open sensitive files".to_string());
+    }
+
+    // 目录白名单校验（~/.claude 和可选的项目目录）
+    let project_normalized = project_root.as_ref().map(|root| normalize_path(&PathBuf::from(root)));
+    if !is_within_allowed_directories(&normalized, project_normalized.as_deref()) {
+        return Err("Path is outside allowed directories".to_string());
+    }
+
+    // Symlink escape 防护
+    if let Some(real_path) = resolve_real_path(&p) {
+        let real_normalized = normalize_path(&real_path);
+        if matches_sensitive_pattern(&real_normalized) {
+            return Err("Cannot open sensitive files".to_string());
+        }
+        if !is_within_allowed_directories(&real_normalized, project_normalized.as_deref()) {
+            return Err("Path is outside allowed directories".to_string());
+        }
+    }
+
+    // 检查路径是否存在
     if !p.exists() {
-        return Err(format!("Path does not exist: {}", expanded));
+        return Err(format!("Path does not exist: {}", p.display()));
     }
 
     app.opener()
-        .open_path(&expanded, None::<&str>)
+        .open_path(p.to_string_lossy().to_string(), None::<&str>)
         .map_err(|e| format!("Failed to open path: {}", e))?;
     Ok(())
 }
 
+/// 归一化路径，消除 `.` 和 `..` traversal 段。
+fn normalize_path(p: &std::path::Path) -> std::path::PathBuf {
+    let mut normalized = std::path::PathBuf::new();
+    for component in p.components() {
+        match component {
+            std::path::Component::ParentDir => { normalized.pop(); }
+            std::path::Component::CurDir => {}
+            _ => normalized.push(component),
+        }
+    }
+    normalized
+}
+
+/// 检查路径是否匹配敏感文件模式（与 Electron pathValidation.ts SENSITIVE_PATTERNS 对齐）。
+///
+/// 使用大小写不敏感的路径组件匹配，并对齐 Electron 正则的锚点语义：
+/// - `contains` 模式：匹配路径中任意位置包含的目录/子串
+/// - `ends_with_component` 模式：匹配路径最后一个组件以指定后缀结尾
+/// - `exact` 模式：匹配完整路径精确相等
+fn matches_sensitive_pattern(normalized: &std::path::Path) -> bool {
+    let path_lower = normalized.to_string_lossy().to_lowercase();
+
+    // 目录/子串包含匹配（对应 Electron 中不带 $ 锚点的正则）
+    let contains_patterns: &[&str] = &[
+        "/.ssh/",           // SSH keys and config
+        "/.aws/",           // AWS credentials
+        "/.config/gcloud/", // GCP credentials
+        "/.azure/",         // Azure credentials
+        "/.docker/config.json", // Docker credentials
+        "/.kube/config",    // Kubernetes config
+    ];
+    if contains_patterns.iter().any(|pat| path_lower.contains(pat)) {
+        return true;
+    }
+
+    // 文件名组件结尾匹配（对应 Electron 中带 $ 锚点的正则）
+    // 检查路径最后一个 `/` 之后的组件是否以指定模式结尾
+    let filename = normalized.file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let filename_str = filename.as_str();
+
+    // .env 系列（对应 /[/\\]\.env($|\.)/i）
+    if filename_str.starts_with(".env") {
+        let rest = &filename_str[4..];
+        if rest.is_empty() || rest.starts_with('.') {
+            return true;
+        }
+    }
+
+    // 精确文件名匹配（对应 Electron 带 $ 锚点的正则）
+    let exact_names: &[&str] = &[
+        ".git-credentials",
+        ".gitconfig",
+        ".npmrc",
+        ".password",
+        ".secret",
+        "id_rsa",
+        "id_ed25519",
+        "id_ecdsa",
+    ];
+    if exact_names.iter().any(|name| filename_str == *name) {
+        return true;
+    }
+
+    // 后缀匹配（对应 Electron /[/\\][^/\\]*\.ext$/i）
+    // 要求最后一个组件以 .pem 或 .key 结尾（整个文件名，不是子串）
+    if filename_str.ends_with(".pem") || filename_str.ends_with(".key") {
+        return true;
+    }
+
+    // 精确路径匹配（对应 Electron /^\/etc\/passwd$/i 等）
+    let path_str = normalized.to_string_lossy();
+    if path_str == "/etc/passwd" || path_str == "/etc/shadow" {
+        return true;
+    }
+
+    // 文件名结尾匹配（对应 Electron /credentials\.json$/i 等）
+    if filename_str.ends_with("credentials.json")
+        || filename_str.ends_with("secrets.json")
+        || filename_str.ends_with("tokens.json")
+    {
+        return true;
+    }
+
+    false
+}
+
+/// 检查路径是否在允许的目录内（~/.claude 和可选的项目目录）。
+fn is_within_allowed_directories(normalized: &std::path::Path, project_root: Option<&std::path::Path>) -> bool {
+    // 始终允许 ~/.claude 目录（与 Electron 对齐）
+    if let Some(home) = dirs::home_dir() {
+        let claude_dir = home.join(".claude");
+        let claude_normalized = normalize_path(&claude_dir);
+        if path_starts_with(normalized, &claude_normalized) {
+            return true;
+        }
+    }
+    // 如果提供了项目目录，也允许访问
+    if let Some(root) = project_root {
+        if path_starts_with(normalized, root) {
+            return true;
+        }
+    }
+    false
+}
+
+/// 检查 target 是否在 root 下（或等于 root）。
+fn path_starts_with(target: &std::path::Path, root: &std::path::Path) -> bool {
+    target == root || target.starts_with(root)
+}
+
+/// 解析符号链接的真实路径（如果存在）。
+fn resolve_real_path(p: &std::path::Path) -> Option<std::path::PathBuf> {
+    p.canonicalize().ok()
+}
+
 /// Open a URL in the system browser.
+/// Supports http, https, and mailto protocols (aligned with Electron).
 #[tauri::command]
 pub async fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        return Err("Invalid URL: must start with http:// or https://".to_string());
+    // 与 Electron 对齐：允许 http、https、mailto 协议
+    let allowed = url.starts_with("http://")
+        || url.starts_with("https://")
+        || url.starts_with("mailto:");
+    if !allowed {
+        return Err("Invalid URL: only http, https, and mailto URLs are allowed".to_string());
     }
     app.opener()
         .open_url(url, None::<&str>)

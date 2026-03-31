@@ -8,10 +8,11 @@ use axum::{
     routing::{get, post},
 };
 use serde::Deserialize;
+use tauri::Manager;
 
 use crate::http::state::HttpState;
 use crate::http::sse::BackendEvent;
-use crate::infrastructure::context_manager::ContextInfo;
+use crate::infrastructure::context_manager::{ContextInfo, SwitchResponse};
 
 use super::{ErrorResponse, error_json};
 
@@ -40,27 +41,39 @@ pub async fn context_active(
 pub async fn context_switch(
     State(state): State<HttpState>,
     Json(body): Json<SwitchRequest>,
-) -> Result<Json<String>, (axum::http::StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<SwitchResponse>, (axum::http::StatusCode, Json<ErrorResponse>)> {
     let mut mgr = state.context_manager.write().await;
     let result = mgr.switch(&body.context_id)
         .map_err(error_json)?;
 
-    // Stop old context watcher tasks
-    if let Some(old_ctx) = mgr.get(&result.previous_id) {
-        old_ctx.read().await.stop_watcher_tasks();
+    // 仅在确实切换了上下文时才 stop/start watcher
+    if result.previous_id != result.current_id {
+        // Stop old context watcher tasks
+        if let Some(old_ctx) = mgr.get(&result.previous_id) {
+            old_ctx.read().await.stop_watcher_tasks().await;
+        }
+
+        // Start new context watcher tasks（通过 HttpState 中的 AppHandle）
+        if let Some(new_ctx) = mgr.get(&result.current_id) {
+            let new = new_ctx.read().await;
+            let config_manager = state.app_handle
+                .state::<std::sync::Arc<crate::infrastructure::ConfigManager>>()
+                .inner().clone();
+            let notification_manager = state.app_handle
+                .state::<std::sync::Arc<tokio::sync::RwLock<crate::infrastructure::NotificationManager>>>()
+                .inner().clone();
+            new.spawn_watcher_tasks(state.app_handle.clone(), config_manager, notification_manager).await;
+        }
     }
 
-    // Note: HTTP routes don't have AppHandle, so we can't spawn watcher tasks here.
-    // Watcher lifecycle is managed by Tauri IPC commands.
-    // TODO: When SSH is implemented, consider adding AppHandle to HttpState.
+    // 仅在确实切换了上下文时才发送 SSE 事件（与 IPC 命令行为对齐）
+    if result.previous_id != result.current_id {
+        let new_ctx = mgr.get(&result.current_id).unwrap();
+        let info = ContextInfo::from_context(&*new_ctx.read().await);
+        state.broadcaster.send(BackendEvent::ContextChanged(info));
+    }
 
-    let new_ctx = mgr.get(&result.current_id).unwrap();
-    let info = ContextInfo::from_context(&*new_ctx.read().await);
-
-    // Bridge to SSE for HTTP clients
-    state.broadcaster.send(BackendEvent::ContextChanged(info));
-
-    Ok(Json(result.current_id))
+    Ok(Json(SwitchResponse { context_id: result.current_id }))
 }
 
 /// 构建上下文路由。

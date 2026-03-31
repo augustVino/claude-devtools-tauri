@@ -78,6 +78,7 @@ pub async fn start(
         let searcher = create_searcher_state(projects_dir, todos_dir, Arc::new(LocalFsProvider::new()));
 
         let http_state = HttpState {
+            app_handle: app.clone(),
             app_state: state.inner().clone(),
             broadcaster,
             notification_manager,

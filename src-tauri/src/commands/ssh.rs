@@ -91,7 +91,7 @@ pub async fn ssh_connect(
             log::info!("SSH connect: already on SSH context, tearing down before reconnect");
             // Stop SSH watcher tasks
             if let Some(ssh_ctx) = mgr.get(SSH_CONTEXT_ID) {
-                ssh_ctx.read().await.stop_watcher_tasks();
+                ssh_ctx.read().await.stop_watcher_tasks().await;
             }
             // Switch back to local
             if let Ok(result) = mgr.switch("local") {
@@ -106,7 +106,7 @@ pub async fn ssh_connect(
                         .state::<Arc<RwLock<crate::infrastructure::NotificationManager>>>()
                         .inner()
                         .clone();
-                    local.spawn_watcher_tasks(app.clone(), config_manager, notification_manager);
+                    local.spawn_watcher_tasks(app.clone(), config_manager, notification_manager).await;
                 }
             }
             // Destroy old SSH context
@@ -130,7 +130,7 @@ pub async fn ssh_connect(
 
         // Stop old context's watcher tasks
         if let Some(old_ctx) = mgr.get(&result.previous_id) {
-            old_ctx.read().await.stop_watcher_tasks();
+            old_ctx.read().await.stop_watcher_tasks().await;
         }
 
         // Start new context's watcher tasks (SSH context skips watchers internally)
@@ -144,7 +144,7 @@ pub async fn ssh_connect(
                 .state::<Arc<RwLock<crate::infrastructure::NotificationManager>>>()
                 .inner()
                 .clone();
-            new.spawn_watcher_tasks(app.clone(), config_manager, notification_manager);
+            new.spawn_watcher_tasks(app.clone(), config_manager, notification_manager).await;
         }
 
         // Emit context:changed event
@@ -205,7 +205,7 @@ pub async fn ssh_disconnect(
 
         // Stop old context's (SSH) watcher tasks
         if let Some(old_ctx) = mgr.get(&result.previous_id) {
-            old_ctx.read().await.stop_watcher_tasks();
+            old_ctx.read().await.stop_watcher_tasks().await;
         }
 
         // Start new context's (local) watcher tasks
@@ -219,7 +219,7 @@ pub async fn ssh_disconnect(
                 .state::<Arc<RwLock<crate::infrastructure::NotificationManager>>>()
                 .inner()
                 .clone();
-            new.spawn_watcher_tasks(app.clone(), config_manager, notification_manager);
+            new.spawn_watcher_tasks(app.clone(), config_manager, notification_manager).await;
         }
 
         // Emit context:changed event
