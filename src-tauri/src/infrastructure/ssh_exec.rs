@@ -98,11 +98,12 @@ pub async fn exec_remote_command<H: client::Handler>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::infrastructure::ssh_connection_manager::SshClientHandler;
 
     #[test]
     fn test_module_exists() {
         // Verify the module compiles and the public function is accessible.
         // Actual SSH testing requires a live connection, so this is a compile check.
-        let _ = std::any::type_name::<fn(&mut client::Handle<()>, &str) -> Result<String, String>>();
+        let _ = std::any::type_name::<fn(&mut client::Handle<SshClientHandler>, &str) -> Result<String, String>>();
     }
 }

@@ -233,7 +233,7 @@ pub async fn ssh_test(
     State(state): State<HttpState>,
     Json(body): Json<SshConnectionConfig>,
 ) -> Json<SshTestResult> {
-    let result = state.ssh_manager.read().await.test(&body);
+    let result = state.ssh_manager.read().await.test(&body).await;
     match result {
         Ok(test_result) => Json(test_result),
         Err(_) => Json(SshTestResult {

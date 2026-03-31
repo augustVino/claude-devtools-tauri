@@ -262,7 +262,7 @@ pub async fn ssh_test(
     ssh_manager: State<'_, Arc<RwLock<SshConnectionManager>>>,
     config: SshConnectionConfig,
 ) -> Result<SshTestResult, String> {
-    ssh_manager.read().await.test(&config)
+    ssh_manager.read().await.test(&config).await
 }
 
 /// Get all host entries from the SSH config file.
