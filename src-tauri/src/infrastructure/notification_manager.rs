@@ -529,12 +529,14 @@ impl NotificationManager {
         }
 
         for pattern in &config.notifications.ignored_regex {
-            if let Ok(re) = Regex::new(pattern) {
+            // 与 Electron 对齐：大小写无关匹配 + 安全正则校验（ReDoS 防护）
+            let case_insensitive = format!("(?i){}", pattern);
+            if let Some(re) = crate::utils::regex_validation::create_safe_regex(&case_insensitive) {
                 if re.is_match(&error.message) {
                     return true;
                 }
             } else {
-                warn!("NotificationManager: Invalid regex pattern: {pattern}");
+                warn!("NotificationManager: Invalid or unsafe regex pattern: {pattern}");
             }
         }
 

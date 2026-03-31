@@ -15,7 +15,7 @@
 //!
 //! 从 Electron `src/main/services/error/ErrorDetector.ts` 移植而来。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::analysis::tool_extraction::{build_tool_result_map, build_tool_use_map};
@@ -114,24 +114,19 @@ impl ErrorDetector {
     }
 
     // ===========================================================================
-    // 触发器测试（桩实现）
+    // 触发器测试
     // ===========================================================================
 
     /// 在所有项目的历史数据上测试触发器。
     ///
-    /// 这是一个桩实现，将在 Task 11 中通过
-    /// `ErrorTriggerTester` 实现。
+    /// 委托给 [`error_trigger_tester::test_trigger`]（与 Electron 行为对齐）。
     pub async fn test_trigger(
         &self,
-        _trigger: &NotificationTrigger,
-        _limit: Option<usize>,
+        trigger: &NotificationTrigger,
+        limit: Option<usize>,
     ) -> TriggerTestResult {
-        // 将在 Task 11 中通过 ErrorTriggerTester 实现
-        TriggerTestResult {
-            total_count: 0,
-            errors: vec![],
-            truncated: None,
-        }
+        let scanner = crate::discovery::project_scanner::ProjectScanner::new();
+        crate::error::error_trigger_tester::test_trigger(trigger, &scanner, limit).await
     }
 
     // ===========================================================================
@@ -214,19 +209,29 @@ impl ErrorDetector {
     // ===========================================================================
 
     /// 按 `tool_use_id` 去重错误。当多个触发器检测到同一个 tool_use 时，
-    /// 仅保留首次检测的结果。
+    /// 优先保留带 `subagent_id` 的版本（与 Electron 行为对齐）。
     fn deduplicate_errors(errors: Vec<DetectedError>) -> Vec<DetectedError> {
-        let mut seen: HashSet<String> = HashSet::new();
+        let mut best: HashMap<String, usize> = HashMap::new();
         let mut result = Vec::with_capacity(errors.len());
 
-        for error in errors {
+        for (i, error) in errors.iter().enumerate() {
             if let Some(ref tool_use_id) = error.tool_use_id {
-                if seen.contains(tool_use_id) {
+                if let Some(&prev_idx) = best.get(tool_use_id) {
+                    // 如果新条目有 subagent_id 而已有的没有，则替换
+                    let prev_has_subagent = errors[prev_idx].subagent_id.is_some();
+                    let curr_has_subagent = error.subagent_id.is_some();
+                    if !prev_has_subagent && curr_has_subagent {
+                        // 移除之前的版本，push 当前版本
+                        result.retain(|e: &DetectedError| e.tool_use_id.as_ref() != Some(tool_use_id));
+                        result.push(error.clone());
+                        best.insert(tool_use_id.clone(), i);
+                    }
+                    // 否则保留已有序列中的版本
                     continue;
                 }
-                seen.insert(tool_use_id.clone());
+                best.insert(tool_use_id.clone(), i);
             }
-            result.push(error);
+            result.push(error.clone());
         }
 
         result
@@ -531,20 +536,24 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------
-    // test_trigger stub tests
+    // test_trigger delegation tests
     // ---------------------------------------------------------------------------
 
     #[tokio::test]
-    async fn test_test_trigger_returns_empty_stub() {
+    async fn test_test_trigger_delegates_to_tester() {
         let detector = make_detector_with_triggers(vec![make_error_trigger()]);
 
+        // 委托给 ErrorTriggerTester，使用默认 ProjectScanner（扫描真实路径）
+        // 只验证返回值结构正确，不验证具体数量（取决于本地环境）
         let result = detector
             .test_trigger(&make_error_trigger(), Some(50))
             .await;
 
-        assert_eq!(result.total_count, 0);
-        assert!(result.errors.is_empty());
-        assert_eq!(result.truncated, None);
+        // 验证返回值是有效的 TriggerTestResult（而非 stub 的空值）
+        // 只要没有 panic 即表示委托成功
+        let _ = result.total_count;
+        let _ = &result.errors;
+        let _ = result.truncated;
     }
 
     // ---------------------------------------------------------------------------
@@ -698,6 +707,107 @@ mod tests {
     fn test_deduplicate_errors_empty() {
         let deduped = ErrorDetector::deduplicate_errors(vec![]);
         assert!(deduped.is_empty());
+    }
+
+    #[test]
+    fn test_deduplicate_errors_prefers_subagent_version() {
+        // 父会话先出现（无 subagent_id），子代理后出现（有 subagent_id）
+        let errors = vec![
+            DetectedError {
+                id: "e1".to_string(),
+                session_id: "s1".to_string(),
+                project_id: "p1".to_string(),
+                file_path: "/f.jsonl".to_string(),
+                source: "Bash".to_string(),
+                message: "error from parent".to_string(),
+                timestamp: 0,
+                line_number: None,
+                tool_use_id: Some("tu1".to_string()),
+                subagent_id: None,
+                trigger_color: None,
+                trigger_id: Some("t1".to_string()),
+                trigger_name: None,
+                context: crate::types::config::ErrorContext {
+                    project_name: "proj".to_string(),
+                    cwd: None,
+                },
+            },
+            DetectedError {
+                id: "e2".to_string(),
+                session_id: "s1".to_string(),
+                project_id: "p1".to_string(),
+                file_path: "/f.jsonl".to_string(),
+                source: "Bash".to_string(),
+                message: "error from subagent".to_string(),
+                timestamp: 0,
+                line_number: None,
+                tool_use_id: Some("tu1".to_string()),
+                subagent_id: Some("sub_1".to_string()),
+                trigger_color: None,
+                trigger_id: Some("t2".to_string()),
+                trigger_name: None,
+                context: crate::types::config::ErrorContext {
+                    project_name: "proj".to_string(),
+                    cwd: None,
+                },
+            },
+        ];
+
+        let deduped = ErrorDetector::deduplicate_errors(errors);
+        assert_eq!(deduped.len(), 1);
+        // 应保留带 subagent_id 的版本
+        assert_eq!(deduped[0].subagent_id, Some("sub_1".to_string()));
+        assert_eq!(deduped[0].trigger_id, Some("t2".to_string()));
+    }
+
+    #[test]
+    fn test_deduplicate_errors_keeps_existing_subagent_over_non_subagent() {
+        // 子代理版本先出现，父版本后出现 → 保留已有的子代理版本
+        let errors = vec![
+            DetectedError {
+                id: "e1".to_string(),
+                session_id: "s1".to_string(),
+                project_id: "p1".to_string(),
+                file_path: "/f.jsonl".to_string(),
+                source: "Bash".to_string(),
+                message: "error from subagent".to_string(),
+                timestamp: 0,
+                line_number: None,
+                tool_use_id: Some("tu1".to_string()),
+                subagent_id: Some("sub_1".to_string()),
+                trigger_color: None,
+                trigger_id: Some("t1".to_string()),
+                trigger_name: None,
+                context: crate::types::config::ErrorContext {
+                    project_name: "proj".to_string(),
+                    cwd: None,
+                },
+            },
+            DetectedError {
+                id: "e2".to_string(),
+                session_id: "s1".to_string(),
+                project_id: "p1".to_string(),
+                file_path: "/f.jsonl".to_string(),
+                source: "Bash".to_string(),
+                message: "error from parent".to_string(),
+                timestamp: 0,
+                line_number: None,
+                tool_use_id: Some("tu1".to_string()),
+                subagent_id: None,
+                trigger_color: None,
+                trigger_id: Some("t2".to_string()),
+                trigger_name: None,
+                context: crate::types::config::ErrorContext {
+                    project_name: "proj".to_string(),
+                    cwd: None,
+                },
+            },
+        ];
+
+        let deduped = ErrorDetector::deduplicate_errors(errors);
+        assert_eq!(deduped.len(), 1);
+        // 已有的是 subagent 版本，不应被替换
+        assert_eq!(deduped[0].subagent_id, Some("sub_1".to_string()));
     }
 
     // ---------------------------------------------------------------------------

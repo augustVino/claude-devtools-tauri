@@ -9,16 +9,35 @@ use crate::discovery::project_scanner::ProjectScanner;
 use crate::infrastructure::fs_provider::FsProvider;
 use crate::types::domain::{SearchResult, SearchSessionsResult};
 use crate::utils::path_decoder;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
+
+/// SSH 快速搜索时间预算（毫秒），与 Electron 对齐。
+const SSH_FAST_SEARCH_TIME_BUDGET_MS: u128 = 4500;
+
+/// SSH 快速搜索分阶段边界，与 Electron 对齐。
+const SSH_FAST_SEARCH_STAGE_LIMITS: &[usize] = &[40, 140, 320];
+
+/// SSH 快速搜索提前退出的最小结果数。
+const SSH_FAST_SEARCH_MIN_RESULTS: usize = 8;
+
+/// 搜索缓存最大容量（与 Electron 的 SearchTextCache 对齐）。
+const CACHE_MAX_CAPACITY: u64 = 1000;
+
+/// 搜索缓存条目。
+#[derive(Debug, Clone)]
+struct CacheEntry {
+    mtime: u64,
+    entries: Vec<SearchableEntry>,
+}
 
 /// SessionSearcher provides methods for searching sessions.
 pub struct SessionSearcher {
     projects_dir: PathBuf,
     fs_provider: Arc<dyn FsProvider>,
-    // Simple cache: file_path -> (mtime, entries)
-    cache: HashMap<String, (u64, Vec<SearchableEntry>)>,
+    // LRU cache: file_path -> CacheEntry (with mtime-based invalidation and capacity eviction)
+    cache: moka::sync::Cache<String, CacheEntry>,
     /// ProjectScanner used for cross-project search.
     project_scanner: ProjectScanner,
 }
@@ -29,6 +48,9 @@ struct SearchableEntry {
     text: String,
     message_type: String,
     timestamp: u64,
+    group_id: Option<String>,
+    item_type: Option<String>,
+    message_uuid: Option<String>,
 }
 
 impl SessionSearcher {
@@ -42,7 +64,9 @@ impl SessionSearcher {
         Self {
             projects_dir,
             fs_provider,
-            cache: HashMap::new(),
+            cache: moka::sync::Cache::builder()
+                .max_capacity(CACHE_MAX_CAPACITY)
+                .build(),
             project_scanner,
         }
     }
@@ -64,9 +88,14 @@ impl SessionSearcher {
             };
         }
 
-        let normalized_query = query.to_lowercase();
+        let normalized_query = query.trim().to_lowercase();
         let mut results: Vec<SearchResult> = Vec::new();
         let mut sessions_searched: u32 = 0;
+        let mut is_partial = false;
+
+        // SSH 快速搜索模式：时间预算 + 分阶段边界
+        let fast_mode = self.fs_provider.provider_type() == "ssh";
+        let started_at = Instant::now();
 
         let base_dir = path_decoder::extract_base_dir(project_id);
         let project_path = self.projects_dir.join(&base_dir);
@@ -108,25 +137,56 @@ impl SessionSearcher {
         // Sort by modification time (most recent first)
         session_files.sort_by(|a, b| b.2.cmp(&a.2));
 
+        // 构建分阶段搜索边界（SSH fast search 使用）
+        let stage_boundaries = if fast_mode {
+            build_fast_search_stage_boundaries(session_files.len())
+        } else {
+            Vec::new()
+        };
+
         // Search each session file
-        for (file_name, file_path, mtime) in session_files {
+        for (idx, (file_name, file_path, mtime)) in session_files.iter().enumerate() {
             if results.len() >= max_results as usize {
                 break;
             }
 
-            let session_id = path_decoder::extract_session_id(&file_name);
+            // SSH 时间预算检查
+            if fast_mode && started_at.elapsed().as_millis() >= SSH_FAST_SEARCH_TIME_BUDGET_MS {
+                is_partial = true;
+                break;
+            }
+
+            // SSH 分阶段边界检查：若已收集足够结果且到达阶段边界则提前退出
+            if fast_mode {
+                if let Some(&boundary) = stage_boundaries.iter().find(|&&b| b == idx) {
+                    if results.len() >= SSH_FAST_SEARCH_MIN_RESULTS {
+                        is_partial = true;
+                        break;
+                    }
+                }
+            }
+
+            let session_id = path_decoder::extract_session_id(file_name);
             sessions_searched += 1;
 
             if let Ok(file_results) = self.search_session_file(
                 project_id,
                 &session_id,
-                &file_path,
+                file_path,
                 &normalized_query,
                 max_results as usize - results.len(),
-                mtime,
+                *mtime,
             ) {
                 results.extend(file_results);
             }
+        }
+
+        // SSH 模式下：若因 results 达到上限退出但仍有未搜索的会话，标记为 partial
+        if fast_mode && !is_partial
+            && results.len() >= max_results as usize
+            && (sessions_searched as usize) < session_files.len()
+        {
+            is_partial = true;
         }
 
         let total_matches = results.len() as u32;
@@ -135,7 +195,7 @@ impl SessionSearcher {
             total_matches,
             sessions_searched,
             query: query.to_string(),
-            is_partial: None,
+            is_partial: if is_partial { Some(true) } else { None },
         }
     }
 
@@ -211,20 +271,20 @@ impl SessionSearcher {
     ) -> Result<Vec<SearchResult>, std::io::Error> {
         let mut results = Vec::new();
 
-        // Check cache
+        // Check cache (LRU with mtime-based invalidation)
         let entries = {
             let cache_key = file_path.to_string_lossy().to_string();
-            if let Some((cached_mtime, cached_entries)) = self.cache.get(&cache_key) {
-                if *cached_mtime == mtime {
-                    cached_entries.clone()
+            if let Some(cached) = self.cache.get(&cache_key) {
+                if cached.mtime == mtime {
+                    cached.entries.clone()
                 } else {
                     let entries = self.extract_searchable_entries(file_path)?;
-                    self.cache.insert(cache_key, (mtime, entries.clone()));
+                    self.cache.insert(cache_key, CacheEntry { mtime, entries: entries.clone() });
                     entries
                 }
             } else {
                 let entries = self.extract_searchable_entries(file_path)?;
-                self.cache.insert(cache_key, (mtime, entries.clone()));
+                self.cache.insert(cache_key, CacheEntry { mtime, entries: entries.clone() });
                 entries
             }
         };
@@ -270,16 +330,52 @@ impl SessionSearcher {
                 // Extract text based on message type
                 let message_type = json.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
 
+                // 提取 uuid 用于 group_id 和 message_uuid
+                let uuid = json.get("uuid").and_then(|u| u.as_str()).map(|s| s.to_string());
+
+                // 噪声过滤：跳过 sidechain 消息
+                let is_sidechain = json.get("isSidechain").and_then(|v| v.as_bool()).unwrap_or(false);
+                if is_sidechain {
+                    continue;
+                }
+
+                // 噪声过滤：跳过 synthetic assistant 消息
+                if message_type == "assistant" {
+                    let model = json.get("message")
+                        .and_then(|m| m.get("model"))
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("");
+                    if model == "<synthetic>" {
+                        continue;
+                    }
+                }
+
+                // 噪声过滤：硬噪声类型
+                let hard_noise_types = ["system", "summary", "file-history-snapshot", "queue-operation"];
+                if hard_noise_types.contains(&message_type) {
+                    continue;
+                }
+
                 let text = match message_type {
                     "user" => {
-                        // User message - extract content
-                        json.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string()
+                        // 用户消息：提取 content
+                        // 噪声过滤：跳过仅含噪声标签的用户消息
+                        let raw = json.get("message")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("");
+                        if is_noise_only_user_message(raw) {
+                            String::new()
+                        } else {
+                            raw.to_string()
+                        }
                     }
                     "assistant" => {
-                        // Assistant message - extract text content
+                        // Assistant 消息：仅使用最后一个文本输出块（与 Electron 对齐）
                         if let Some(content) = json.get("content") {
                             if let Some(arr) = content.as_array() {
+                                // 反向查找最后一个 text 类型的块
                                 arr.iter()
+                                    .rev()
                                     .filter_map(|item| {
                                         if item.get("type")?.as_str()? == "text" {
                                             item.get("text").and_then(|t| t.as_str())
@@ -287,8 +383,9 @@ impl SessionSearcher {
                                             None
                                         }
                                     })
-                                    .collect::<Vec<_>>()
-                                    .join("\n")
+                                    .next()
+                                    .unwrap_or("")
+                                    .to_string()
                             } else {
                                 String::new()
                             }
@@ -306,10 +403,32 @@ impl SessionSearcher {
                     .unwrap_or(0);
 
                 if !text.is_empty() {
+                    // 构建 group_id 和 item_type（与 Electron 的 chunk ID 格式对齐）
+                    // 注意：assistant 消息的 group_id 使用 "ai-" 前缀（与 chunk_builder 一致），
+                    // 而非 message_type 中的 "assistant"，前端 DOM 使用 data-search-item-id="ai-{uuid}"
+                    let (group_id, item_type) = if let Some(ref id) = uuid {
+                        let group = match message_type {
+                            "assistant" => format!("ai-{}", id),
+                            "user" => format!("user-{}", id),
+                            _ => format!("{}-{}", message_type, id),
+                        };
+                        let itype = match message_type {
+                            "user" => Some("user".to_string()),
+                            "assistant" => Some("ai".to_string()),
+                            _ => None,
+                        };
+                        (Some(group), itype)
+                    } else {
+                        (None, None)
+                    };
+
                     entries.push(SearchableEntry {
                         text,
                         message_type: message_type.to_string(),
                         timestamp,
+                        group_id,
+                        item_type,
+                        message_uuid: uuid,
                     });
                 }
             }
@@ -330,6 +449,7 @@ impl SessionSearcher {
     ) {
         let lower_text = entry.text.to_lowercase();
         let mut pos = 0;
+        let mut match_index_in_item: u32 = 0;
 
         while let Some(found_pos) = lower_text[pos..].find(query) {
             if results.len() >= max_results {
@@ -358,16 +478,57 @@ impl SessionSearcher {
                 context: context_with_ellipsis,
                 message_type: entry.message_type.clone(),
                 timestamp: entry.timestamp,
-                group_id: None,
-                item_type: None,
-                match_index_in_item: None,
+                group_id: entry.group_id.clone(),
+                item_type: entry.item_type.clone(),
+                match_index_in_item: Some(match_index_in_item),
                 match_start_offset: Some(absolute_pos as u32),
-                message_uuid: None,
+                message_uuid: entry.message_uuid.clone(),
             });
 
+            match_index_in_item += 1;
             pos = absolute_pos + query.len();
         }
     }
+}
+
+/// 检查用户消息是否仅包含噪声标签（与 Electron 的 `isParsedHardNoiseMessage` 对齐）。
+///
+/// Electron 的检测逻辑：检查消息是否被噪声标签完整包裹（以 `<tag>` 开头，以 `</tag>` 结尾），
+/// 而非剥离所有标签后检查内容。这确保了包含噪声标签但同时也包含用户文本的消息不被误过滤。
+fn is_noise_only_user_message(text: &str) -> bool {
+    let trimmed = text.trim();
+
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    // 检查噪声标签包裹（与 Electron HARD_NOISE_TAGS 对齐）
+    const NOISE_TAGS: &[&str] = &["<local-command-caveat>", "<system-reminder>"];
+
+    for &tag in NOISE_TAGS {
+        let close_tag = tag.replacen('<', "</", 1);
+        if trimmed.starts_with(tag) && trimmed.ends_with(&close_tag) {
+            return true;
+        }
+    }
+
+    // 过滤中断消息（与 Electron 对齐）
+    if trimmed.starts_with("[Request interrupted by user") {
+        return true;
+    }
+
+    false
+}
+
+/// 构建 SSH 快速搜索的分阶段边界索引（与 Electron 对齐）。
+///
+/// 边界是会话文件列表中的位置，到达这些位置时如果已收集足够结果则提前退出。
+fn build_fast_search_stage_boundaries(total_files: usize) -> Vec<usize> {
+    SSH_FAST_SEARCH_STAGE_LIMITS
+        .iter()
+        .filter(|&&limit| limit < total_files)
+        .copied()
+        .collect()
 }
 
 #[cfg(test)]
@@ -377,6 +538,56 @@ mod tests {
     use std::fs;
     use std::sync::Arc;
     use tempfile::TempDir;
+
+    // ---------------------------------------------------------------------------
+    // is_noise_only_user_message tests
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_noise_filter_empty() {
+        assert!(is_noise_only_user_message(""));
+        assert!(is_noise_only_user_message("   "));
+    }
+
+    #[test]
+    fn test_noise_filter_wrapped_system_reminder() {
+        assert!(is_noise_only_user_message("<system-reminder>rules here</system-reminder>"));
+    }
+
+    #[test]
+    fn test_noise_filter_wrapped_local_command_caveat() {
+        assert!(is_noise_only_user_message("<local-command-caveat>some caveat</local-command-caveat>"));
+    }
+
+    #[test]
+    fn test_noise_filter_mixed_content_not_filtered() {
+        // 包含噪声标签但同时也包含用户文本 → 不应过滤
+        assert!(!is_noise_only_user_message(
+            "<system-reminder>rules</system-reminder>Please help me with this"
+        ));
+    }
+
+    #[test]
+    fn test_noise_filter_normal_user_text_not_filtered() {
+        assert!(!is_noise_only_user_message("Hello, can you help me?"));
+    }
+
+    #[test]
+    fn test_noise_filter_interruption_message() {
+        assert!(is_noise_only_user_message("[Request interrupted by user at 2024-01-01]"));
+    }
+
+    #[test]
+    fn test_noise_filter_tag_with_extra_content_after_close() {
+        // 关闭标签后有额外内容 → 不应过滤
+        assert!(!is_noise_only_user_message(
+            "<system-reminder>rules</system-reminder>extra text"
+        ));
+    }
+
+    // ---------------------------------------------------------------------------
+    // setup helpers
+    // ---------------------------------------------------------------------------
 
     fn setup_test_env() -> (TempDir, SessionSearcher) {
         let temp_dir = TempDir::new().unwrap();
