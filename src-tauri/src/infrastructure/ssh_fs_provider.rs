@@ -110,11 +110,22 @@ impl SshFsProvider {
     }
 
     /// Block on an async SFTP operation using the stored tokio runtime handle.
+    ///
+    /// **WARNING:** Must NOT be called from within an async context on the same
+    /// tokio runtime — this will panic. Use `exists_async()` instead when calling
+    /// from async code.
     fn block_on<F, T>(&self, f: F) -> T
     where
         F: std::future::Future<Output = T>,
     {
         self.handle.block_on(f)
+    }
+
+    /// Async version of `exists` — safe to call from async contexts.
+    ///
+    /// Avoids the `block_on`-from-async panic by calling SFTP directly.
+    pub async fn exists_async(&self, path: &str) -> Result<bool, SftpError> {
+        self.sftp.try_exists(path).await
     }
 }
 

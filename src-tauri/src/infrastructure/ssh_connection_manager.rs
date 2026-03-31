@@ -195,7 +195,10 @@ impl SshConnectionManager {
             }
         };
 
-        // 8. Authenticate
+        // 8. Discover agent socket (for Agent/Auto auth on macOS GUI apps)
+        let agent_socket = Self::discover_agent_socket();
+
+        // 9. Authenticate
         let mut session_mut = session;
         let resolved_alias = if original_host != merged_config.host {
             Some(original_host.clone())
@@ -211,6 +214,7 @@ impl SshConnectionManager {
             merged_config.private_key_path.as_deref(),
             self.config_parser.as_ref(),
             resolved_alias.as_deref(),
+            agent_socket.as_deref(),
         )
         .await
         {
@@ -221,7 +225,7 @@ impl SshConnectionManager {
             return Ok(error_status);
         }
 
-        // 9. Open SFTP subsystem
+        // 10. Open SFTP subsystem
         let sftp = match self.open_sftp_subsystem(&mut session_mut).await {
             Ok(sftp) => sftp,
             Err(e) => {
@@ -233,10 +237,10 @@ impl SshConnectionManager {
             }
         };
 
-        // 10. Create SshFsProvider
+        // 11. Create SshFsProvider
         let fs_provider = SshFsProvider::new(sftp, tokio::runtime::Handle::current());
 
-        // 11. Resolve remote home and projects path
+        // 12. Resolve remote home and projects path
         let remote_projects_path = self
             .resolve_remote_projects_path(&mut session_mut, &merged_config.username, &fs_provider)
             .await;
@@ -246,10 +250,10 @@ impl SshConnectionManager {
             remote_projects_path.clone(),
         );
 
-        // 12. Create monitor stop channel
+        // 13. Create monitor stop channel
         let (monitor_stop, _) = watch::channel(false);
 
-        // 13. Store the connection
+        // 14. Store the connection
         {
             let mut conn = self.connection.write().await;
             *conn = Some(SshConnection {
@@ -262,7 +266,7 @@ impl SshConnectionManager {
             });
         }
 
-        // 14. Emit Connected status
+        // 15. Emit Connected status
         let _ = self.event_sender.send(connected_status.clone());
 
         Ok(connected_status)
@@ -364,6 +368,8 @@ impl SshConnectionManager {
             None
         };
 
+        let agent_socket = Self::discover_agent_socket();
+
         if let Err(e) = ssh_auth::authenticate(
             &mut session,
             &merged_config.username,
@@ -372,6 +378,7 @@ impl SshConnectionManager {
             merged_config.private_key_path.as_deref(),
             self.config_parser.as_ref(),
             resolved_alias.as_deref(),
+            agent_socket.as_deref(),
         )
         .await
         {
@@ -441,12 +448,15 @@ impl SshConnectionManager {
     /// Checks (in order):
     /// 1. `SSH_AUTH_SOCK` environment variable
     /// 2. macOS launchctl (`SSH_AUTH_SOCK` from launchctl getenv)
-    /// 3. 1Password CLI agent socket paths
-    /// 4. `~/.ssh/agent.sock`
+    /// 3. 1Password Mac App Store agent socket
+    /// 4. 1Password CLI agent socket
+    /// 5. `~/.ssh/agent.sock`
+    /// 6. (Linux) `/run/user/{uid}/ssh-agent.socket`
+    /// 7. (Linux) `/run/user/{uid}/keyring/ssh`
     pub fn discover_agent_socket() -> Option<String> {
         // 1. Check SSH_AUTH_SOCK environment variable
         if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
-            if !sock.is_empty() {
+            if !sock.is_empty() && std::path::Path::new(&sock).exists() {
                 return Some(sock);
             }
         }
@@ -594,7 +604,7 @@ impl SshConnectionManager {
     /// 1. Gets remote home via `printf %s "$HOME"`
     /// 2. Builds candidate paths: home/.claude/projects, /home/{user}/.claude/projects,
     ///    /Users/{user}/.claude/projects, /root/.claude/projects
-    /// 3. Tests each with SFTP exists
+    /// 3. Tests each with async SFTP exists (avoids block_on-from-async panic)
     /// 4. Falls back to home/.claude/projects
     async fn resolve_remote_projects_path(
         &self,
@@ -623,12 +633,15 @@ impl SshConnectionManager {
             }
         }
 
-        // Test each candidate with SFTP exists
+        // Test each candidate with async SFTP exists (NOT fs_provider.exists()
+        // which uses block_on and would panic from this async context)
         for candidate in &candidates {
-            let path = Path::new(candidate);
-            if fs_provider.exists(path).unwrap_or(false) {
-                log::info!("Remote projects path resolved to: {}", candidate);
-                return candidate.clone();
+            match fs_provider.exists_async(candidate).await {
+                Ok(true) => {
+                    log::info!("Remote projects path resolved to: {}", candidate);
+                    return candidate.clone();
+                }
+                _ => continue,
             }
         }
 

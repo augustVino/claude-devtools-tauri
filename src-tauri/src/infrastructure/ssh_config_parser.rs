@@ -98,6 +98,152 @@ fn resolve_entry(alias: &str, config: &SSHConfig) -> SshConfigHostEntry {
     }
 }
 
+/// Expand `Include` directives in SSH config content.
+///
+/// Processes `Include` and `include` directives with:
+/// - Tilde expansion (`~` → home dir)
+/// - Glob pattern matching (`*`, `?`)
+/// - Silent skip on unreadable/missing files
+/// - Recursive inclusion (included files may themselves have Include directives)
+/// - Symlink loop detection via canonical path tracking
+fn expand_includes(content: &str, max_depth: usize) -> String {
+    expand_includes_inner(content, max_depth, &mut HashSet::new())
+}
+
+fn expand_includes_inner(
+    content: &str,
+    max_depth: usize,
+    visited: &mut HashSet<PathBuf>,
+) -> String {
+    if max_depth == 0 {
+        return content.to_string();
+    }
+
+    let home = dirs::home_dir().unwrap_or_default();
+    let mut result = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        // Match "Include" or "include" directive
+        let pattern = if let Some(rest) = trimmed
+            .strip_prefix("Include ")
+            .or_else(|| trimmed.strip_prefix("include "))
+        {
+            rest.trim()
+        } else {
+            result.push(line.to_string());
+            continue;
+        };
+
+        // Tilde expansion
+        let expanded = if pattern.starts_with("~/") {
+            home.join(&pattern[2..])
+                .to_string_lossy()
+            .to_string()
+        } else {
+            pattern.to_string()
+        };
+
+        // Check if pattern contains glob characters
+        if expanded.contains('*') || expanded.contains('?') {
+            // Glob expansion
+            let dir = Path::new(&expanded)
+                .parent()
+                .unwrap_or(Path::new("."));
+            let glob_part = Path::new(&expanded)
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            if let Ok(entries) = fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if glob_matches(&glob_part, &name) {
+                        let file_path = entry.path();
+                        // Canonicalize for symlink loop detection; skip on failure
+                        let canonical = match file_path.canonicalize() {
+                            Ok(c) => c,
+                            Err(_) => continue,
+                        };
+                        if visited.contains(&canonical) {
+                            continue;
+                        }
+                        visited.insert(canonical);
+                        if let Ok(included) = fs::read_to_string(&file_path) {
+                            let expanded_content =
+                                expand_includes_inner(&included, max_depth - 1, visited);
+                            result.push(expanded_content);
+                        }
+                    }
+                }
+            }
+        } else {
+            // Single file include
+            let file_path = Path::new(&expanded);
+            // Canonicalize for symlink loop detection; skip on failure
+            let canonical = match file_path.canonicalize() {
+                Ok(c) => c,
+                Err(_) => {
+                    // File doesn't exist — silent skip (matching Electron behavior)
+                    result.push(line.to_string());
+                    continue;
+                }
+            };
+            if visited.contains(&canonical) {
+                continue;
+            }
+            visited.insert(canonical);
+            if let Ok(included) = fs::read_to_string(file_path) {
+                let expanded_content = expand_includes_inner(&included, max_depth - 1, visited);
+                result.push(expanded_content);
+            }
+            // Silent skip on unreadable files (matching Electron behavior)
+        }
+    }
+
+    result.join("\n")
+}
+
+/// Simple glob matching supporting `*` and `?` patterns.
+fn glob_matches(pattern: &str, text: &str) -> bool {
+    let p_chars: Vec<char> = pattern.chars().collect();
+    let t_chars: Vec<char> = text.chars().collect();
+    glob_match_inner(&p_chars, &t_chars, 0, 0)
+}
+
+fn glob_match_inner(pattern: &[char], text: &[char], pi: usize, ti: usize) -> bool {
+    if pi == pattern.len() {
+        return ti == text.len();
+    }
+
+    match pattern[pi] {
+        '*' => {
+            // Try matching * with 0..N characters
+            for i in ti..=text.len() {
+                if glob_match_inner(pattern, text, pi + 1, i) {
+                    return true;
+                }
+            }
+            false
+        }
+        '?' => {
+            if ti < text.len() {
+                glob_match_inner(pattern, text, pi + 1, ti + 1)
+            } else {
+                false
+            }
+        }
+        c => {
+            if ti < text.len() && text[ti] == c {
+                glob_match_inner(pattern, text, pi + 1, ti + 1)
+            } else {
+                false
+            }
+        }
+    }
+}
+
 /// Parse the SSH config text and resolve all host entries into owned data.
 ///
 /// This function owns the `SSHConfig` and all borrowed data within a single
@@ -150,7 +296,9 @@ impl SshConfigParser {
         let config_text =
             fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
 
-        Self::from_str(&config_text).map(Some)
+        // Expand Include directives before parsing
+        let expanded_text = expand_includes(&config_text, 10);
+        Self::from_str(&expanded_text).map(Some)
     }
 
     /// Parse SSH config from a string (useful for testing).
@@ -187,6 +335,7 @@ impl SshConfigParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -437,5 +586,127 @@ Host visible
         let hosts = parser.get_hosts();
         assert_eq!(hosts.len(), 1);
         assert_eq!(hosts[0].user.as_deref(), Some("visible_user"));
+    }
+
+    // ── Include directive tests ─────────────────────────────────
+
+    #[test]
+    fn test_include_single_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let main_file = dir.path().join("config");
+        let include_file = dir.path().join("extra");
+
+        write!(File::create(&include_file).unwrap(), "Host included-host\n    HostName 10.0.0.99\n    User inc\n").unwrap();
+        write!(File::create(&main_file).unwrap(), "Host main-host\n    HostName 10.0.0.1\n\nInclude {}\n", include_file.display()).unwrap();
+
+        let parser = SshConfigParser::from_path(&main_file).unwrap().unwrap();
+        let hosts = parser.get_hosts();
+        assert_eq!(hosts.len(), 2);
+
+        let main = hosts.iter().find(|h| h.alias == "main-host").unwrap();
+        assert_eq!(main.host_name.as_deref(), Some("10.0.0.1"));
+
+        let inc = hosts.iter().find(|h| h.alias == "included-host").unwrap();
+        assert_eq!(inc.host_name.as_deref(), Some("10.0.0.99"));
+        assert_eq!(inc.user.as_deref(), Some("inc"));
+    }
+
+    #[test]
+    fn test_include_glob_pattern() {
+        let dir = tempfile::tempdir().unwrap();
+        let main_file = dir.path().join("config");
+        let conf_dir = dir.path().join("config.d");
+        std::fs::create_dir(&conf_dir).unwrap();
+
+        write!(File::create(conf_dir.join("work.conf")).unwrap(), "Host work-server\n    HostName work.example.com\n").unwrap();
+        write!(File::create(conf_dir.join("personal.conf")).unwrap(), "Host personal-server\n    HostName home.example.com\n").unwrap();
+        // This file should NOT match the glob
+        write!(File::create(conf_dir.join("readme.txt")).unwrap(), "not a config file\n").unwrap();
+
+        write!(File::create(&main_file).unwrap(), "Host main\n    HostName main.example.com\n\nInclude {}/*.conf\n", conf_dir.display()).unwrap();
+
+        let parser = SshConfigParser::from_path(&main_file).unwrap().unwrap();
+        let hosts = parser.get_hosts();
+        assert_eq!(hosts.len(), 3);
+
+        let aliases: Vec<&str> = hosts.iter().map(|h| h.alias.as_str()).collect();
+        assert!(aliases.contains(&"main"));
+        assert!(aliases.contains(&"work-server"));
+        assert!(aliases.contains(&"personal-server"));
+        assert!(!aliases.contains(&"readme"));
+    }
+
+    #[test]
+    fn test_include_missing_file_silent_skip() {
+        let dir = tempfile::tempdir().unwrap();
+        let main_file = dir.path().join("config");
+
+        write!(File::create(&main_file).unwrap(), "Host main\n    HostName 10.0.0.1\n\nInclude /nonexistent/path/config\n").unwrap();
+
+        let parser = SshConfigParser::from_path(&main_file).unwrap().unwrap();
+        let hosts = parser.get_hosts();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].alias, "main");
+    }
+
+    #[test]
+    fn test_include_max_depth() {
+        // At max depth 0, Include directives should be kept as-is (no expansion)
+        let content = "Host main\n    HostName 10.0.0.1\n\nInclude /nonexistent";
+        let result = expand_includes(content, 0);
+        assert!(result.contains("Include"));
+        assert!(result.contains("Host main"));
+    }
+
+    #[test]
+    fn test_glob_matches() {
+        assert!(glob_matches("*.conf", "work.conf"));
+        assert!(glob_matches("*.conf", "personal.conf"));
+        assert!(!glob_matches("*.conf", "readme.txt"));
+        assert!(glob_matches("test_?.conf", "test_a.conf"));
+        assert!(!glob_matches("test_?.conf", "test_ab.conf"));
+        assert!(glob_matches("*", "anything"));
+        assert!(glob_matches("exact", "exact"));
+        assert!(!glob_matches("exact", "different"));
+    }
+
+    // ── from_str (no include expansion) ────────────────────────
+
+    #[test]
+    fn test_from_str_no_include_expansion() {
+        // from_str() parses raw content without file-system include expansion
+        let config_text = "Host main\n    HostName 10.0.0.1\n\nInclude /some/path\nHost included\n    HostName 10.0.0.2\n";
+        let parser = SshConfigParser::from_str(config_text).unwrap();
+        let hosts = parser.get_hosts();
+        // "Include /some/path" line is not a Host directive, so it's ignored by extract_host_aliases
+        assert_eq!(hosts.len(), 2);
+    }
+
+    #[test]
+    fn test_include_symlink_loop() {
+        let dir = tempfile::tempdir().unwrap();
+        let main_file = dir.path().join("config");
+        let include_file = dir.path().join("extra");
+
+        write!(File::create(&include_file).unwrap(), "Host extra-host\n    HostName 10.0.0.99\n").unwrap();
+
+        // Create a symlink from loop.conf -> include_file (not a cycle by itself)
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&include_file, dir.path().join("loop.conf")).unwrap();
+        }
+
+        write!(
+            File::create(&main_file).unwrap(),
+            "Host main\n    HostName 10.0.0.1\n\nInclude {}\nInclude {}\n",
+            include_file.display(),
+            dir.path().join("loop.conf").display()
+        ).unwrap();
+
+        let parser = SshConfigParser::from_path(&main_file).unwrap().unwrap();
+        let hosts = parser.get_hosts();
+        // extra-host should appear only once despite being included twice (via direct + symlink)
+        let extra_count = hosts.iter().filter(|h| h.alias == "extra-host").count();
+        assert_eq!(extra_count, 1, "extra-host should appear exactly once (deduplicated via symlink cycle detection)");
     }
 }

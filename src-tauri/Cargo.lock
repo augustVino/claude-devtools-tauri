@@ -782,6 +782,7 @@ dependencies = [
  "cocoa",
  "dirs 6.0.0",
  "futures",
+ "libc",
  "log",
  "moka",
  "notify 8.2.0",

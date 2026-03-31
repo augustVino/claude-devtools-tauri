@@ -261,26 +261,43 @@ pub async fn ssh_resolve_host(
 }
 
 // ---------------------------------------------------------------------------
-// Stub routes (not yet persisted to disk)
+// SSH connection persistence routes (wired to ConfigManager)
 // ---------------------------------------------------------------------------
 
-/// POST /api/ssh/save-last-connection — Save last SSH connection (stub).
+/// POST /api/ssh/save-last-connection — Save last SSH connection config.
 pub async fn ssh_save_last_connection(
-    State(_state): State<HttpState>,
-    Json(_body): Json<SshLastConnection>,
+    State(state): State<HttpState>,
+    Json(body): Json<SshLastConnection>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // TODO: Persist to disk
-    log::info!("ssh_save_last_connection (HTTP): stub (not yet implemented)");
-    success_json(serde_json::Value::Null)
+    let connection_value = serde_json::json!({
+        "lastConnection": {
+            "host": body.host,
+            "port": body.port,
+            "username": body.username,
+            "authMethod": body.auth_method,
+            "privateKeyPath": body.private_key_path,
+        }
+    });
+    match state.config_manager.update_config("ssh", connection_value) {
+        Ok(_) => success_json(serde_json::Value::Null),
+        Err(e) => (StatusCode::OK, Json(serde_json::json!({"success": false, "error": e.to_string()}))),
+    }
 }
 
-/// GET /api/ssh/last-connection — Get last SSH connection (stub).
+/// GET /api/ssh/last-connection — Get last SSH connection config.
 pub async fn ssh_get_last_connection(
-    State(_state): State<HttpState>,
+    State(state): State<HttpState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // TODO: Load from disk
-    log::info!("ssh_get_last_connection (HTTP): stub (not yet implemented)");
-    success_json(Option::<SshLastConnection>::None)
+    let config = state.config_manager.get_config();
+    let last = config.ssh.as_ref().and_then(|s| s.last_connection.as_ref());
+    let result = last.map(|c| SshLastConnection {
+        host: c.host.clone(),
+        port: c.port,
+        username: c.username.clone(),
+        auth_method: c.auth_method.clone(),
+        private_key_path: c.private_key_path.clone(),
+    });
+    success_json(result)
 }
 
 // ---------------------------------------------------------------------------

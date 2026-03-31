@@ -152,14 +152,22 @@ pub async fn auth_private_key<H: client::Handler>(
 
 /// Authenticate using the SSH agent.
 ///
-/// Connects to the local SSH agent via `SSH_AUTH_SOCK`, lists identities,
-/// and tries each one using `authenticate_future` (the Signer-based API).
+/// Connects to the local SSH agent and tries each loaded identity.
+/// If `agent_socket` is provided, uses that specific socket path via
+/// `connect_uds()` (critical for macOS GUI apps where `SSH_AUTH_SOCK`
+/// may not be set but the socket is discoverable via launchctl/1Password).
+/// Otherwise falls back to `connect_env()` which reads `SSH_AUTH_SOCK`.
 /// Wrapped in a 10-second timeout.
 pub async fn auth_agent<H: client::Handler>(
     session: &mut client::Handle<H>,
     username: &str,
+    agent_socket: Option<&str>,
 ) -> Result<(), AuthError> {
-    let result = tokio::time::timeout(AUTH_TIMEOUT, do_auth_agent(session, username)).await;
+    let result = tokio::time::timeout(
+        AUTH_TIMEOUT,
+        do_auth_agent(session, username, agent_socket),
+    )
+    .await;
 
     match result {
         Ok(Ok(())) => Ok(()),
@@ -168,18 +176,32 @@ pub async fn auth_agent<H: client::Handler>(
     }
 }
 
+/// Connect to an SSH agent, using the provided socket path or env var.
+///
+/// If `agent_socket` is `Some`, connects directly via `connect_uds(path)`.
+/// Otherwise falls back to `connect_env()` (reads `SSH_AUTH_SOCK`).
+async fn connect_agent(agent_socket: Option<&str>) -> Result<AgentClient<tokio::net::UnixStream>, AuthError> {
+    match agent_socket {
+        Some(path) => AgentClient::connect_uds(path)
+            .await
+            .map_err(|e| AuthError::new(format!("Cannot connect to SSH agent at {}: {}", path, e))),
+        None => AgentClient::connect_env()
+            .await
+            .map_err(|e| AuthError::new(format!("Cannot connect to SSH agent: {}", e))),
+    }
+}
+
 /// Internal implementation for agent auth.
 ///
-/// Uses `AgentClient::connect_env()` to connect to the SSH agent,
-/// `request_identities()` to list keys, and `session.authenticate_future()`
-/// to perform agent-based authentication (the agent handles signing).
+/// Uses `connect_agent()` to connect (supports both discovered socket path
+/// and env-var-based discovery), lists identities via `request_identities()`,
+/// and tries each with `session.authenticate_future()` (the Signer-based API).
 async fn do_auth_agent<H: client::Handler>(
     session: &mut client::Handle<H>,
     username: &str,
+    agent_socket: Option<&str>,
 ) -> Result<(), AuthError> {
-    let mut agent = AgentClient::connect_env()
-        .await
-        .map_err(|e| AuthError::new(format!("Cannot connect to SSH agent: {}", e)))?;
+    let mut agent = connect_agent(agent_socket).await?;
 
     let identities = agent
         .request_identities()
@@ -198,9 +220,7 @@ async fn do_auth_agent<H: client::Handler>(
 
         // authenticate_future takes the AgentClient (Signer impl) and a public key.
         // The agent handles the actual signing internally.
-        let agent_inner = AgentClient::connect_env()
-            .await
-            .map_err(|e| AuthError::new(format!("Cannot reconnect to SSH agent: {}", e)))?;
+        let agent_inner = connect_agent(agent_socket).await?;
 
         let (_returned_agent, auth_result) = session
             .authenticate_future(username, identity, agent_inner)
@@ -283,6 +303,7 @@ pub async fn auth_auto<H: client::Handler>(
     username: &str,
     config_parser: Option<&SshConfigParser>,
     resolved_alias: Option<&str>,
+    agent_socket: Option<&str>,
 ) -> Result<(), AuthError> {
     let ssh_dir = match dirs::home_dir() {
         Some(home) => home.join(".ssh"),
@@ -312,7 +333,7 @@ pub async fn auth_auto<H: client::Handler>(
     }
 
     // Step 2: Try SSH agent
-    if auth_agent(session, username).await.is_ok() {
+    if auth_agent(session, username, agent_socket).await.is_ok() {
         log::info!("Auto auth succeeded with SSH agent");
         return Ok(());
     }
@@ -359,6 +380,7 @@ async fn try_key_auth_with_timeout<H: client::Handler>(
 /// * `private_key_path` - Path to private key (used when `method == PrivateKey`)
 /// * `config_parser` - SSH config parser (used when `method == Auto`)
 /// * `resolved_alias` - Original host alias (used when `method == Auto`)
+/// * `agent_socket` - Discovered agent socket path (used when `method == Agent` or `Auto`)
 pub async fn authenticate<H: client::Handler>(
     session: &mut client::Handle<H>,
     username: &str,
@@ -367,6 +389,7 @@ pub async fn authenticate<H: client::Handler>(
     private_key_path: Option<&str>,
     config_parser: Option<&SshConfigParser>,
     resolved_alias: Option<&str>,
+    agent_socket: Option<&str>,
 ) -> Result<(), AuthError> {
     match method {
         SshAuthMethod::Password => {
@@ -379,10 +402,10 @@ pub async fn authenticate<H: client::Handler>(
             auth_private_key(session, username, private_key_path).await
         }
         SshAuthMethod::Agent => {
-            auth_agent(session, username).await
+            auth_agent(session, username, agent_socket).await
         }
         SshAuthMethod::Auto => {
-            auth_auto(session, username, config_parser, resolved_alias).await
+            auth_auto(session, username, config_parser, resolved_alias, agent_socket).await
         }
     }
 }
