@@ -9,9 +9,11 @@
 pub mod project_scanner;
 pub mod session_searcher;
 pub mod subagent_resolver;
+pub mod subproject_registry;
 pub mod worktree_grouper;
 
 pub use project_scanner::*;
 pub use session_searcher::*;
 pub use subagent_resolver::*;
+pub use subproject_registry::*;
 pub use worktree_grouper::*;
