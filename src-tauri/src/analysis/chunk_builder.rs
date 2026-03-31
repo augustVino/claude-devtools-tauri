@@ -244,6 +244,106 @@ impl ChunkBuilder {
             (Some(x), Some(y)) => Some(x + y) }
     }
 
+    /// Build SubagentDetail from parsed messages and nested subagents.
+    ///
+    /// Associated function (ChunkBuilder is a unit struct — no `&self`).
+    /// Reuses the existing chunk building pipeline, then extracts metadata.
+    pub fn build_subagent_detail(
+        subagent_id: &str,
+        messages: &[ParsedMessage],
+        subagents: &[Process],
+    ) -> crate::types::chunks::SubagentDetail {
+        use crate::types::chunks::{SubagentDetail, SubagentMetrics};
+        use crate::types::domain::MessageType;
+
+        let chunks = Self::build_chunks(messages, subagents);
+
+        // Extract description from first user message with string content
+        let description = messages
+            .iter()
+            .find(|m| m.message_type == MessageType::User && m.content.is_string())
+            .and_then(|m| m.content.as_str())
+            .map(|s| {
+                if s.chars().count() > 100 {
+                    format!("{}...", s.chars().take(100).collect::<String>())
+                } else {
+                    s.to_string()
+                }
+            })
+            .unwrap_or_else(|| "Subagent".to_string());
+
+        // Compute timing — ParsedMessage.timestamp is String (RFC 3339), parse to millis
+        let timestamps: Vec<u64> = messages
+            .iter()
+            .filter_map(|m| {
+                if m.timestamp.is_empty() {
+                    return None;
+                }
+                chrono::DateTime::parse_from_rfc3339(&m.timestamp)
+                    .ok()
+                    .map(|dt| dt.timestamp_millis() as u64)
+            })
+            .collect();
+        let (start, end) = timestamps
+            .iter()
+            .fold((u64::MAX, 0u64), |(min, max), &t| (min.min(t), max.max(t)));
+        let duration = if timestamps.is_empty() {
+            0
+        } else {
+            end.saturating_sub(start)
+        };
+
+        // Compute thinking tokens from content blocks
+        let thinking_tokens: u64 = messages
+            .iter()
+            .filter(|m| m.message_type == MessageType::Assistant)
+            .filter_map(|m| m.content.as_array())
+            .flat_map(|blocks| blocks.iter())
+            .filter(|block| {
+                block.get("type").and_then(|t| t.as_str()) == Some("thinking")
+            })
+            .filter_map(|block| block.get("thinking").and_then(|t| t.as_str()))
+            .map(|t| ((t.chars().count() as f64) / 4.0).ceil() as u64)
+            .sum();
+
+        // Build semantic step groups
+        let all_steps: Vec<_> = chunks
+            .iter()
+            .filter_map(|c| {
+                if let Chunk::Ai(ai) = c {
+                    Some(ai)
+                } else {
+                    None
+                }
+            })
+            .flat_map(|ai| ai.semantic_steps.clone())
+            .collect();
+        let semantic_step_groups = if all_steps.is_empty() {
+            None
+        } else {
+            Some(build_semantic_step_groups(&all_steps))
+        };
+
+        // Metrics — calculate_metrics returns SessionMetrics with plain u64 fields
+        let parsed_metrics = calculate_metrics(messages);
+
+        SubagentDetail {
+            id: subagent_id.to_string(),
+            description,
+            chunks,
+            semantic_step_groups,
+            start_time_ms: if timestamps.is_empty() { 0 } else { start },
+            end_time_ms: if timestamps.is_empty() { 0 } else { end },
+            duration_ms: duration,
+            metrics: SubagentMetrics {
+                input_tokens: parsed_metrics.input_tokens,
+                output_tokens: parsed_metrics.output_tokens,
+                thinking_tokens,
+                message_count: messages.len(),
+            },
+        }
+    }
+
     fn duration_ms(msgs: &[ParsedMessage]) -> u64 {
         if msgs.len() < 2 { return 0; }
         let first = msgs.first().and_then(|m| parse_ts_ms(&m.timestamp));
