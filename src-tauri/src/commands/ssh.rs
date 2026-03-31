@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 use crate::events;
 use crate::infrastructure::context_manager::ContextInfo;
 use crate::infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
-use crate::infrastructure::{ContextManager, SshConnectionManager, SshFsProvider};
+use crate::infrastructure::{ContextManager, SshConnectionManager};
 use crate::types::ssh::{
     SshConfigHostEntry, SshConnectionConfig, SshConnectionStatus, SshLastConnection, SshTestResult,
 };
@@ -56,19 +56,10 @@ pub async fn ssh_connect(
         .map(|p| p.join("todos"))
         .unwrap_or_else(|| PathBuf::from("/tmp/claude-todos-ssh"));
 
-    // Get connection info for SshFsProvider (read from ssh_manager)
     let fs_provider: Arc<dyn crate::infrastructure::FsProvider> = {
         let mgr = ssh_manager.read().await;
-        match mgr.get_provider().await {
-            Some(provider) => provider,
-            None => {
-                // Phase 1: use placeholder SshFsProvider since SFTP is not yet implemented
-                // Extract connection details from the status for the placeholder
-                let port = 22; // Default port; Phase 2 will read from actual connection
-                #[allow(deprecated)]
-                Arc::new(SshFsProvider::new_placeholder(host.clone(), port, "ssh".to_string()))
-            }
-        }
+        mgr.get_provider().await
+            .ok_or_else(|| "SSH provider not available after connect".to_string())?
     };
 
     let shared_cache = {

@@ -22,7 +22,6 @@ pub use fs_provider::{FsDirent, FsProvider, FsStatResult, LocalFsProvider};
 pub use notification_manager::NotificationManager;
 pub use ssh_config_parser::SshConfigParser;
 pub use ssh_connection_manager::SshConnectionManager;
-pub use ssh_fs_provider::SshFsProvider;
 #[allow(unused_imports)]
 pub use service_context::{ContextType, ServiceContext, ServiceContextConfig};
 #[allow(unused_imports)]

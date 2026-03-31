@@ -22,7 +22,6 @@ use crate::http::sse::BackendEvent;
 use crate::http::state::HttpState;
 use crate::infrastructure::context_manager::ContextInfo;
 use crate::infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
-use crate::infrastructure::SshFsProvider;
 use crate::types::ssh::{
     SshConnectionConfig, SshConnectionState, SshConnectionStatus, SshLastConnection, SshTestResult,
 };
@@ -77,15 +76,8 @@ pub async fn ssh_connect(
 
     let fs_provider: Arc<dyn crate::infrastructure::FsProvider> = {
         let mgr = state.ssh_manager.read().await;
-        match mgr.get_provider().await {
-            Some(provider) => provider,
-            None => {
-                // Phase 1: use placeholder SshFsProvider since SFTP is not yet implemented
-                let port = 22;
-                #[allow(deprecated)]
-                Arc::new(SshFsProvider::new_placeholder(host.clone(), port, "ssh".to_string()))
-            }
-        }
+        mgr.get_provider().await
+            .ok_or_else(|| error_json("SSH provider not available after connect"))?
     };
 
     let shared_cache = state.app_state.read().await.cache.clone();

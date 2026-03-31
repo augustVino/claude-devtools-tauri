@@ -85,24 +85,16 @@ fn time_to_ms(time: std::io::Result<std::time::SystemTime>) -> u64 {
 /// SSH SFTP 文件系统提供者。
 ///
 /// 包装 `SftpSession`，通过 `tokio::runtime::Handle` 将异步操作桥接到同步接口。
-/// 内部使用 `Option` 以支持未连接的占位状态（过渡期兼容）。
 #[derive(Clone)]
 pub struct SshFsProvider {
-    sftp: Option<Arc<SftpSession>>,
+    sftp: Arc<SftpSession>,
     handle: tokio::runtime::Handle,
 }
 
 impl std::fmt::Debug for SshFsProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SshFsProvider")
-            .field(
-                "sftp",
-                &if self.sftp.is_some() {
-                    "Some(Arc<SftpSession>)"
-                } else {
-                    "None"
-                },
-            )
+            .field("sftp", &"Arc<SftpSession>")
             .field("handle", &self.handle)
             .finish()
     }
@@ -112,26 +104,9 @@ impl SshFsProvider {
     /// Create a new SSH FS provider wrapping an existing SFTP session.
     pub fn new(sftp: SftpSession, handle: tokio::runtime::Handle) -> Self {
         Self {
-            sftp: Some(Arc::new(sftp)),
+            sftp: Arc::new(sftp),
             handle,
         }
-    }
-
-    /// Phase 1 compatibility constructor — used by callers not yet updated to pass a real SFTP session.
-    ///
-    /// Creates a provider with no SFTP session. All `FsProvider` methods will return errors.
-    /// **Deprecated**: Will be removed when all call sites are updated (Task 6).
-    #[deprecated(note = "Use SshFsProvider::new(sftp, handle) instead")]
-    pub fn new_placeholder(_host: String, _port: u16, _username: String) -> Self {
-        let handle = tokio::runtime::Handle::current();
-        Self { sftp: None, handle }
-    }
-
-    /// Get a reference to the inner SFTP session, or return an error if not connected.
-    fn session(&self, path: &Path) -> Result<&Arc<SftpSession>, String> {
-        self.sftp
-            .as_ref()
-            .ok_or_else(|| format!("No SFTP session for {}", path.display()))
     }
 
     /// Block on an async SFTP operation using the stored tokio runtime handle.
@@ -149,9 +124,8 @@ impl FsProvider for SshFsProvider {
     }
 
     fn exists(&self, path: &Path) -> Result<bool, String> {
-        let sftp = self.session(path)?;
         let path_str = path.to_string_lossy().to_string();
-        match self.block_on(sftp.try_exists(&path_str)) {
+        match self.block_on(self.sftp.try_exists(&path_str)) {
             Ok(exists) => Ok(exists),
             Err(err) => {
                 let kind = classify_sftp_error(&err);
@@ -174,12 +148,11 @@ impl FsProvider for SshFsProvider {
     }
 
     fn read_file(&self, path: &Path) -> Result<String, String> {
-        let sftp = self.session(path)?;
         let path_str = path.to_string_lossy().to_string();
         let mut last_err = None;
 
         for attempt in 0..=MAX_RETRIES {
-            match self.block_on(sftp.read(&path_str)) {
+            match self.block_on(self.sftp.read(&path_str)) {
                 Ok(bytes) => {
                     return String::from_utf8(bytes).map_err(|e| {
                         format!("Failed to decode UTF-8 for {}: {}", path.display(), e)
@@ -224,12 +197,11 @@ impl FsProvider for SshFsProvider {
     }
 
     fn stat(&self, path: &Path) -> Result<FsStatResult, String> {
-        let sftp = self.session(path)?;
         let path_str = path.to_string_lossy().to_string();
         let mut last_err = None;
 
         for attempt in 0..=MAX_RETRIES {
-            match self.block_on(sftp.metadata(&path_str)) {
+            match self.block_on(self.sftp.metadata(&path_str)) {
                 Ok(metadata) => {
                     return Ok(FsStatResult {
                         size: metadata.len(),
@@ -272,12 +244,11 @@ impl FsProvider for SshFsProvider {
     }
 
     fn read_dir(&self, path: &Path) -> Result<Vec<FsDirent>, String> {
-        let sftp = self.session(path)?;
         let path_str = path.to_string_lossy().to_string();
         let mut last_err = None;
 
         for attempt in 0..=MAX_RETRIES {
-            match self.block_on(sftp.read_dir(&path_str)) {
+            match self.block_on(self.sftp.read_dir(&path_str)) {
                 Ok(read_dir) => {
                     let entries: Vec<FsDirent> = read_dir
                         .map(|entry| {
@@ -404,17 +375,6 @@ mod tests {
         assert_debug::<SshFsProvider>();
     }
 
-    #[test]
-    fn test_debug_format_placeholder() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-        #[allow(deprecated)]
-        let p = SshFsProvider::new_placeholder("host".into(), 22, "user".into());
-        let debug_str = format!("{:?}", p);
-        assert!(debug_str.contains("SshFsProvider"));
-        assert!(debug_str.contains("None"));
-    }
-
     // ── 错误分类覆盖率 ─────────────────────────────────────────
 
     #[test]
@@ -481,47 +441,4 @@ mod tests {
         assert_eq!(time_to_ms(err_time), 0);
     }
 
-    // ── 占位符提供者（无 SFTP 会话） ────────────────────────────
-
-    #[test]
-    fn test_placeholder_provider_type() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-        #[allow(deprecated)]
-        let p = SshFsProvider::new_placeholder("h".into(), 22, "u".into());
-        assert_eq!(p.provider_type(), "ssh");
-    }
-
-    #[test]
-    fn test_placeholder_returns_error_on_read_file() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-        #[allow(deprecated)]
-        let p = SshFsProvider::new_placeholder("h".into(), 22, "u".into());
-        let result = p.read_file(Path::new("/some/file"));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("No SFTP session"));
-    }
-
-    #[test]
-    fn test_placeholder_returns_error_on_stat() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-        #[allow(deprecated)]
-        let p = SshFsProvider::new_placeholder("h".into(), 22, "u".into());
-        let result = p.stat(Path::new("/some/file"));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("No SFTP session"));
-    }
-
-    #[test]
-    fn test_placeholder_returns_error_on_read_dir() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-        #[allow(deprecated)]
-        let p = SshFsProvider::new_placeholder("h".into(), 22, "u".into());
-        let result = p.read_dir(Path::new("/some/dir"));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("No SFTP session"));
-    }
 }
