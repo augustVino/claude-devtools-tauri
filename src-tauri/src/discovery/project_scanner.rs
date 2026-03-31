@@ -269,6 +269,14 @@ impl ProjectScanner {
 
         for info in &file_infos {
             let entry_path = project_path.join(&info.name);
+
+            // Skip noise-only sessions (local filesystem only)
+            if self.fs_provider.provider_type() != "ssh" {
+                if !crate::discovery::session_content_filter::has_non_noise_messages(&entry_path, self.fs_provider.as_ref()) {
+                    continue;
+                }
+            }
+
             let preview = self.extract_session_preview(&entry_path, Some(info.mtime_ms));
 
             // Skip sessions that couldn't be read (file may have been deleted or is empty)
@@ -647,9 +655,11 @@ mod tests {
         let project_dir = temp_dir.path().join("projects").join(encoded_path);
         fs::create_dir_all(&project_dir).unwrap();
 
-        // Create session files
-        fs::write(project_dir.join("session-1.jsonl"), r#"{"type":"user"}"#).unwrap();
-        fs::write(project_dir.join("session-2.jsonl"), r#"{"type":"user"}"#).unwrap();
+        // Create session files (with assistant entries so noise filter passes)
+        fs::write(project_dir.join("session-1.jsonl"), r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"hello"}}
+{"type":"assistant","message":{"role":"assistant","content":"hi"}}"#).unwrap();
+        fs::write(project_dir.join("session-2.jsonl"), r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"world"}}
+{"type":"assistant","message":{"role":"assistant","content":"hi"}}"#).unwrap();
 
         let sessions = scanner.list_sessions(encoded_path);
         assert_eq!(sessions.len(), 2);
@@ -726,7 +736,8 @@ mod tests {
         let project_dir = temp_dir.path().join("projects").join(encoded_path);
         fs::create_dir_all(&project_dir).unwrap();
 
-        let jsonl = r#"{"type":"user","cwd":"/Users/test/happy-server","message":{"role":"user","content":"hello"}}"#;
+        let jsonl = r#"{"type":"user","isSidechain":false,"cwd":"/Users/test/happy-server","message":{"role":"user","content":"hello"}}
+{"type":"assistant","message":{"role":"assistant","content":"response"}}"#;
         fs::write(project_dir.join("session-1.jsonl"), jsonl).unwrap();
 
         let sessions = scanner.list_sessions(encoded_path);
