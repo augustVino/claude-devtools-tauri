@@ -82,7 +82,8 @@ pub async fn ssh_connect(
             None => {
                 // Phase 1: use placeholder SshFsProvider since SFTP is not yet implemented
                 let port = 22;
-                Arc::new(SshFsProvider::new(host.clone(), port, "ssh".to_string()))
+                #[allow(deprecated)]
+                Arc::new(SshFsProvider::new_placeholder(host.clone(), port, "ssh".to_string()))
             }
         }
     };

@@ -65,7 +65,8 @@ pub async fn ssh_connect(
                 // Phase 1: use placeholder SshFsProvider since SFTP is not yet implemented
                 // Extract connection details from the status for the placeholder
                 let port = 22; // Default port; Phase 2 will read from actual connection
-                Arc::new(SshFsProvider::new(host.clone(), port, "ssh".to_string()))
+                #[allow(deprecated)]
+                Arc::new(SshFsProvider::new_placeholder(host.clone(), port, "ssh".to_string()))
             }
         }
     };
