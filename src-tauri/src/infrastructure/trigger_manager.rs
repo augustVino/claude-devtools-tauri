@@ -244,14 +244,8 @@ impl TriggerManager {
                 }
             }
             TriggerMode::TokenThreshold => {
-                match trigger.token_threshold {
-                    None => {
-                        errors.push("Token threshold must be a non-negative number".to_string());
-                    }
-                    Some(v) if v == 0 => {
-                        errors.push("Token threshold must be greater than 0".to_string());
-                    }
-                    _ => {}
+                if trigger.token_threshold.is_none() {
+                    errors.push("Token threshold must be a non-negative number".to_string());
                 }
                 if trigger.token_type.is_none() {
                     errors.push("Token type is required for token_threshold mode".to_string());
@@ -322,14 +316,8 @@ impl TriggerManager {
                 }
             }
             TriggerMode::TokenThreshold => {
-                match trigger.token_threshold {
-                    None => {
-                        errors.push("Token threshold must be a non-negative number".to_string());
-                    }
-                    Some(v) if v == 0 => {
-                        errors.push("Token threshold must be greater than 0".to_string());
-                    }
-                    _ => {}
+                if trigger.token_threshold.is_none() {
+                    errors.push("Token threshold must be a non-negative number".to_string());
                 }
                 if trigger.token_type.is_none() {
                     errors.push("Token type is required for token_threshold mode".to_string());
@@ -846,12 +834,11 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_token_threshold_zero_fails() {
+    fn test_validate_token_threshold_zero_passes() {
         let manager = make_manager(default_triggers());
         let trigger = token_threshold_trigger("test-zero", "Zero Threshold", 0);
         let result = manager.validate(&trigger);
-        assert!(!result.valid);
-        assert!(result.errors.iter().any(|e| e.contains("greater than 0")));
+        assert!(result.valid);
     }
 
     #[test]

@@ -425,7 +425,7 @@ pub fn check_token_threshold_trigger(
     }
 
     let threshold = match trigger.token_threshold {
-        Some(t) if t > 0 => t as usize,
+        Some(t) => t as usize,
         _ => return errors,
     };
 
@@ -1519,7 +1519,19 @@ mod tests {
     #[test]
     fn test_check_token_threshold_trigger_zero_threshold() {
         let trigger = make_token_threshold_trigger(0);
-        let msg = make_assistant_message(json!("test"), vec![], vec![]);
+        let content = json!([
+            {
+                "type": "tool_use",
+                "id": "tu1",
+                "name": "Read",
+                "input": {"file_path": "/test.rs"}
+            }
+        ]);
+        let msg = make_assistant_message(
+            content,
+            vec![make_tool_call("tu1", "Read", json!({"file_path": "/test.rs"}))],
+            vec![make_tool_result("tu1", json!("some content"), false)],
+        );
         let tool_result_map = HashMap::new();
 
         let errors = check_token_threshold_trigger(
@@ -1532,8 +1544,8 @@ mod tests {
             10,
         );
 
-        // Zero threshold should be treated as "not set"
-        assert!(errors.is_empty());
+        // Zero threshold means any token usage triggers notification
+        assert!(!errors.is_empty());
     }
 
     #[test]

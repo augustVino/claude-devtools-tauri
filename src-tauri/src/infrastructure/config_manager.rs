@@ -196,6 +196,15 @@ impl ConfigManager {
                 }
             }
 
+            // Validate notifications section fields
+            if section == "notifications" {
+                if let Some(snooze) = data.get("snoozeMinutes").and_then(|v| v.as_u64()) {
+                    if snooze < 1 || snooze > 1440 {
+                        return Err("notifications.snoozeMinutes must be between 1 and 1440".to_string());
+                    }
+                }
+            }
+
             let updated = update_section(&current_json, section, &data);
             let merged: AppConfig = merge_with_defaults(&updated)?;
             *config = merged.clone();

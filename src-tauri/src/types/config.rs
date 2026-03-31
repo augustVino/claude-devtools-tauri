@@ -264,6 +264,8 @@ pub struct SshProfile {
     pub port: u16,
     #[serde(rename = "authMethod")]
     pub auth_method: String,
+    #[serde(rename = "privateKeyPath", skip_serializing_if = "Option::is_none")]
+    pub private_key_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
