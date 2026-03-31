@@ -7,6 +7,7 @@ pub mod file_watcher;
 pub mod fs_provider;
 pub mod notification_manager;
 pub mod service_context;
+pub mod ssh_auth;
 pub mod ssh_config_parser;
 pub mod ssh_connection_manager;
 pub mod ssh_fs_provider;
