@@ -381,6 +381,12 @@ export function useSettingsHandlers({
         if (importedConfig.display) {
           await api.config.update('display', importedConfig.display);
         }
+        if (importedConfig.ssh) {
+          await api.config.update('ssh', importedConfig.ssh);
+        }
+        if (importedConfig.httpServer) {
+          await api.config.update('httpServer', importedConfig.httpServer);
+        }
 
         const updatedConfig = await api.config.get();
         setConfig(updatedConfig);

@@ -24,7 +24,7 @@ use infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConn
 use infrastructure::fs_provider::LocalFsProvider;
 use infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
 use commands::tray::TrayIconManager;
-use utils::{get_projects_base_path, get_todos_base_path};
+use utils::{get_projects_base_path, get_todos_base_path, set_claude_root_override};
 
 /// 运行 Tauri 应用。
 ///
@@ -72,6 +72,15 @@ pub fn run() {
       }
     })
     .setup(move |app| {
+      // Synchronously initialize config manager before any config-dependent decisions
+      // (e.g., macOS Dock icon visibility). This ensures the saved config is loaded
+      // from disk, not just the default values.
+      tauri::async_runtime::block_on(config_manager.initialize())
+        .map_err(|e| format!("Failed to initialize config: {e}"))?;
+
+      // Set global claude root path override from config
+      set_claude_root_override(config_manager.get_config().general.claude_root_path.clone());
+
       let state = app_state.clone();
 
       // 非自动启动（无 --minimized 参数）时显示窗口
@@ -87,6 +96,7 @@ pub fn run() {
       app.manage(tray_manager);
 
       // macOS: Create tray and hide Dock icon if config says so
+      // Config must be initialized BEFORE reading show_dock_icon to get saved value
       #[cfg(target_os = "macos")]
       {
         let hide_dock = {
@@ -110,13 +120,6 @@ pub fn run() {
           }
         }
       }
-
-      // 异步初始化应用状态
-      tauri::async_runtime::spawn(async move {
-        if let Err(e) = state.read().await.initialize().await {
-          log::error!("Failed to initialize app state: {}", e);
-        }
-      });
 
       // 创建并注册 SSEBroadcaster
       let broadcaster = crate::http::sse::SSEBroadcaster::new();
@@ -146,6 +149,7 @@ pub fn run() {
       });
 
       // ========== 创建 ContextManager 并注册本地上下文 ==========
+      // claude_root_override has been set above, so get_projects_base_path() uses it
       let context_manager = {
         let mut mgr = ContextManager::new();
         let local_context = ServiceContext::new(ServiceContextConfig {
@@ -176,10 +180,9 @@ pub fn run() {
       // ========== 注册 SessionSearcher（供 Tauri IPC search 命令使用）==========
       {
         let local_fs: Arc<dyn infrastructure::fs_provider::FsProvider> = Arc::new(LocalFsProvider::new());
-        let todos_dir = get_todos_base_path();
         app.manage(commands::search::create_searcher_state(
           get_projects_base_path(),
-          todos_dir,
+          get_todos_base_path(),
           local_fs,
         ));
       }

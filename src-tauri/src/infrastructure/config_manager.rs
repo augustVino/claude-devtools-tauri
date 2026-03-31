@@ -108,20 +108,28 @@ impl ConfigManager {
     }
 
     /// 初始化：从磁盘加载配置并与默认值深度合并。
-    /// 如果配置文件不存在则使用默认值。
+    /// 如果配置文件不存在则使用默认值并写入磁盘。
     /// 同时将内置触发器合并到配置中（与 Electron 的 TriggerManager.mergeTriggers 一致）。
     pub async fn initialize(&self) -> Result<(), String> {
+        let file_existed = self.config_path.exists();
         let mut loaded = self.load_config().await?;
         // 合并内置触发器：保留用户修改过的内置触发器，添加缺失的，移除废弃的
         loaded.notifications.triggers = crate::infrastructure::trigger_manager::TriggerManager::merge_triggers(
             loaded.notifications.triggers,
             &crate::infrastructure::trigger_manager::default_triggers(),
         );
-        let mut config = self
-            .config
-            .write()
-            .map_err(|e| format!("failed to acquire write lock: {e}"))?;
-        *config = loaded;
+        {
+            let mut config = self
+                .config
+                .write()
+                .map_err(|e| format!("failed to acquire write lock: {e}"))?;
+            *config = loaded;
+        } // 释放写锁后再持久化
+        // 首次启动时将默认配置写入磁盘
+        if !file_existed {
+            self.persist()?;
+            info!("Created default config file at {:?}", self.config_path);
+        }
         Ok(())
     }
 
@@ -161,9 +169,31 @@ impl ConfigManager {
             let current_json = serde_json::to_value(&*config)
                 .map_err(|e| format!("failed to serialize current config: {e}"))?;
 
-            let valid_sections = ["notifications", "general", "display", "sessions", "ssh"];
+            let valid_sections = ["notifications", "general", "display", "sessions", "ssh", "httpServer"];
             if !valid_sections.contains(&section) {
                 return Err(format!("unknown config section: {section}"));
+            }
+
+            // Validate general section fields
+            if section == "general" {
+                if let Some(theme) = data.get("theme").and_then(|v| v.as_str()) {
+                    if !["dark", "light", "system"].contains(&theme) {
+                        return Err(format!("Invalid theme value: {theme}. Must be one of: dark, light, system"));
+                    }
+                }
+                if let Some(default_tab) = data.get("defaultTab").and_then(|v| v.as_str()) {
+                    if !["dashboard", "last-session"].contains(&default_tab) {
+                        return Err(format!("Invalid defaultTab value: {default_tab}. Must be one of: dashboard, last-session"));
+                    }
+                }
+                if let Some(path) = data.get("claudeRootPath").and_then(|v| v.as_str()) {
+                    if !path.is_empty() {
+                        let p = std::path::Path::new(path);
+                        if !p.is_absolute() {
+                            return Err("claudeRootPath must be an absolute path".to_string());
+                        }
+                    }
+                }
             }
 
             let updated = update_section(&current_json, section, &data);
@@ -173,6 +203,12 @@ impl ConfigManager {
         }; // 写锁在此处释放
 
         self.persist()?; // 持久化可以安全地获取读锁
+
+        // Sync claude_root_path override when general section is updated
+        if section == "general" {
+            crate::utils::set_claude_root_override(merged.general.claude_root_path.clone());
+        }
+
         Ok(merged)
     }
 

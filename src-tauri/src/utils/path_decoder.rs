@@ -5,6 +5,19 @@
 //! 注意：含 `-` 的路径在编解码过程中会有信息丢失。
 
 use std::path::PathBuf;
+use std::sync::RwLock;
+
+/// Global override for the Claude root path.
+/// Set once during app setup via `set_claude_root_override()`.
+/// When `Some`, `get_projects_base_path()` and `get_todos_base_path()` use this instead of the default.
+static CLAUDE_ROOT_OVERRIDE: RwLock<Option<String>> = RwLock::new(None);
+
+/// Set the global Claude root path override. Called during app setup after config is loaded.
+pub fn set_claude_root_override(path: Option<String>) {
+    if let Ok(mut guard) = CLAUDE_ROOT_OVERRIDE.write() {
+        *guard = path.filter(|p| !p.is_empty());
+    }
+}
 
 /// 将绝对路径编码为 Claude Code 目录名。对含 `-` 的路径有损。
 /// 示例：`"/Users/name/project"` -> `"-Users-name-project"`
@@ -96,11 +109,28 @@ pub fn get_default_claude_base_path() -> PathBuf {
     dirs::home_dir().map(|h| h.join(".claude")).unwrap_or_else(|| PathBuf::from("/.claude"))
 }
 
-/// 返回 `~/.claude/projects` 路径。
-pub fn get_projects_base_path() -> PathBuf { get_default_claude_base_path().join("projects") }
+/// 根据配置返回有效的 Claude base path。
+/// 如果 `claude_root_path` 为 `Some` 且非空，使用自定义路径；否则使用默认 `~/.claude`。
+fn resolve_claude_base_path(claude_root_path: Option<&str>) -> PathBuf {
+    match claude_root_path {
+        Some(path) if !path.is_empty() => PathBuf::from(path),
+        _ => get_default_claude_base_path(),
+    }
+}
 
-/// 返回 `~/.claude/todos` 路径。
-pub fn get_todos_base_path() -> PathBuf { get_default_claude_base_path().join("todos") }
+/// 返回有效的 projects 路径。
+/// 如果设置了 claude_root_path override，使用自定义路径；否则使用默认 `~/.claude/projects`。
+pub fn get_projects_base_path() -> PathBuf {
+    let claude_root = CLAUDE_ROOT_OVERRIDE.read().ok().and_then(|g| g.clone());
+    resolve_claude_base_path(claude_root.as_deref()).join("projects")
+}
+
+/// 返回有效的 todos 路径。
+/// 如果设置了 claude_root_path override，使用自定义路径；否则使用默认 `~/.claude/todos`。
+pub fn get_todos_base_path() -> PathBuf {
+    let claude_root = CLAUDE_ROOT_OVERRIDE.read().ok().and_then(|g| g.clone());
+    resolve_claude_base_path(claude_root.as_deref()).join("todos")
+}
 
 /// 检查路径是否为子 Agent 文件（路径包含 `/subagents/`）。
 pub fn is_subagent_file(path: &str) -> bool { path.contains("/subagents/") }
