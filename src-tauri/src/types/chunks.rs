@@ -219,6 +219,35 @@ pub struct TaskExecution {
 }
 
 // =============================================================================
+// Subagent Detail (shared output type for IPC + HTTP handlers)
+// =============================================================================
+
+/// Output type for get_subagent_detail command.
+/// Matches Electron's return shape (chunks-based, not raw messages).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentDetail {
+    pub id: String,
+    pub description: String,
+    pub chunks: Vec<Chunk>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic_step_groups: Option<Vec<SemanticStepGroup>>,
+    pub start_time_ms: u64,
+    pub end_time_ms: u64,
+    pub duration_ms: u64,
+    pub metrics: SubagentMetrics,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentMetrics {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub thinking_tokens: u64,
+    pub message_count: usize,
+}
+
+// =============================================================================
 // Conversation Group
 // =============================================================================
 
