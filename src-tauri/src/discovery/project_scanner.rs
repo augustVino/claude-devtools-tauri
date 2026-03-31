@@ -123,9 +123,7 @@ impl ProjectScanner {
                 continue;
             }
 
-            if let Some(project) = self.scan_project(encoded_name) {
-                projects.push(project);
-            }
+            projects.extend(self.scan_project(encoded_name));
         }
 
         // Sort by most recent session (descending)
@@ -137,12 +135,12 @@ impl ProjectScanner {
     }
 
     /// Scan a single project directory and return project metadata.
-    fn scan_project(&self, encoded_name: &str) -> Option<Project> {
+    pub fn scan_project(&self, encoded_name: &str) -> Vec<Project> {
         let project_path = self.projects_dir.join(encoded_name);
 
         let entries = match self.fs_provider.read_dir(&project_path) {
             Ok(entries) => entries,
-            Err(_) => return None,
+            Err(_) => return vec![],
         };
 
         // Get session files (.jsonl at root level)
@@ -157,7 +155,7 @@ impl ProjectScanner {
             .collect();
 
         if session_files.is_empty() {
-            return None;
+            return vec![];
         }
 
         // Extract session IDs, timestamps, and cwd from session files
@@ -193,20 +191,20 @@ impl ProjectScanner {
             path_decoder::extract_project_name(encoded_name, first_cwd.as_deref());
         let actual_path = first_cwd.unwrap_or_else(|| self.resolve_project_path(encoded_name));
 
-        Some(Project {
+        vec![Project {
             id: encoded_name.to_string(),
             path: actual_path,
             name: base_name,
             sessions: session_ids,
             created_at: if created_at == u64::MAX { 0 } else { created_at },
             most_recent_session,
-        })
+        }]
     }
 
     /// Get a specific project by ID.
     pub fn get_project(&self, project_id: &str) -> Option<Project> {
         let base_dir = path_decoder::extract_base_dir(project_id);
-        self.scan_project(&base_dir)
+        self.scan_project(&base_dir).into_iter().find(|p| p.id == project_id)
     }
 
     /// List all sessions for a project.
