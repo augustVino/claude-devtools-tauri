@@ -7,7 +7,7 @@ use std::time::Instant;
 const REGEX_COMPILE_TIMEOUT_MS: u64 = 500;
 
 /// 正则表达式模式的最大长度。
-const MAX_PATTERN_LENGTH: usize = 10_000;
+const MAX_PATTERN_LENGTH: usize = 100;
 
 /// 正则模式被拒绝时返回的错误信息。
 #[derive(Debug, Clone)]
