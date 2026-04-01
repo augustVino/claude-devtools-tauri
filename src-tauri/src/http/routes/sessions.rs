@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use axum::{Json, extract::State, http::StatusCode};
 use serde::Deserialize;
 
-use crate::commands::AppState;
+use crate::commands::{AppState, guards};
 use crate::discovery::ProjectScanner;
 use crate::http::state::HttpState;
 use crate::parsing::parse_session_file;
@@ -36,8 +36,11 @@ pub async fn get_sessions(
     State(_state): State<HttpState>,
     axum::extract::Path(project_id): axum::extract::Path<String>,
 ) -> Result<Json<Vec<Session>>, (StatusCode, Json<super::ErrorResponse>)> {
+    let safe_project_id = guards::validate_project_id(&project_id)
+        .map_err(|e| error_json(e))?;
+
     let base_path = get_projects_base_path();
-    let project_dir_name = extract_base_dir(&project_id);
+    let project_dir_name = extract_base_dir(&safe_project_id);
     let project_dir = base_path.join(&project_dir_name);
 
     if !project_dir.exists() {
@@ -90,7 +93,7 @@ pub async fn get_sessions(
 
     let mut sessions = vec![];
     for file_entry in &file_entries {
-        if let Some(session) = build_session_metadata(&file_entry.path, &project_id).await {
+        if let Some(session) = build_session_metadata(&file_entry.path, &safe_project_id).await {
             sessions.push(session);
         }
     }
@@ -106,19 +109,22 @@ pub async fn get_sessions_paginated(
     axum::extract::Path(project_id): axum::extract::Path<String>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<PaginatedSessionsResult>, (StatusCode, Json<super::ErrorResponse>)> {
+    let safe_project_id = guards::validate_project_id(&project_id)
+        .map_err(|e| error_json(e))?;
+
     let cursor = params.get("cursor").cloned();
     let limit = params
         .get("limit")
         .and_then(|v| v.parse::<u32>().ok());
 
-    let page_limit = limit.unwrap_or(50).min(100).max(1) as usize;
+    let page_limit = guards::coerce_limit(limit, 50, 100) as usize;
 
     let scanner = ProjectScanner::with_paths(
         crate::utils::path_decoder::get_projects_base_path(),
         crate::utils::path_decoder::get_todos_base_path(),
         std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
     );
-    let all_sessions = scanner.list_sessions(&project_id);
+    let all_sessions = scanner.list_sessions(&safe_project_id);
 
     let total_count = all_sessions.len() as u32;
 
@@ -160,22 +166,46 @@ pub struct SessionsByIdsRequest {
 ///
 /// POST /api/projects/{project_id}/sessions-by-ids
 pub async fn get_sessions_by_ids(
-    State(_state): State<HttpState>,
+    State(state): State<HttpState>,
     axum::extract::Path(project_id): axum::extract::Path<String>,
     Json(body): Json<SessionsByIdsRequest>,
 ) -> Result<Json<Vec<Session>>, (StatusCode, Json<super::ErrorResponse>)> {
-    let id_set: HashSet<String> = body.session_ids.into_iter().collect();
+    let safe_project_id = guards::validate_project_id(&project_id)
+        .map_err(|e| error_json(e))?;
+
+    let mut id_set: HashSet<String> = body.session_ids.into_iter().collect();
 
     if id_set.is_empty() {
         return Ok(Json(Vec::new()));
     }
+
+    // 与 Electron 一致，限制最多 50 个 ID
+    const MAX_SESSION_IDS: usize = 50;
+    if id_set.len() > MAX_SESSION_IDS {
+        log::warn!(
+            "sessions-by-ids: {} IDs requested, capping to {}",
+            id_set.len(),
+            MAX_SESSION_IDS
+        );
+        id_set = id_set.into_iter().take(MAX_SESSION_IDS).collect();
+    }
+
+    // 检测 SSH 连接状态，决定 metadata_level
+    let ssh_active = {
+        let mgr = state.ssh_manager.read().await;
+        let status = mgr.get_active_state().await;
+        matches!(status.state, crate::types::ssh::SshConnectionState::Connected)
+    };
+    let _effective_metadata_level = body.metadata_level.as_deref().unwrap_or_else(|| {
+        if ssh_active { "light" } else { "deep" }
+    });
 
     let scanner = ProjectScanner::with_paths(
         crate::utils::path_decoder::get_projects_base_path(),
         crate::utils::path_decoder::get_todos_base_path(),
         std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
     );
-    let all_sessions = scanner.list_sessions(&project_id);
+    let all_sessions = scanner.list_sessions(&safe_project_id);
 
     Ok(Json(
         all_sessions
@@ -197,11 +227,16 @@ pub async fn get_session_detail(
         session_id,
     } = path;
 
-    let cache_key = format!("{}/{}", project_id, session_id);
+    let safe_project_id = guards::validate_project_id(&project_id)
+        .map_err(|e| error_json(e))?;
+    let safe_session_id = guards::validate_session_id(&session_id)
+        .map_err(|e| error_json(e))?;
+
+    let cache_key = format!("{}/{}", safe_project_id, safe_session_id);
 
     // 优先查询缓存
     let app_state = state.app_state.read().await;
-    if let Some(cached) = app_state.cache.get_session(&project_id, &session_id).await {
+    if let Some(cached) = app_state.cache.get_session(&safe_project_id, &safe_session_id).await {
         if let Ok(detail) = serde_json::from_value(cached) {
             return Ok(Json(Some(detail)));
         }
@@ -210,10 +245,10 @@ pub async fn get_session_detail(
 
     // 解析会话文件
     let base_path = get_projects_base_path();
-    let project_dir = extract_base_dir(&project_id);
+    let project_dir = extract_base_dir(&safe_project_id);
     let session_path = base_path
         .join(&project_dir)
-        .join(format!("{}.jsonl", session_id));
+        .join(format!("{}.jsonl", safe_session_id));
 
     if !session_path.exists() {
         return Ok(Json(None));
@@ -222,13 +257,13 @@ pub async fn get_session_detail(
     let parsed = parse_session_file(&session_path).await;
 
     let fallback_path = extract_cwd_from_messages(&parsed)
-        .unwrap_or_else(|| decode_path(&project_id));
+        .unwrap_or_else(|| decode_path(&safe_project_id));
 
-    let session = build_session_metadata(&session_path, &project_id)
+    let session = build_session_metadata(&session_path, &safe_project_id)
         .await
         .unwrap_or_else(|| Session {
-            id: session_id.clone(),
-            project_id: project_id.clone(),
+            id: safe_session_id.clone(),
+            project_id: safe_project_id.clone(),
             project_path: fallback_path,
             created_at: 0,
             todo_data: None,
@@ -251,7 +286,7 @@ pub async fn get_session_detail(
             std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
         );
         resolver
-            .resolve_subagents(&project_id, &session_id, Some(&parsed.task_calls), Some(&parsed.messages))
+            .resolve_subagents(&safe_project_id, &safe_session_id, Some(&parsed.task_calls), Some(&parsed.messages))
             .into_iter()
             .map(Into::into)
             .collect()
@@ -269,8 +304,8 @@ pub async fn get_session_detail(
     app_state
         .cache
         .set_session(
-            &project_id,
-            &session_id,
+            &safe_project_id,
+            &safe_session_id,
             serde_json::to_value(&detail).unwrap_or_default(),
         )
         .await;
@@ -291,11 +326,16 @@ pub async fn get_session_groups(
         session_id,
     } = path;
 
+    let safe_project_id = guards::validate_project_id(&project_id)
+        .map_err(|e| error_json(e))?;
+    let safe_session_id = guards::validate_session_id(&session_id)
+        .map_err(|e| error_json(e))?;
+
     let base_path = get_projects_base_path();
-    let project_dir = extract_base_dir(&project_id);
+    let project_dir = extract_base_dir(&safe_project_id);
     let session_path = base_path
         .join(&project_dir)
-        .join(format!("{}.jsonl", session_id));
+        .join(format!("{}.jsonl", safe_session_id));
 
     if !session_path.exists() {
         return Ok(Json(vec![]));
@@ -307,7 +347,7 @@ pub async fn get_session_groups(
         let resolver =
             crate::discovery::subagent_resolver::SubagentResolver::new(get_projects_base_path(), std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()));
         resolver
-            .resolve_subagents(&project_id, &session_id, Some(&parsed.task_calls), Some(&parsed.messages))
+            .resolve_subagents(&safe_project_id, &safe_session_id, Some(&parsed.task_calls), Some(&parsed.messages))
             .into_iter()
             .map(Into::into)
             .collect()
@@ -330,11 +370,16 @@ pub async fn get_session_metrics(
         session_id,
     } = path;
 
+    let safe_project_id = guards::validate_project_id(&project_id)
+        .map_err(|e| error_json(e))?;
+    let safe_session_id = guards::validate_session_id(&session_id)
+        .map_err(|e| error_json(e))?;
+
     let base_path = get_projects_base_path();
-    let project_dir = extract_base_dir(&project_id);
+    let project_dir = extract_base_dir(&safe_project_id);
     let session_path = base_path
         .join(&project_dir)
-        .join(format!("{}.jsonl", session_id));
+        .join(format!("{}.jsonl", safe_session_id));
 
     if !session_path.exists() {
         return Ok(Json(None));
