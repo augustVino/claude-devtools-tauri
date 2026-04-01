@@ -48,14 +48,33 @@ pub async fn update_config(
     State(state): State<HttpState>,
     Json(body): Json<UpdateConfigRequest>,
 ) -> Result<Json<ConfigResponse>, (StatusCode, Json<super::ErrorResponse>)> {
-    let app_state = state.app_state.read().await;
-    app_state
-        .config_manager
-        .update_config(&body.section, body.data)
-        .map(|data| {
-            Json(ConfigResponse { success: true, data })
-        })
-        .map_err(|e| error_json(e))
+    let has_claude_root_change = body.section == "general"
+        && body.data.as_object().map_or(false, |obj| obj.contains_key("claudeRootPath"));
+
+    let (result, cache, config_mgr) = {
+        let app_state = state.app_state.read().await;
+        let result = app_state
+            .config_manager
+            .update_config(&body.section, body.data)
+            .map_err(|e| error_json(e))?;
+        (result, app_state.cache.clone(), app_state.config_manager.clone())
+    }; // AppState read lock dropped
+
+    // Rebuild local ServiceContext if claude root path changed
+    if has_claude_root_change {
+        if let Err(e) = crate::infrastructure::context_rebuild::rebuild_local_context(
+            &state.context_manager,
+            &state.notification_manager,
+            &config_mgr,
+            cache,
+            &state.app_handle,
+            &state.searcher,
+        ).await {
+            log::error!("Failed to rebuild local context after claude root path change: {e}");
+        }
+    }
+
+    Ok(Json(ConfigResponse { success: true, data: result }))
 }
 
 // =============================================================================

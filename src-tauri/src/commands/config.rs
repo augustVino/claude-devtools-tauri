@@ -1,4 +1,4 @@
-use tauri::{command, State};
+use tauri::{command, AppHandle, Manager, State};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -25,12 +25,43 @@ pub async fn get_config(
 /// 采用深度合并策略，未变更的字段保留原值。
 #[command]
 pub async fn update_config(
+    app: AppHandle,
     state: State<'_, Arc<RwLock<AppState>>>,
     section: String,
     data: serde_json::Value,
 ) -> Result<AppConfig, String> {
-    let app_state = state.read().await;
-    app_state.config_manager.update_config(&section, data)
+    let has_claude_root_change = section == "general"
+        && data.as_object().map_or(false, |obj| obj.contains_key("claudeRootPath"));
+
+    let (result, cache, config_mgr) = {
+        let app_state = state.read().await;
+        let result = app_state.config_manager.update_config(&section, data)?;
+        (result, app_state.cache.clone(), app_state.config_manager.clone())
+    }; // AppState read lock dropped
+
+    // Rebuild local ServiceContext if claude root path changed
+    if has_claude_root_change {
+        let context_manager = app.state::<Arc<RwLock<crate::infrastructure::ContextManager>>>().inner().clone();
+        let notification_manager = app
+            .state::<Arc<RwLock<crate::infrastructure::NotificationManager>>>()
+            .inner()
+            .clone();
+        let searcher = app
+            .state::<Arc<std::sync::Mutex<crate::discovery::SessionSearcher>>>()
+            .inner()
+            .clone();
+
+        crate::infrastructure::context_rebuild::rebuild_local_context(
+            &context_manager,
+            &notification_manager,
+            &config_mgr,
+            cache,
+            &app,
+            &searcher,
+        ).await?;
+    }
+
+    Ok(result)
 }
 
 // =============================================================================

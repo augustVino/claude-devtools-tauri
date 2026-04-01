@@ -159,7 +159,7 @@ impl ConfigManager {
     pub fn update_config(
         &self,
         section: &str,
-        data: serde_json::Value,
+        mut data: serde_json::Value,
     ) -> Result<AppConfig, String> {
         let merged: AppConfig = {
             let mut config = self
@@ -177,6 +177,20 @@ impl ConfigManager {
 
             // Unified payload validation (aligned with Electron's validateConfigUpdatePayload)
             validate_update_payload(section, &data)?;
+
+            // Normalize claudeRootPath (aligned with Electron's normalizeConfiguredClaudeRootPath)
+            if section == "general" {
+                if let Some(obj) = data.as_object_mut() {
+                    if let Some(v) = obj.get_mut("claudeRootPath") {
+                        if let Some(s) = v.as_str() {
+                            let trimmed = s.trim();
+                            if !trimmed.is_empty() {
+                                *v = serde_json::Value::String(normalize_claude_root_path(trimmed));
+                            }
+                        }
+                    }
+                }
+            }
 
             let updated = update_section(&current_json, section, &data);
             let merged: AppConfig = merge_with_defaults(&updated)?;
@@ -942,6 +956,39 @@ fn cleanup_empty_project<T>(sessions: &mut HashMap<String, Vec<T>>, project_id: 
     }
 }
 
+/// 规范化 Claude Root Path（与 Electron 的 normalizeConfiguredClaudeRootPath 对齐）。
+///
+/// 执行以下处理：
+/// 1. 解析 `.` 和 `..` 路径段
+/// 2. 折叠连续分隔符
+/// 3. 去除尾部斜杠（保留根路径 `/`）
+fn normalize_claude_root_path(path: &str) -> String {
+    let pb = std::path::PathBuf::from(path);
+    let mut normalized = std::path::PathBuf::new();
+
+    for comp in pb.components() {
+        match comp {
+            std::path::Component::CurDir => {} // skip `.`
+            std::path::Component::ParentDir => {
+                // 回退一级（但不低于根）
+                if !normalized.pop() {
+                    normalized.push(comp);
+                }
+            }
+            _ => normalized.push(comp),
+        }
+    }
+
+    let result = normalized.to_string_lossy().to_string();
+    // 去除尾部斜杠（保留根路径 "/" 不动）
+    let trimmed = result.trim_end_matches('/');
+    if trimmed.is_empty() {
+        "/".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1334,5 +1381,27 @@ mod tests {
     fn test_validate_sessions_always_passes() {
         assert!(validate_update_payload("sessions", &serde_json::json!({"anything": "goes"})).is_ok());
         assert!(validate_update_payload("sessions", &serde_json::json!({})).is_ok());
+    }
+
+    // --- claudeRootPath normalization ---
+
+    #[test]
+    fn test_normalize_root_path_strips_trailing_slash() {
+        assert_eq!(normalize_claude_root_path("/Users/foo/.claude/"), "/Users/foo/.claude");
+    }
+
+    #[test]
+    fn test_normalize_root_path_resolves_dot_segments() {
+        assert_eq!(normalize_claude_root_path("/Users/foo/../bar/.claude"), "/Users/bar/.claude");
+    }
+
+    #[test]
+    fn test_normalize_root_path_preserves_root() {
+        assert_eq!(normalize_claude_root_path("/"), "/");
+    }
+
+    #[test]
+    fn test_normalize_root_path_no_change_needed() {
+        assert_eq!(normalize_claude_root_path("/Users/foo/.claude"), "/Users/foo/.claude");
     }
 }

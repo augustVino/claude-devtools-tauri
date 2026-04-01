@@ -2,6 +2,7 @@
 
 pub mod config_manager;
 pub mod context_manager;
+pub mod context_rebuild;
 pub mod data_cache;
 pub mod file_watcher;
 pub mod fs_provider;

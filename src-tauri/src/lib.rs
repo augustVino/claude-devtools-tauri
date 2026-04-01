@@ -219,6 +219,71 @@ pub fn run() {
         }
       });
 
+      // ========== Auto-start HTTP server if enabled in config ==========
+      {
+        let http_config = config_manager.get_config().http_server.clone();
+        if let Some(ref cfg) = http_config {
+          if cfg.enabled {
+            let port = cfg.port;
+            let handle_guard = app.state::<std::sync::Mutex<Option<crate::http::server::HttpServerHandle>>>();
+            let mut handle = match handle_guard.lock() {
+              Ok(g) => g,
+              Err(e) => {
+                log::error!("Failed to acquire HTTP server handle lock: {e}");
+                return Err(format!("Failed to acquire HTTP server handle lock: {e}").into());
+              }
+            };
+
+            if handle.is_none() {
+              let broadcaster = app.state::<crate::http::sse::SSEBroadcaster>().inner().clone();
+              let notification_manager = app
+                .state::<Arc<RwLock<NotificationManager>>>()
+                .inner()
+                .clone();
+              let context_manager = app
+                .state::<Arc<RwLock<ContextManager>>>()
+                .inner()
+                .clone();
+              let projects_dir = get_projects_base_path();
+              let todos_dir = get_todos_base_path();
+              let searcher = commands::search::create_searcher_state(
+                projects_dir, todos_dir, Arc::new(LocalFsProvider::new()),
+              );
+
+              let http_state = crate::http::state::HttpState {
+                app_handle: app.handle().clone(),
+                app_state: app_state.clone(),
+                broadcaster,
+                config_manager: config_manager.clone(),
+                notification_manager,
+                searcher,
+                context_manager,
+                ssh_manager: app
+                  .state::<Arc<RwLock<SshConnectionManager>>>()
+                  .inner()
+                  .clone(),
+              };
+
+              let dist_dir = std::env::var("RENDERER_PATH")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                  std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("dist")
+                });
+
+              match crate::http::server::spawn_http_server(http_state, port, dist_dir) {
+                Ok(new_handle) => {
+                  log::info!("HTTP server auto-started on port {} (enabled in config)", new_handle.port);
+                  *handle = Some(new_handle);
+                }
+                Err(e) => log::error!("Failed to auto-start HTTP server: {e}"),
+              }
+            }
+          }
+        }
+      }
+
       // Debug 模式下启用日志插件
       if cfg!(debug_assertions) {
         app.handle().plugin(

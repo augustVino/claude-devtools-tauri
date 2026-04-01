@@ -66,7 +66,7 @@ pub async fn start(
     };
 
     // Acquire std::sync::Mutex — must not hold this across any .await point
-    {
+    let port = {
         let handle_guard = app.state::<Mutex<Option<HttpServerHandle>>>();
         let mut handle = handle_guard.lock().map_err(|e| e.to_string())?;
 
@@ -126,22 +126,43 @@ pub async fn start(
         *handle = Some(new_handle);
 
         log::info!("HTTP server started on port {}", port);
-        Ok(IpcResponse::ok(HttpServerStatus {
-            running: true,
-            port,
-        }))
+        port
+    }; // Mutex guard dropped
+
+    // Persist enabled state to config
+    let config_mgr = app.state::<Arc<ConfigManager>>().inner().clone();
+    if let Err(e) = config_mgr.update_config("httpServer", serde_json::json!({"enabled": true, "port": port})) {
+        log::error!("Failed to persist httpServer.enabled=true: {e}");
     }
+
+    Ok(IpcResponse::ok(HttpServerStatus {
+        running: true,
+        port,
+    }))
 }
 
 /// 停止 HTTP 服务器。
 #[command]
 pub async fn stop(app: AppHandle) -> Result<IpcResponse<HttpServerStatus>, String> {
-    let handle_guard = app.state::<Mutex<Option<HttpServerHandle>>>();
-    let mut handle = handle_guard.lock().map_err(|e| e.to_string())?;
+    let stopped = {
+        let handle_guard = app.state::<Mutex<Option<HttpServerHandle>>>();
+        let mut handle = handle_guard.lock().map_err(|e| e.to_string())?;
 
-    if let Some(h) = handle.take() {
-        h.shutdown.cancel();
-        log::info!("HTTP server stopped");
+        if let Some(h) = handle.take() {
+            h.shutdown.cancel();
+            log::info!("HTTP server stopped");
+            true
+        } else {
+            false
+        }
+    }; // Mutex guard dropped
+
+    // Persist disabled state to config
+    if stopped {
+        let config_mgr = app.state::<Arc<ConfigManager>>().inner().clone();
+        if let Err(e) = config_mgr.update_config("httpServer", serde_json::json!({"enabled": false})) {
+            log::error!("Failed to persist httpServer.enabled=false: {e}");
+        }
     }
 
     Ok(IpcResponse::ok(HttpServerStatus {
