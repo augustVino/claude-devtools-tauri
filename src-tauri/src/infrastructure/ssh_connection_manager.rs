@@ -280,13 +280,22 @@ impl SshConnectionManager {
     /// # Events emitted
     /// - `Disconnected` (if there was an active connection)
     pub async fn disconnect(&self) -> Result<SshConnectionStatus, String> {
+        // 先释放 SFTP 资源（在获取写锁之前）
+        {
+            let conn = self.connection.read().await;
+            if let Some(ref connection) = *conn {
+                connection.fs_provider.dispose_async().await;
+            }
+        }
+
+        // 获取写锁，停止监控并断开连接
         let mut conn = self.connection.write().await;
         if conn.is_none() {
             return Ok(SshConnectionStatus::disconnected());
         }
 
         if let Some(ref mut connection) = *conn {
-            // Signal monitor to stop (if active)
+            // Signal monitor to stop
             let _ = connection.monitor_stop.send(true);
 
             // Graceful disconnect
