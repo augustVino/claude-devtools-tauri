@@ -843,21 +843,70 @@ git commit -m "fix(search): implement HTTP search_all_projects route (M-5)"
 
 **Files:**
 - Modify: `src-tauri/src/discovery/session_searcher.rs`
+- Modify: `src-tauri/src/commands/search.rs`
 
-- [ ] **Step 1: 在 `search_sessions()` 中添加 subproject 过滤**
+**前置说明**：`ProjectScanner` 不持有 `SubprojectRegistry` 引用（已确认）。`SubprojectRegistry` 是独立模块（`discovery/subproject_registry.rs`）。
+方案：在 `SessionSearcher` 中添加 `Option<Arc<SubprojectRegistry>>` 字段。
 
-在 `search_sessions()` 方法签名中，`project_id` 用于构造 `project_path`，subproject filter 通过 `self.project_scanner` 获取。
+- [ ] **Step 1: 在 `SessionSearcher` 结构体中添加 subproject 字段**
 
-在文件排序后、搜索循环之前（约 line 145 后），添加 subproject 过滤：
+在 `SessionSearcher` 的 `project_scanner` 字段之后添加：
+
+```rust
+/// Subproject 过滤注册表，用于搜索时过滤子项目会话。
+subproject_registry: Option<Arc<SubprojectRegistry>>,
+```
+
+添加 import：
+```rust
+use crate::discovery::SubprojectRegistry;
+```
+
+- [ ] **Step 2: 更新 `SessionSearcher::new()` 构造函数**
+
+添加 `subproject_registry` 参数：
+
+```rust
+pub fn new(
+    projects_dir: PathBuf,
+    todos_dir: PathBuf,
+    fs_provider: Arc<dyn FsProvider>,
+    subproject_registry: Option<Arc<SubprojectRegistry>>,
+) -> Self {
+    Self {
+        projects_dir,
+        fs_provider,
+        cache: moka::sync::Cache::builder()
+            .max_capacity(CACHE_MAX_CAPACITY)
+            .build(),
+        project_scanner: ProjectScanner::with_paths(
+            projects_dir.clone(),
+            todos_dir,
+            fs_provider.clone(),
+        ),
+        subproject_registry,
+    }
+}
+```
+
+- [ ] **Step 3: 更新所有 `SessionSearcher::new()` 调用点**
+
+在以下位置添加 `None` 参数：
+- `commands/search.rs` 的 `create_searcher_state()`：`SessionSearcher::new(projects_dir, todos_dir, fs_provider, None)`
+- `session_searcher.rs` 的 tests 中 `setup_test_env()`：`SessionSearcher::new(projects_dir, todos_dir, Arc::new(LocalFsProvider::new()), None)`
+
+- [ ] **Step 4: 在 `search_sessions()` 中添加 subproject 过滤**
+
+在文件排序后、搜索循环之前（约 line 145 后），添加：
 
 ```rust
 // Subproject filtering: skip sessions not in the current project's filter
-let session_filter = self.project_scanner
-    .subproject_registry()
+let session_filter = self.subproject_registry
+    .as_ref()
     .and_then(|reg| reg.get_session_filter(project_id).cloned());
 ```
 
-在搜索循环内（line 148 后），在 `let session_id = ...` 之后添加：
+在搜索循环内，在 `let session_id = ...` 之后添加：
 ```rust
 // Skip sessions not belonging to this subproject
 if let Some(ref filter) = session_filter {
@@ -867,22 +916,16 @@ if let Some(ref filter) = session_filter {
 }
 ```
 
-注意：需要确认 `ProjectScanner` 是否暴露 `subproject_registry()` 方法。如果没有，需要在 `ProjectScanner` 中添加此方法，或在 `SessionSearcher` 中添加 `Arc<SubprojectRegistry>` 字段。
-
-- [ ] **Step 2: 确认 `ProjectScanner` 接口**
-
-检查 `src-tauri/src/discovery/project_scanner.rs` 是否有 `subproject_registry()` 方法。如果没有，需要在 `SessionSearcher` 中注入 `Arc<SubprojectRegistry>` 或在 `ProjectScanner` 中暴露此字段。
-
-- [ ] **Step 3: 运行测试**
+- [ ] **Step 5: 运行测试**
 
 ```bash
 cargo test -p claude-devtools-tauri session_searcher -- --nocapture
 ```
 
-- [ ] **Step 4: 提交**
+- [ ] **Step 6: 提交**
 
 ```bash
-git add -f src-tauri/src/discovery/session_searcher.rs
+git add -f src-tauri/src/discovery/session_searcher.rs src-tauri/src/commands/search.rs
 git commit -m "feat(search): add subproject session filtering (M-2)"
 ```
 
@@ -1048,11 +1091,7 @@ fn matches_ignored_regex(&self, error: &DetectedError) -> bool {
 }
 ```
 
-在文件顶部 imports 中添加（如尚未存在）：
-```rust
-use std::collections::HashMap;
-use regex::Regex;
-```
+注意：`HashMap` 和 `Regex` 已在文件 imports 中（line 14-19），无需重复添加。
 
 - [ ] **Step 4: 运行测试**
 
@@ -1162,7 +1201,21 @@ results
 
 - [ ] **Step 4: 更新受影响的测试**
 
-找到使用 `deduplicate_errors` 的测试，移除或更新这些测试。去重行为现在由 `NotificationManager` 的测试覆盖（已有 `test_add_error_dedup_*` 系列测试）。
+需要处理以下测试：
+
+1. **删除 6 个 `deduplicate_errors` 单元测试**：
+   - `test_deduplicate_errors_no_duplicates` (line 568)
+   - `test_deduplicate_errors_removes_duplicates` (line 615)
+   - `test_deduplicate_errors_keeps_errors_without_tool_use_id` (line 663)
+   - `test_deduplicate_errors_empty` (line 711)
+   - `test_deduplicate_errors_prefers_subagent_version` (line 717)
+   - `test_deduplicate_errors_keeps_existing_subagent_over_non_subagent` (line 768)
+
+2. **更新集成测试 `test_detect_errors_deduplicates_by_tool_use_id`** (line 497)：
+   移除去重后，`detect_errors()` 对同一 tool_use_id 的两个 trigger 会返回 2 条错误（而非之前的 1 条去重结果）。
+   将断言 `assert_eq!(errors.len(), 1)` 改为 `assert_eq!(errors.len(), 2)`。
+
+去重行为已由 `NotificationManager` 的测试覆盖（`test_add_error_dedup_*` 系列测试）。
 
 ```bash
 cargo test -p claude-devtools-tauri error_detector -- --nocapture
