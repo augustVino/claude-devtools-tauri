@@ -5,7 +5,7 @@
 use axum::{
     Json,
     Router,
-    extract::State,
+    extract::{Path as AxumPath, State},
     http::StatusCode,
     routing::{delete, get, post, put},
 };
@@ -73,7 +73,7 @@ pub(crate) fn not_implemented() -> (StatusCode, Json<ErrorResponse>) {
 /// 注意：Axum Router 只支持单一 State 类型，因此使用合并的 `HttpState`。
 /// 不需要在此处调用 `.with_state()`，由 `http::build_router()` 统一处理。
 pub fn build_routes() -> Router<HttpState> {
-    Router::new()
+    let mut router = Router::new()
         // Projects
         .route("/api/projects", get(projects::get_projects))
         .route(
@@ -209,7 +209,21 @@ pub fn build_routes() -> Router<HttpState> {
         // Deferred: Updater
         .route("/api/updater/check", post(deferred_not_implemented))
         .route("/api/updater/download", post(deferred_not_implemented))
-        .route("/api/updater/install", post(deferred_not_implemented))
+        .route("/api/updater/install", post(deferred_not_implemented));
+
+    // Catch-all for unmatched /api/ routes — return JSON 404
+    router = router.route(
+        "/api/*rest",
+        axum::routing::get(|AxumPath(_rest): AxumPath<String>| async {
+            (
+                StatusCode::NOT_FOUND,
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                "{\"error\":\"Not found\"}",
+            )
+        }),
+    );
+
+    router
 }
 
 /// SSH/updater deferred stub handler.
