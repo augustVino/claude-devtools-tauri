@@ -40,6 +40,9 @@ const THROTTLE_MS: u64 = 5000;
 /// 通知持久化文件名（存储于 ~/.claude/）。
 const NOTIFICATION_FILE: &str = "claude-devtools-notifications.json";
 
+/// Regex 编译缓存的最大条目数。
+const MAX_REGEX_CACHE_SIZE: usize = 500;
+
 // =============================================================================
 // NotificationManager
 // =============================================================================
@@ -537,15 +540,14 @@ impl NotificationManager {
 
             // 查缓存
             {
-                if let Ok(cache) = self.regex_cache.lock() {
-                    if let Some(cached) = cache.get(&case_insensitive) {
-                        if let Some(ref re) = cached {
-                            if re.is_match(&error.message) {
-                                return true;
-                            }
+                let cache = self.regex_cache.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(cached) = cache.get(&case_insensitive) {
+                    if let Some(ref re) = cached {
+                        if re.is_match(&error.message) {
+                            return true;
                         }
-                        continue; // cached as None (invalid regex)
                     }
+                    continue; // cached as None (invalid regex)
                 }
             }
 
@@ -553,8 +555,9 @@ impl NotificationManager {
             let compiled = crate::utils::regex_validation::create_safe_regex(&case_insensitive);
             let is_match = compiled.as_ref().map_or(false, |re| re.is_match(&error.message));
 
-            if let Ok(mut cache) = self.regex_cache.lock() {
-                if cache.len() >= 500 {
+            {
+                let mut cache = self.regex_cache.lock().unwrap_or_else(|e| e.into_inner());
+                if cache.len() >= MAX_REGEX_CACHE_SIZE {
                     cache.clear();
                 }
                 cache.insert(case_insensitive, compiled);
