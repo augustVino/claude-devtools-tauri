@@ -37,7 +37,9 @@ Tauri 端没有 SSH 连接健康监控。连接意外断开后，`SshConnection`
 
 **4. 检测到断开时的处理:**
 - 通过 `event_sender` 广播 `SshConnectionStatus::disconnected()`
-- 获取写锁，先对 `connection.fs_provider` 调用 `dispose()` 释放 SFTP 资源，然后将 `connection` 字段设为 `None`
+- 先调用 `connection.fs_provider.dispose_async().await` 释放 SFTP 资源
+- 然后获取写锁，将 `connection` 字段设为 `None`
+- 分离 dispose 和写锁操作，避免锁持有时间过长
 - 前端通过已有的 `"ssh:status"` 事件链路自动收到通知
 
 **5. 涉及文件:**
@@ -118,14 +120,24 @@ pub trait FsProvider: Send + Sync + std::fmt::Debug {
 
 **2. 实现者:**
 - `LocalFsProvider`: `dispose()` 为 no-op（无需清理，使用默认实现）
-- `SshFsProvider`: `dispose()` 使用 `self.handle.block_on(self.sftp.close())` 关闭 SFTP 会话
-  - 已有 `handle: tokio::runtime::Handle` 字段，与 trait 其他方法一致
-  - 错误处理：`close()` 失败仅记录日志，不传播错误
-  - 注意：不能在 tokio 异步上下文中调用 `block_on()`，否则会 panic。`disconnect()` 目前是 `async fn`，需要确保在进入异步运行时之前或通过 `tokio::task::spawn_blocking` 调用
+- `SshFsProvider`: trait 的同步 `dispose()` 为 no-op（使用默认实现），额外提供异步方法：
+  ```rust
+  impl SshFsProvider {
+      /// 异步关闭 SFTP 会话。在 async 上下文中调用。
+      pub async fn dispose_async(&self) {
+          if let Err(e) = self.sftp.close().await {
+              log::warn!("SFTP close error (may be already closed): {}", e);
+          }
+      }
+  }
+  ```
+  - 错误处理：`close()` 失败仅记录 warn 日志，不传播错误
+  - 不使用 `block_on()`，因为 `disconnect()` 和健康监控任务都是 async 函数，`block_on()` 会导致 panic
 
 **3. 调用点:**
-- `ssh_connection_manager.rs` 的 `disconnect()`: 在 disconnect 包发送前，对 `connection.fs_provider.dispose()` 调用（直接在 `SshConnection` 具体类型上调用，非 trait object）
-- ISSUE-04-01 的健康监控任务检测到断开时也需调用 `fs_provider.dispose()`（见 04-01 设计第 4 点）
+- `ssh_connection_manager.rs` 的 `disconnect()`: 在 disconnect 包发送前，对 `connection.fs_provider.dispose_async().await` 调用（直接在 `SshFsProvider` 具体类型上调用，非 trait object）
+- ISSUE-04-01 的健康监控任务检测到断开时也需调用 `fs_provider.dispose_async().await`（见 04-01 设计第 4 点）
+- 在持有写锁期间调用 `dispose_async()` 可能导致锁持有时间过长，因此在获取写锁前先调用 dispose，然后获取写锁将 connection 设为 None
 
 **4. 不补齐 `createReadStream`:**
 - Tauri 已用 `read_file_head` 替代流式读取
