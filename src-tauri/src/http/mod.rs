@@ -4,6 +4,7 @@
 //! 与 Tauri IPC 命令共享 Arc<RwLock<AppState>>。
 
 pub mod cors;
+pub mod path_validation;
 pub mod routes;
 pub mod sse;
 pub mod server;
