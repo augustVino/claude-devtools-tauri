@@ -63,6 +63,8 @@ pub struct NotificationManager {
     is_initialized: bool,
     /// 最后显示的原生通知对应的错误（独立于 RwLock 包装，供同步回调使用）。
     last_shown_error: Arc<Mutex<Option<DetectedError>>>,
+    /// Regex 编译缓存：pattern → compiled regex (or None if invalid).
+    regex_cache: Arc<Mutex<HashMap<String, Option<Regex>>>>,
 }
 
 impl NotificationManager {
@@ -91,6 +93,7 @@ impl NotificationManager {
             persistence_path,
             is_initialized: false,
             last_shown_error,
+            regex_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -111,6 +114,7 @@ impl NotificationManager {
             persistence_path,
             is_initialized: false,
             last_shown_error: Arc::new(Mutex::new(None)),
+            regex_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -529,14 +533,35 @@ impl NotificationManager {
         }
 
         for pattern in &config.notifications.ignored_regex {
-            // 与 Electron 对齐：大小写无关匹配 + 安全正则校验（ReDoS 防护）
             let case_insensitive = format!("(?i){}", pattern);
-            if let Some(re) = crate::utils::regex_validation::create_safe_regex(&case_insensitive) {
-                if re.is_match(&error.message) {
-                    return true;
+
+            // 查缓存
+            {
+                if let Ok(cache) = self.regex_cache.lock() {
+                    if let Some(cached) = cache.get(&case_insensitive) {
+                        if let Some(ref re) = cached {
+                            if re.is_match(&error.message) {
+                                return true;
+                            }
+                        }
+                        continue; // cached as None (invalid regex)
+                    }
                 }
-            } else {
-                warn!("NotificationManager: Invalid or unsafe regex pattern: {pattern}");
+            }
+
+            // 未命中缓存，编译并缓存
+            let compiled = crate::utils::regex_validation::create_safe_regex(&case_insensitive);
+            let is_match = compiled.as_ref().map_or(false, |re| re.is_match(&error.message));
+
+            if let Ok(mut cache) = self.regex_cache.lock() {
+                if cache.len() >= 500 {
+                    cache.clear();
+                }
+                cache.insert(case_insensitive, compiled);
+            }
+
+            if is_match {
+                return true;
             }
         }
 
