@@ -20,8 +20,19 @@ use crate::types::ssh::{
 };
 use super::sessions::AppState;
 
-/// SSH context ID (single-connection model).
-const SSH_CONTEXT_ID: &str = "ssh";
+/// Construct dynamic SSH context ID from host.
+fn ssh_context_id(host: &str) -> String {
+    if host.is_empty() {
+        "ssh".to_string()
+    } else {
+        format!("ssh-{}", host)
+    }
+}
+
+/// Check if a context ID belongs to an SSH context.
+fn is_ssh_context_id(id: &str) -> bool {
+    id == "ssh" || id.starts_with("ssh-")
+}
 
 /// Connect to an SSH server and switch to the SSH context.
 ///
@@ -67,7 +78,7 @@ pub async fn ssh_connect(
         state.inner().read().await.cache.clone()
     };
     let ssh_context = ServiceContext::new(ServiceContextConfig {
-        id: SSH_CONTEXT_ID.to_string(),
+        id: ssh_context_id(&host),
         context_type: ContextType::Ssh,
         projects_dir: PathBuf::from(&remote_projects_path),
         todos_dir: remote_todos_path,
@@ -79,10 +90,11 @@ pub async fn ssh_connect(
     // (mirrors Electron: destroy existing SSH context before creating new one)
     {
         let mut mgr = context_manager.write().await;
-        if mgr.get_active_id() == SSH_CONTEXT_ID {
+        if is_ssh_context_id(mgr.get_active_id()) {
             log::info!("SSH connect: already on SSH context, tearing down before reconnect");
             // Stop SSH watcher tasks
-            if let Some(ssh_ctx) = mgr.get(SSH_CONTEXT_ID) {
+            let old_ssh_id = mgr.get_active_id().to_string();
+            if let Some(ssh_ctx) = mgr.get(&old_ssh_id) {
                 ssh_ctx.read().await.stop_watcher_tasks().await;
             }
             // Switch back to local
@@ -102,7 +114,7 @@ pub async fn ssh_connect(
                 }
             }
             // Destroy old SSH context
-            let _ = mgr.destroy_context(SSH_CONTEXT_ID).await;
+            let _ = mgr.destroy_context(&old_ssh_id).await;
         }
     }
 
@@ -113,7 +125,7 @@ pub async fn ssh_connect(
         mgr.register_context(ssh_context)?;
 
         // Perform context switch
-        let result = mgr.switch(SSH_CONTEXT_ID)?;
+        let result = mgr.switch(&ssh_context_id(&host))?;
         log::info!(
             "SSH connect: context switched {} -> {}",
             result.previous_id,
@@ -177,7 +189,7 @@ pub async fn ssh_disconnect(
     // Check if SSH context is currently active
     {
         let mgr = context_manager.read().await;
-        if mgr.get_active_id() != SSH_CONTEXT_ID {
+        if !is_ssh_context_id(mgr.get_active_id()) {
             // Not on SSH context — just disconnect the SSH connection if any
             let status = ssh_manager.write().await.disconnect().await?;
             return Ok(status);
@@ -221,7 +233,7 @@ pub async fn ssh_disconnect(
         let info = ContextInfo::from_context(&*ctx_arc.read().await);
 
         // Destroy SSH context
-        mgr.destroy_context(SSH_CONTEXT_ID).await?;
+        mgr.destroy_context(&result.previous_id).await?;
         drop(mgr);
 
         events::emit_context_changed(&app, &info);
