@@ -452,6 +452,16 @@ impl SshConnectionManager {
             .map(|c| Arc::new(c.fs_provider.clone()) as Arc<dyn FsProvider>)
     }
 
+    /// Get the host from the currently connected session's config.
+    ///
+    /// Returns `None` if not connected. Unlike `get_active_state().host`,
+    /// this reads from the stored config (not the status snapshot),
+    /// so it's available even during teardown.
+    pub async fn get_connected_host(&self) -> Option<String> {
+        let conn = self.connection.read().await;
+        conn.as_ref().map(|c| c.config.host.clone())
+    }
+
     /// Discover the SSH agent socket path.
     ///
     /// Checks (in order):
