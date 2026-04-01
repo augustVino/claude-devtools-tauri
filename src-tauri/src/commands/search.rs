@@ -22,7 +22,7 @@ pub async fn search_sessions(
     max_results: Option<u32>,
     searcher: State<'_, Arc<Mutex<SessionSearcher>>>,
 ) -> Result<SearchSessionsResult, String> {
-    let max = max_results.unwrap_or(50).min(100).max(1);
+    let max = max_results.unwrap_or(50).min(200).max(1);
 
     if query.trim().is_empty() {
         return Ok(SearchSessionsResult {
@@ -54,7 +54,7 @@ pub async fn search_all_projects(
     max_results: Option<u32>,
     searcher: State<'_, Arc<Mutex<SessionSearcher>>>,
 ) -> Result<SearchSessionsResult, String> {
-    let max = max_results.unwrap_or(50).min(100).max(1);
+    let max = max_results.unwrap_or(50).min(200).max(1);
 
     if query.trim().is_empty() {
         return Ok(SearchSessionsResult {
