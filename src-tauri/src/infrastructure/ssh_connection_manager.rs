@@ -36,6 +36,12 @@ use crate::types::ssh::SshConnectionState;
 /// Connection timeout (10 seconds).
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Health check interval (30 seconds).
+const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(30);
+/// Health check SFTP probe timeout (10 seconds).
+const HEALTH_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+
+
 // ---------------------------------------------------------------------------
 // SshClientHandler -- russh client handler
 // ---------------------------------------------------------------------------
@@ -88,7 +94,7 @@ struct SshConnection {
 /// - Status changes are broadcast via `tokio::sync::broadcast`.
 pub struct SshConnectionManager {
     /// Current active connection (single-connection model).
-    connection: RwLock<Option<SshConnection>>,
+    connection: Arc<RwLock<Option<SshConnection>>>,
     /// SSH config parser for host resolution.
     config_parser: Option<SshConfigParser>,
     /// Broadcast sender for status change events.
@@ -115,7 +121,7 @@ impl SshConnectionManager {
         };
 
         Self {
-            connection: RwLock::new(None),
+            connection: Arc::new(RwLock::new(None)),
             config_parser,
             event_sender,
         }
@@ -251,7 +257,12 @@ impl SshConnectionManager {
         );
 
         // 13. Create monitor stop channel
-        let (monitor_stop, _) = watch::channel(false);
+        let (monitor_stop, monitor_stop_rx) = watch::channel(false);
+
+        // 13.5. Clone resources for health monitor
+        let monitor_sftp = fs_provider.sftp_arc();
+        let monitor_event_sender = self.event_sender.clone();
+        let monitor_connection = Arc::clone(&self.connection);
 
         // 14. Store the connection
         {
@@ -265,6 +276,84 @@ impl SshConnectionManager {
                 monitor_stop,
             });
         }
+
+        // 14.5. Start health monitor
+        {
+            tokio::spawn(async move {
+                let mut stop_rx = monitor_stop_rx;
+                let sftp = monitor_sftp;
+                let sender = monitor_event_sender;
+                let connection_lock = monitor_connection;
+
+                loop {
+                    tokio::select! {
+                        _ = stop_rx.changed() => {
+                            log::info!("SSH health monitor: stop signal received");
+                            return;
+                        }
+                        _ = tokio::time::sleep(HEALTH_CHECK_INTERVAL) => {}
+                    }
+
+                    if *stop_rx.borrow() {
+                        return;
+                    }
+
+                    // Health check 1: russh session internal state (via read lock)
+                    {
+                        let conn = connection_lock.read().await;
+                        if let Some(ref c) = *conn {
+                            if c.session.is_closed() {
+                                log::warn!("SSH health monitor: session closed, connection lost");
+                                drop(conn);
+                                break;
+                            }
+                        } else {
+                            // Connection already cleaned up
+                            return;
+                        }
+                    }
+
+                    // Health check 2: SFTP probe
+                    let probe = tokio::time::timeout(
+                        HEALTH_CHECK_TIMEOUT,
+                        sftp.metadata("/"),
+                    ).await;
+
+                    match probe {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(e)) => {
+                            log::warn!("SSH health monitor: SFTP probe failed: {}, connection lost", e);
+                            break;
+                        }
+                        Err(_) => {
+                            log::warn!("SSH health monitor: SFTP probe timed out, connection lost");
+                            break;
+                        }
+                    }
+                }
+
+                // Health check failed — clean up
+                log::info!("SSH health monitor: cleaning up disconnected session");
+
+                // Dispose SFTP resources (read lock first)
+                {
+                    let conn = connection_lock.read().await;
+                    if let Some(ref c) = *conn {
+                        c.fs_provider.dispose_async().await;
+                    }
+                }
+
+                // Set connection to None (write lock)
+                {
+                    let mut conn = connection_lock.write().await;
+                    *conn = None;
+                }
+
+                // Broadcast disconnected status
+                let _ = sender.send(SshConnectionStatus::disconnected());
+            });
+        }
+
 
         // 15. Emit Connected status
         let _ = self.event_sender.send(connected_status.clone());
@@ -280,13 +369,22 @@ impl SshConnectionManager {
     /// # Events emitted
     /// - `Disconnected` (if there was an active connection)
     pub async fn disconnect(&self) -> Result<SshConnectionStatus, String> {
+        // 先释放 SFTP 资源（在获取写锁之前）
+        {
+            let conn = self.connection.read().await;
+            if let Some(ref connection) = *conn {
+                connection.fs_provider.dispose_async().await;
+            }
+        }
+
+        // 获取写锁，停止监控并断开连接
         let mut conn = self.connection.write().await;
         if conn.is_none() {
             return Ok(SshConnectionStatus::disconnected());
         }
 
         if let Some(ref mut connection) = *conn {
-            // Signal monitor to stop (if active)
+            // Signal monitor to stop
             let _ = connection.monitor_stop.send(true);
 
             // Graceful disconnect
@@ -441,6 +539,16 @@ impl SshConnectionManager {
         let conn = self.connection.read().await;
         conn.as_ref()
             .map(|c| Arc::new(c.fs_provider.clone()) as Arc<dyn FsProvider>)
+    }
+
+    /// Get the host from the currently connected session's config.
+    ///
+    /// Returns `None` if not connected. Unlike `get_active_state().host`,
+    /// this reads from the stored config (not the status snapshot),
+    /// so it's available even during teardown.
+    pub async fn get_connected_host(&self) -> Option<String> {
+        let conn = self.connection.read().await;
+        conn.as_ref().map(|c| c.config.host.clone())
     }
 
     /// Discover the SSH agent socket path.
@@ -933,7 +1041,7 @@ mod tests {
     #[test]
     fn test_merge_with_ssh_config_no_parser() {
         let manager = SshConnectionManager {
-            connection: RwLock::const_new(None),
+            connection: Arc::new(RwLock::const_new(None)),
             config_parser: None,
             event_sender: broadcast::channel(1).0,
         };
@@ -948,7 +1056,7 @@ mod tests {
     #[test]
     fn test_merge_with_ssh_config_fills_username_from_env() {
         let manager = SshConnectionManager {
-            connection: RwLock::const_new(None),
+            connection: Arc::new(RwLock::const_new(None)),
             config_parser: None,
             event_sender: broadcast::channel(1).0,
         };

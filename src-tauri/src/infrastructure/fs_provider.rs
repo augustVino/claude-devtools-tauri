@@ -62,6 +62,12 @@ pub trait FsProvider: Send + Sync + std::fmt::Debug {
 
     /// 列出目录内容。
     fn read_dir(&self, path: &Path) -> Result<Vec<FsDirent>, String>;
+
+    /// 清理资源（如关闭 SFTP 会话）。默认为空操作。
+    ///
+    /// 对于需要异步清理的实现者（如 SshFsProvider），使用
+    /// 自有的 `dispose_async()` 方法代替。
+    fn dispose(&self) {}
 }
 
 /// 将 `std::time::SystemTime` 转换为毫秒时间戳。

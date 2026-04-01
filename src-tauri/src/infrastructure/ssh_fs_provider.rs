@@ -127,6 +127,23 @@ impl SshFsProvider {
     pub async fn exists_async(&self, path: &str) -> Result<bool, SftpError> {
         self.sftp.try_exists(path).await
     }
+
+    /// 异步关闭 SFTP 会话。在 async 上下文中调用。
+    ///
+    /// 不使用 `block_on()`，因为调用方（disconnect、健康监控）
+    /// 都是 async 函数，`block_on()` 会导致 panic。
+    /// 错误仅记录 warn 日志，不传播（会话可能已关闭）。
+    pub async fn dispose_async(&self) {
+        if let Err(e) = self.sftp.close().await {
+            log::warn!("SFTP close error (may be already closed): {}", e);
+        }
+    }
+
+    /// Get a clone of the inner SFTP session Arc.
+    /// Used by health monitor for SFTP probes.
+    pub fn sftp_arc(&self) -> Arc<SftpSession> {
+        self.sftp.clone()
+    }
 }
 
 impl FsProvider for SshFsProvider {
