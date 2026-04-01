@@ -441,6 +441,19 @@ fn apply_updates(trigger: &mut NotificationTrigger, updates: &serde_json::Value)
             trigger.mode = m;
         }
     }
+    if let Some(repository_ids) = updates.get("repositoryIds").and_then(|v| v.as_array()) {
+        trigger.repository_ids = Some(
+            repository_ids
+                .iter()
+                .filter_map(|p| p.as_str().map(String::from))
+                .collect(),
+        );
+    }
+    if let Some(token_type) = updates.get("tokenType").and_then(|v| v.as_str()) {
+        if let Ok(tt) = serde_json::from_value(serde_json::json!(token_type)) {
+            trigger.token_type = Some(tt);
+        }
+    }
     // 注意: `isBuiltin` 被有意忽略 — 内置状态不可更改。
 }
 
@@ -984,5 +997,28 @@ mod tests {
         manager.set_triggers(new_triggers);
         assert_eq!(manager.get_all().len(), 1);
         assert_eq!(manager.get_all()[0].id, "only-one");
+    }
+
+    // =========================================================================
+    // apply_updates — repositoryIds & tokenType
+    // =========================================================================
+
+    #[test]
+    fn test_apply_updates_repository_ids() {
+        let mut trigger = default_triggers()[0].clone();
+        let updates = serde_json::json!({"repositoryIds": ["repo1", "repo2"]});
+        apply_updates(&mut trigger, &updates);
+        assert_eq!(
+            trigger.repository_ids,
+            Some(vec!["repo1".to_string(), "repo2".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_apply_updates_token_type() {
+        let mut trigger = default_triggers()[0].clone();
+        let updates = serde_json::json!({"tokenType": "output"});
+        apply_updates(&mut trigger, &updates);
+        assert_eq!(trigger.token_type, Some(TriggerTokenType::Output));
     }
 }
