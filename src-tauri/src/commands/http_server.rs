@@ -94,10 +94,14 @@ pub async fn start(
                 .clone(),
         };
 
-        // 前端构建产物目录：CARGO_MANIFEST_DIR/../dist
-        let dist_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("dist");
+        // 前端构建产物目录：RENDERER_PATH 环境变量优先，fallback 到 CARGO_MANIFEST_DIR/../dist
+        let dist_dir = std::env::var("RENDERER_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("dist")
+            });
 
         let new_handle = server::spawn_http_server(http_state, preferred_port, dist_dir)?;
         let port = new_handle.port;
