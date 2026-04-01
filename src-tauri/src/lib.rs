@@ -81,6 +81,9 @@ pub fn run() {
       // Set global claude root path override from config
       set_claude_root_override(config_manager.get_config().general.claude_root_path.clone());
 
+      // 注册 ConfigManager 为 managed state（供 http_server::start 等命令直接访问）
+      app.manage(config_manager.clone());
+
       let state = app_state.clone();
 
       // 非自动启动（无 --minimized 参数）时显示窗口

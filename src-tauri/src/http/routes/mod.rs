@@ -213,7 +213,7 @@ pub fn build_routes() -> Router<HttpState> {
 
     // Catch-all for unmatched /api/ routes — return JSON 404 for any HTTP method
     router = router.route(
-        "/api/*rest",
+        "/api/{*rest}",
         axum::routing::any(|AxumPath(_rest): AxumPath<String>| async {
             (
                 StatusCode::NOT_FOUND,
