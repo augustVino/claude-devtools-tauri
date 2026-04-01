@@ -8,6 +8,7 @@ import { api, isDesktopMode } from "@renderer/api";
 import appIcon from "@renderer/favicon.png";
 import { useStore } from "@renderer/store";
 import {
+  AlertCircle,
   CheckCircle,
   Code2,
   Download,
@@ -42,7 +43,7 @@ export const AdvancedSection = ({
   // Auto-revert "not-available" / "error" status back to idle after a brief display
   const revertTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
-    if (updateStatus === "not-available" || updateStatus === "error") {
+    if (updateStatus === "not-available" || updateStatus === "error" || updateStatus === "download-error") {
       revertTimerRef.current = setTimeout(() => {
         useStore.setState({ updateStatus: "idle" });
       }, 3000);
@@ -81,6 +82,27 @@ export const AdvancedSection = ({
           <>
             <Download className="size-3.5" />
             v{availableVersion ?? "unknown"} available
+          </>
+        );
+      case "downloading":
+        return (
+          <>
+            <Loader2 className="size-3.5 animate-spin" />
+            Downloading...
+          </>
+        );
+      case "downloaded":
+        return (
+          <>
+            <Download className="size-3.5" />
+            Update ready
+          </>
+        );
+      case "download-error":
+        return (
+          <>
+            <AlertCircle className="size-3.5" />
+            Download failed
           </>
         );
       default:
@@ -162,16 +184,18 @@ export const AdvancedSection = ({
             {isDesktop && (
               <button
                 onClick={handleCheckForUpdates}
-                disabled={updateStatus === "checking"}
+                disabled={updateStatus === "checking" || updateStatus === "downloading" || updateStatus === "downloaded"}
                 className="flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-white/5 disabled:opacity-50"
                 style={{
                   borderColor: "var(--color-border)",
                   color:
                     updateStatus === "not-available"
                       ? "var(--color-text-muted)"
-                      : updateStatus === "available"
+                      : updateStatus === "available" || updateStatus === "downloaded"
                         ? "#60a5fa"
-                        : "var(--color-text-secondary)",
+                        : updateStatus === "download-error"
+                          ? "#f87171"
+                          : "var(--color-text-secondary)",
                 }}
               >
                 {getUpdateButtonContent()}
