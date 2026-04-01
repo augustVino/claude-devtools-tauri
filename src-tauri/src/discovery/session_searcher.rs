@@ -453,11 +453,16 @@ fn parse_timestamp(ts: &str) -> u64 {
 ///
 /// 边界是会话文件列表中的位置，到达这些位置时如果已收集足够结果则提前退出。
 fn build_fast_search_stage_boundaries(total_files: usize) -> Vec<usize> {
-    SSH_FAST_SEARCH_STAGE_LIMITS
+    let mut boundaries: Vec<usize> = SSH_FAST_SEARCH_STAGE_LIMITS
         .iter()
-        .filter(|&&limit| limit < total_files)
-        .copied()
-        .collect()
+        .map(|&limit| limit.min(total_files))
+        .filter(|&boundary| boundary > 0 && boundary < total_files)
+        .collect();
+    boundaries.dedup();
+    if boundaries.last() != Some(&total_files) {
+        boundaries.push(total_files);
+    }
+    boundaries
 }
 
 #[cfg(test)]
@@ -650,5 +655,33 @@ mod tests {
         let sr = &result.results[0];
         assert_ne!(sr.session_title, "Untitled Session", "session_title should be extracted from first user message");
         assert!(sr.session_title.contains("Help me implement authentication feature"));
+    }
+
+    // ---------------------------------------------------------------------------
+    // Tests: build_fast_search_stage_boundaries
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_fast_search_stage_boundaries_includes_final() {
+        // total_files = 50, SSH_FAST_SEARCH_STAGE_LIMITS = [40, 140, 320]
+        // 期望: [40, 50] (min capping + final push)
+        let boundaries = build_fast_search_stage_boundaries(50);
+        assert_eq!(boundaries, vec![40, 50]);
+    }
+
+    #[test]
+    fn test_fast_search_stage_boundaries_large() {
+        // total_files = 500
+        // 期望: [40, 140, 320, 500]
+        let boundaries = build_fast_search_stage_boundaries(500);
+        assert_eq!(boundaries, vec![40, 140, 320, 500]);
+    }
+
+    #[test]
+    fn test_fast_search_stage_boundaries_small() {
+        // total_files = 10
+        // 期望: [10] (所有 limits >= total_files, 只有 final push)
+        let boundaries = build_fast_search_stage_boundaries(10);
+        assert_eq!(boundaries, vec![10]);
     }
 }
