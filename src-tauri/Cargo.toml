@@ -55,6 +55,7 @@ ssh_config = "0.1"
 russh-sftp = "2.0"
 async-trait = "0.1"
 url = "2"
+base64 = "0.22"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"

@@ -13,6 +13,7 @@ use crate::utils::content_sanitizer::{
     extract_command_display, sanitize_display_content, is_command_output_content, is_command_content,
 };
 use crate::utils::{decode_path, extract_base_dir, extract_project_name, get_default_claude_base_path, get_projects_base_path, get_todos_base_path};
+use crate::utils::pagination::{encode_cursor, decode_cursor};
 use crate::analysis::ChunkBuilder;
 use crate::infrastructure::ContextManager;
 use crate::types::domain::DeleteSessionResult;
@@ -275,9 +276,14 @@ pub async fn get_sessions_paginated(
         0
     };
 
-    // 定位游标位置
+    // 定位游标位置（对齐 Electron：不含 cursor 对应项）
     let start_idx = if let Some(ref c) = cursor {
-        all_sessions.iter().position(|s| &s.id == c).unwrap_or(0)
+        let (_, session_id) = decode_cursor(c);
+        all_sessions
+            .iter()
+            .position(|s| s.id == session_id)
+            .map(|pos| pos + 1)  // Skip the cursor item itself
+            .unwrap_or(0)
     } else {
         0
     };
@@ -288,7 +294,7 @@ pub async fn get_sessions_paginated(
 
     let has_more = end_idx < all_sessions.len();
     let next_cursor = if has_more {
-        sessions.last().map(|s| s.id.clone())
+        sessions.last().map(|s| encode_cursor(s.created_at, &s.id))
     } else {
         None
     };

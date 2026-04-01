@@ -5,6 +5,7 @@
 
 pub mod content_sanitizer;
 pub mod context_accumulator;
+pub mod pagination;
 pub mod path_decoder;
 pub mod regex_validation;
 pub mod session_state_detection;
