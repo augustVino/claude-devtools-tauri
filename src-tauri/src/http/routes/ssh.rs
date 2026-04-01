@@ -61,6 +61,7 @@ pub async fn ssh_connect(
     Json(body): Json<SshConnectionConfig>,
 ) -> Result<Json<SshConnectionStatus>, (StatusCode, Json<ErrorResponse>)> {
     // 1. Establish SSH connection
+    let username = body.username.clone();
     let status = state
         .ssh_manager
         .write()
@@ -79,7 +80,7 @@ pub async fn ssh_connect(
     let remote_projects_path = status
         .remote_projects_path
         .clone()
-        .unwrap_or_else(|| format!("/home/{}/.claude/projects", host));
+        .unwrap_or_else(|| format!("/home/{}/.claude/projects", username));
     let remote_todos_path = PathBuf::from(&remote_projects_path)
         .parent()
         .map(|p| p.join("todos"))

@@ -49,6 +49,7 @@ pub async fn ssh_connect(
     config: SshConnectionConfig,
 ) -> Result<SshConnectionStatus, String> {
     // 1. Establish SSH connection
+    let username = config.username.clone();
     let status = ssh_manager.write().await.connect(config).await?;
 
     // If connection failed, return error status without switching context
@@ -61,7 +62,7 @@ pub async fn ssh_connect(
     let remote_projects_path = status
         .remote_projects_path
         .clone()
-        .unwrap_or_else(|| format!("/home/{}/.claude/projects", host));
+        .unwrap_or_else(|| format!("/home/{}/.claude/projects", username));
     let remote_todos_path = PathBuf::from(&remote_projects_path)
         .parent()
         .map(|p| p.join("todos"))

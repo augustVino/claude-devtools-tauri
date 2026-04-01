@@ -57,7 +57,12 @@ fn default_app_config() -> AppConfig {
             pinned_sessions: HashMap::new(),
             hidden_sessions: HashMap::new(),
         },
-        ssh: None,
+        ssh: Some(crate::types::config::SshConfig {
+            last_connection: None,
+            auto_reconnect: false,
+            profiles: vec![],
+            last_active_context_id: String::new(),
+        }),
         http_server: None,
     }
 }
@@ -1051,7 +1056,7 @@ mod tests {
         assert_eq!(c.general.theme, "dark");
         assert!(c.display.show_timestamps && !c.display.compact_mode);
         assert!(c.sessions.pinned_sessions.is_empty());
-        assert!(c.ssh.is_none() && c.http_server.is_none());
+        assert!(c.ssh.is_some() && c.http_server.is_none());
     }
 
     #[tokio::test]
