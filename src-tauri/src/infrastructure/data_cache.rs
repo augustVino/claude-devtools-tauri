@@ -4,6 +4,7 @@
 //! LRU 淘汰与 TTL 过期机制，无需手动管理定时器。
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use moka::future::Cache;
@@ -29,9 +30,14 @@ const CURRENT_VERSION: u32 = 2;
 // ---------------------------------------------------------------------------
 
 /// 基于 `moka` 的 LRU 缓存，支持可配置容量与 TTL。
+///
+/// 当 `enabled` 为 `false` 时，所有读写操作为 no-op（与 Electron `DataCache.setEnabled()` 对齐）。
 #[derive(Clone)]
 pub struct DataCache {
     cache: Arc<Cache<String, CacheEntry>>,
+    /// 使用 `Arc<AtomicBool>` 确保克隆后（如 watcher task）共享启用状态，
+    /// 与 Electron 单实例引用语义对齐。
+    enabled: Arc<AtomicBool>,
 }
 
 impl DataCache {
@@ -48,7 +54,36 @@ impl DataCache {
             .build();
         Self {
             cache: Arc::new(cache),
+            enabled: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    /// 创建禁用状态的无操作缓存（与 Electron `new DataCache(50, 10, false)` 对齐）。
+    pub fn disabled() -> Self {
+        let cache = Cache::builder()
+            .max_capacity(50)
+            .time_to_live(Duration::from_secs(10 * 60))
+            .build();
+        Self {
+            cache: Arc::new(cache),
+            enabled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// 设置缓存启用状态（与 Electron `setEnabled()` 对齐）。
+    ///
+    /// 由于 `enabled` 使用 `Arc<AtomicBool>`，此操作对所有克隆实例（如 watcher task）生效。
+    pub async fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::Relaxed);
+        if !enabled {
+            self.cache.invalidate_all();
+            self.cache.run_pending_tasks().await;
+        }
+    }
+
+    /// 返回缓存是否启用。
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
     }
 
     // ---- 会话缓存 ---------------------------------------------------------
@@ -104,6 +139,9 @@ impl DataCache {
 
     /// 使单条会话缓存条目失效。
     pub async fn invalidate_session(&self, project_id: &str, session_id: &str) {
+        if !self.is_enabled() {
+            return;
+        }
         let key = Self::build_key(project_id, session_id);
         self.cache.invalidate(&key).await;
 
@@ -114,6 +152,9 @@ impl DataCache {
 
     /// 使指定项目下的所有缓存条目失效。
     pub async fn invalidate_project(&self, project_id: &str) {
+        if !self.is_enabled() {
+            return;
+        }
         // 会话条目的键格式为 "{projectId}/"
         self.cache
             .run_pending_tasks()
@@ -159,6 +200,9 @@ impl DataCache {
     // ---- 内部实现 ---------------------------------------------------------
 
     async fn get(&self, key: &str) -> Option<serde_json::Value> {
+        if !self.is_enabled() {
+            return None;
+        }
         let entry = self.cache.get(key).await?;
         if entry.version != CURRENT_VERSION {
             self.cache.invalidate(key).await;
@@ -168,6 +212,9 @@ impl DataCache {
     }
 
     async fn set(&self, key: &str, value: serde_json::Value) {
+        if !self.is_enabled() {
+            return;
+        }
         let entry = CacheEntry {
             value,
             version: CURRENT_VERSION,
@@ -390,5 +437,57 @@ mod tests {
         cache.set_session("p", "s", json_val(1)).await;
         cache.clear().await;
         assert_eq!(cache.entry_count().await, 0);
+    }
+
+    // -- 禁用状态测试（与 Electron DataCache.setEnabled(false) 对齐）-----------
+
+    #[tokio::test]
+    async fn disabled_cache_set_is_noop() {
+        let cache = DataCache::disabled();
+        assert!(!cache.is_enabled());
+
+        cache.set_session("proj", "sess", json_val(1)).await;
+        let got = cache.get_session("proj", "sess").await;
+        assert!(got.is_none(), "disabled cache should return None on get");
+    }
+
+    #[tokio::test]
+    async fn set_enabled_toggles_cache() {
+        let cache = DataCache::new();
+        assert!(cache.is_enabled());
+
+        // 写入一条数据
+        cache.set_session("proj", "sess", json_val(42)).await;
+        assert!(cache.get_session("proj", "sess").await.is_some());
+
+        // 禁用后应清空且 get 返回 None
+        cache.set_enabled(false).await;
+        assert!(!cache.is_enabled());
+        assert!(cache.get_session("proj", "sess").await.is_none());
+
+        // 重新启用后可以正常使用
+        cache.set_enabled(true).await;
+        assert!(cache.is_enabled());
+        cache.set_session("proj", "sess2", json_val(99)).await;
+        assert!(cache.get_session("proj", "sess2").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn enabled_state_shared_across_clones() {
+        let cache = DataCache::new();
+        let clone = cache.clone();
+
+        // 两者初始都启用
+        assert!(cache.is_enabled());
+        assert!(clone.is_enabled());
+
+        // 在原始实例上禁用，克隆也应反映
+        cache.set_enabled(false).await;
+        assert!(!cache.is_enabled());
+        assert!(!clone.is_enabled(), "clone should see enabled=false after set_enabled on original");
+
+        // 克隆上重新启用，原始也应反映
+        clone.set_enabled(true).await;
+        assert!(cache.is_enabled(), "original should see enabled=true after set_enabled on clone");
     }
 }

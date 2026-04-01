@@ -202,17 +202,26 @@ fn resolve_real_path(p: &std::path::Path) -> Option<std::path::PathBuf> {
 
 /// Open a URL in the system browser.
 /// Supports http, https, and mailto protocols (aligned with Electron).
+///
+/// 与 Electron 对齐的安全校验：
+/// - URL 格式解析（拒绝畸形 URL）
+/// - 协议大小写无关（`HTTPS://` 同样接受）
+/// - URL 重序列化防止注入（`parsedUrl.toString()`）
 #[tauri::command]
 pub async fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    // 与 Electron 对齐：允许 http、https、mailto 协议
-    let allowed = url.starts_with("http://")
-        || url.starts_with("https://")
-        || url.starts_with("mailto:");
-    if !allowed {
-        return Err("Invalid URL: only http, https, and mailto URLs are allowed".to_string());
+    // 与 Electron 对齐：通过 URL 解析进行格式校验和协议验证
+    let parsed = url::Url::parse(&url)
+        .map_err(|_| "Invalid URL".to_string())?;
+
+    let scheme = parsed.scheme().to_lowercase();
+    if scheme != "http" && scheme != "https" && scheme != "mailto" {
+        return Err("Only http, https, and mailto URLs are allowed".to_string());
     }
+
+    // 使用重序列化后的 URL 防止注入（与 Electron parsedUrl.toString() 对齐）
+    let safe_url = parsed.to_string();
     app.opener()
-        .open_url(url, None::<&str>)
+        .open_url(safe_url, None::<&str>)
         .map_err(|e| e.to_string())?;
     Ok(())
 }

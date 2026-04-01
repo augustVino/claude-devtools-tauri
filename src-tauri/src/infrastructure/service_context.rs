@@ -63,7 +63,14 @@ impl ServiceContext {
             SessionSearcher::new(config.projects_dir.clone(), config.todos_dir.clone(), config.fs_provider.clone(), None),
         ));
         let subagent_resolver = SubagentResolver::new(config.projects_dir.clone(), config.fs_provider.clone());
-        let cache = config.cache.unwrap_or_else(DataCache::new);
+        let cache = config.cache.unwrap_or_else(|| {
+            // 与 Electron 对齐：支持 CLAUDE_CONTEXT_DISABLE_CACHE 环境变量禁用缓存
+            if std::env::var("CLAUDE_CONTEXT_DISABLE_CACHE").map(|v| v == "1").unwrap_or(false) {
+                DataCache::disabled()
+            } else {
+                DataCache::new()
+            }
+        });
         let file_watcher = Arc::new(Mutex::new(FileWatcher::new(config.fs_provider.clone())));
         let todo_watcher = Arc::new(Mutex::new(FileWatcher::new(config.fs_provider.clone())));
 
