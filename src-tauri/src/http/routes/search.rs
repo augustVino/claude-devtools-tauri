@@ -4,6 +4,7 @@
 
 use axum::{Json, extract::State, http::StatusCode};
 
+use crate::commands::guards;
 use crate::http::state::HttpState;
 use crate::types::domain::SearchSessionsResult;
 
@@ -17,22 +18,28 @@ pub async fn search_sessions(
     axum::extract::Path(project_id): axum::extract::Path<String>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<SearchSessionsResult>, (StatusCode, Json<super::ErrorResponse>)> {
-    let query = params.get("q").cloned().unwrap_or_default();
+    let safe_project_id = guards::validate_project_id(&project_id)
+        .map_err(|e| error_json(e))?;
+
+    let raw_query = params.get("q").cloned().unwrap_or_default();
     let max_results = params
         .get("maxResults")
         .and_then(|v| v.parse::<u32>().ok());
 
-    let max = max_results.unwrap_or(50).min(200).max(1);
+    let max = guards::coerce_search_max_results(max_results);
 
-    if query.trim().is_empty() {
+    if raw_query.trim().is_empty() {
         return Ok(Json(SearchSessionsResult {
             results: Vec::new(),
             total_matches: 0,
             sessions_searched: 0,
-            query,
+            query: raw_query,
             is_partial: None,
         }));
     }
+
+    let query = guards::validate_search_query(&raw_query)
+        .map_err(|e| error_json(e))?;
 
     // TODO: Wrap in tokio::task::spawn_blocking to avoid blocking the async runtime
     // (same issue as Tauri IPC commands — see commands/search.rs for the pattern).
@@ -40,7 +47,7 @@ pub async fn search_sessions(
         .searcher
         .lock()
         .map_err(|e| error_json(e.to_string()))?;
-    Ok(Json(searcher.search_sessions(&project_id, &query, max)))
+    Ok(Json(searcher.search_sessions(&safe_project_id, &query, max)))
 }
 
 /// 搜索所有项目中的会话。
@@ -50,22 +57,25 @@ pub async fn search_all_projects(
     State(state): State<HttpState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<SearchSessionsResult>, (StatusCode, Json<super::ErrorResponse>)> {
-    let query = params.get("q").cloned().unwrap_or_default();
+    let raw_query = params.get("q").cloned().unwrap_or_default();
     let max_results = params
         .get("maxResults")
         .and_then(|v| v.parse::<u32>().ok());
 
-    let max = max_results.unwrap_or(50).min(200).max(1);
+    let max = guards::coerce_search_max_results(max_results);
 
-    if query.trim().is_empty() {
+    if raw_query.trim().is_empty() {
         return Ok(Json(SearchSessionsResult {
             results: Vec::new(),
             total_matches: 0,
             sessions_searched: 0,
-            query,
+            query: raw_query,
             is_partial: None,
         }));
     }
+
+    let query = guards::validate_search_query(&raw_query)
+        .map_err(|e| error_json(e))?;
 
     let mut searcher = state
         .searcher

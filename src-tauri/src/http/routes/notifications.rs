@@ -4,35 +4,13 @@
 
 use axum::{Json, extract::State, http::StatusCode};
 
+use crate::commands::guards;
 use crate::http::state::HttpState;
 use crate::types::config::{
     GetNotificationsOptions, GetNotificationsResult, NotificationCountResult, NotificationStats,
 };
 
 use super::error_json;
-
-/// 验证通知 ID 格式。
-fn validate_notification_id(id: &str) -> Result<(), String> {
-    if id.is_empty() || id.len() > 128 {
-        return Err("Invalid notification ID format".to_string());
-    }
-    let first = id.chars().next();
-    if !first.is_some_and(|c| c.is_alphanumeric()) {
-        return Err("Invalid notification ID format".to_string());
-    }
-    if !id
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-')
-    {
-        return Err("Invalid notification ID format".to_string());
-    }
-    Ok(())
-}
-
-/// 将 page limit 限制在合理范围 [1, 200]。
-fn coerce_page_limit(limit: Option<usize>, default: usize) -> usize {
-    limit.unwrap_or(default).clamp(1, 200)
-}
 
 /// 获取分页通知列表（按时间降序）。
 ///
@@ -43,13 +21,13 @@ pub async fn get_notifications(
 ) -> Result<Json<GetNotificationsResult>, (StatusCode, Json<super::ErrorResponse>)> {
     let limit = params
         .get("limit")
-        .and_then(|v| v.parse::<usize>().ok());
+        .and_then(|v| v.parse::<u32>().ok());
     let offset = params
         .get("offset")
         .and_then(|v| v.parse::<usize>().ok());
 
     let mgr = state.notification_manager.read().await;
-    let clamped_limit = coerce_page_limit(limit, 20);
+    let clamped_limit = guards::coerce_page_limit(limit) as usize;
     let clamped_offset = offset.unwrap_or(0);
     let opts = GetNotificationsOptions {
         limit: Some(clamped_limit),
@@ -65,9 +43,9 @@ pub async fn mark_read(
     State(state): State<HttpState>,
     axum::extract::Path(notification_id): axum::extract::Path<String>,
 ) -> Result<Json<bool>, (StatusCode, Json<super::ErrorResponse>)> {
-    validate_notification_id(&notification_id).map_err(error_json)?;
+    let safe_id = guards::validate_notification_id(&notification_id).map_err(error_json)?;
     let mgr = state.notification_manager.read().await;
-    Ok(Json(mgr.mark_read(&notification_id).await))
+    Ok(Json(mgr.mark_read(&safe_id).await))
 }
 
 /// 标记所有通知为已读。
@@ -87,9 +65,9 @@ pub async fn delete_notification(
     State(state): State<HttpState>,
     axum::extract::Path(notification_id): axum::extract::Path<String>,
 ) -> Result<Json<bool>, (StatusCode, Json<super::ErrorResponse>)> {
-    validate_notification_id(&notification_id).map_err(error_json)?;
+    let safe_id = guards::validate_notification_id(&notification_id).map_err(error_json)?;
     let mgr = state.notification_manager.read().await;
-    Ok(Json(mgr.delete_notification(&notification_id).await))
+    Ok(Json(mgr.delete_notification(&safe_id).await))
 }
 
 /// 清除所有通知。

@@ -4,6 +4,7 @@
 
 use axum::{Json, extract::State, http::StatusCode};
 
+use crate::commands::guards;
 use crate::discovery::{ProjectScanner, WorktreeGrouper};
 use crate::http::state::HttpState;
 use crate::infrastructure::fs_provider::LocalFsProvider;
@@ -62,11 +63,14 @@ pub async fn get_worktree_sessions(
     State(_state): State<HttpState>,
     axum::extract::Path(worktree_id): axum::extract::Path<String>,
 ) -> Result<Json<Vec<Session>>, (StatusCode, Json<super::ErrorResponse>)> {
+    let safe_worktree_id = guards::validate_project_id(&worktree_id)
+        .map_err(|e| error_json(e))?;
+
     let scanner = ProjectScanner::with_paths(
         get_projects_base_path(),
         get_todos_base_path(),
         std::sync::Arc::new(LocalFsProvider::new()),
     );
-    Ok(Json(scanner.list_sessions(&worktree_id)))
+    Ok(Json(scanner.list_sessions(&safe_worktree_id)))
 }
 

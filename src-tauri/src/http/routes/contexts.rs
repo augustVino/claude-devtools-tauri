@@ -42,8 +42,13 @@ pub async fn context_switch(
     State(state): State<HttpState>,
     Json(body): Json<SwitchRequest>,
 ) -> Result<Json<SwitchResponse>, (axum::http::StatusCode, Json<ErrorResponse>)> {
+    let context_id = body.context_id.trim();
+    if context_id.is_empty() || context_id.len() > 256 {
+        return Err(error_json(String::from("Invalid context_id")));
+    }
+
     let mut mgr = state.context_manager.write().await;
-    let result = mgr.switch(&body.context_id)
+    let result = mgr.switch(context_id)
         .map_err(error_json)?;
 
     // 仅在确实切换了上下文时才 stop/start watcher

@@ -404,11 +404,16 @@ pub async fn get_waterfall_data(
         session_id,
     } = path;
 
+    let safe_project_id = guards::validate_project_id(&project_id)
+        .map_err(|e| error_json(e))?;
+    let safe_session_id = guards::validate_session_id(&session_id)
+        .map_err(|e| error_json(e))?;
+
     let base_path = get_projects_base_path();
-    let project_dir = extract_base_dir(&project_id);
+    let project_dir = extract_base_dir(&safe_project_id);
     let session_path = base_path
         .join(&project_dir)
-        .join(format!("{}.jsonl", session_id));
+        .join(format!("{}.jsonl", safe_session_id));
 
     if !session_path.exists() {
         return Ok(Json(None));
@@ -417,13 +422,13 @@ pub async fn get_waterfall_data(
     let parsed = parse_session_file(&session_path).await;
 
     let fallback_path = extract_cwd_from_messages(&parsed)
-        .unwrap_or_else(|| decode_path(&project_id));
+        .unwrap_or_else(|| decode_path(&safe_project_id));
 
-    let session = build_session_metadata(&session_path, &project_id)
+    let session = build_session_metadata(&session_path, &safe_project_id)
         .await
         .unwrap_or_else(|| Session {
-            id: session_id.clone(),
-            project_id: project_id.clone(),
+            id: safe_session_id.clone(),
+            project_id: safe_project_id.clone(),
             project_path: fallback_path,
             created_at: 0,
             todo_data: None,
@@ -443,7 +448,7 @@ pub async fn get_waterfall_data(
         let resolver =
             crate::discovery::subagent_resolver::SubagentResolver::new(get_projects_base_path(), std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()));
         resolver
-            .resolve_subagents(&project_id, &session_id, Some(&parsed.task_calls), Some(&parsed.messages))
+            .resolve_subagents(&safe_project_id, &safe_session_id, Some(&parsed.task_calls), Some(&parsed.messages))
             .into_iter()
             .map(Into::into)
             .collect()

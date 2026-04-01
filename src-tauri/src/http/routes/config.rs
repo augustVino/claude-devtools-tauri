@@ -6,6 +6,7 @@ use axum::{Json, extract::State, http::StatusCode};
 use serde::Serialize;
 use serde::Deserialize;
 
+use crate::commands::guards;
 use crate::http::state::HttpState;
 use crate::types::config::{
     AppConfig, NotificationTrigger,
@@ -218,10 +219,13 @@ pub async fn update_trigger(
     axum::extract::Path(trigger_id): axum::extract::Path<String>,
     Json(updates): Json<serde_json::Value>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
+    let safe_trigger_id = guards::validate_trigger_id(&trigger_id)
+        .map_err(|e| error_json(e))?;
+
     let app_state = state.app_state.read().await;
     app_state
         .config_manager
-        .update_trigger(&trigger_id, updates)
+        .update_trigger(&safe_trigger_id, updates)
         .map(Json)
         .map_err(|e| error_json(e))
 }
@@ -233,10 +237,13 @@ pub async fn remove_trigger(
     State(state): State<HttpState>,
     axum::extract::Path(trigger_id): axum::extract::Path<String>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
+    let safe_trigger_id = guards::validate_trigger_id(&trigger_id)
+        .map_err(|e| error_json(e))?;
+
     let app_state = state.app_state.read().await;
     app_state
         .config_manager
-        .remove_trigger(&trigger_id)
+        .remove_trigger(&safe_trigger_id)
         .map(Json)
         .map_err(|e| error_json(e))
 }
@@ -253,12 +260,15 @@ pub(crate) struct TriggerTestResponse {
 /// POST /api/config/triggers/{trigger_id}/test
 pub async fn test_trigger(
     State(_state): State<HttpState>,
-    axum::extract::Path(_trigger_id): axum::extract::Path<String>,
+    axum::extract::Path(trigger_id): axum::extract::Path<String>,
     Json(trigger): Json<NotificationTrigger>,
 ) -> Result<
     Json<TriggerTestResponse>,
     (StatusCode, Json<super::ErrorResponse>),
 > {
+    let _safe_trigger_id = guards::validate_trigger_id(&trigger_id)
+        .map_err(|e| error_json(e))?;
+
     use crate::discovery::project_scanner::ProjectScanner;
     use crate::error::error_trigger_tester;
 
