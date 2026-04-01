@@ -123,9 +123,7 @@ impl ProjectScanner {
                 continue;
             }
 
-            if let Some(project) = self.scan_project(encoded_name) {
-                projects.push(project);
-            }
+            projects.extend(self.scan_project(encoded_name));
         }
 
         // Sort by most recent session (descending)
@@ -137,12 +135,12 @@ impl ProjectScanner {
     }
 
     /// Scan a single project directory and return project metadata.
-    fn scan_project(&self, encoded_name: &str) -> Option<Project> {
+    pub fn scan_project(&self, encoded_name: &str) -> Vec<Project> {
         let project_path = self.projects_dir.join(encoded_name);
 
         let entries = match self.fs_provider.read_dir(&project_path) {
             Ok(entries) => entries,
-            Err(_) => return None,
+            Err(_) => return vec![],
         };
 
         // Get session files (.jsonl at root level)
@@ -157,7 +155,7 @@ impl ProjectScanner {
             .collect();
 
         if session_files.is_empty() {
-            return None;
+            return vec![];
         }
 
         // Extract session IDs, timestamps, and cwd from session files
@@ -182,7 +180,7 @@ impl ProjectScanner {
             // Extract cwd from the first session file that has one
             if first_cwd.is_none() {
                 let entry_path = project_path.join(&session_file.name);
-                let preview = self.extract_session_preview(&entry_path);
+                let preview = self.extract_session_preview(&entry_path, session_file.mtime_ms);
                 if let Some(cwd) = preview.cwd {
                     first_cwd = Some(cwd);
                 }
@@ -193,20 +191,20 @@ impl ProjectScanner {
             path_decoder::extract_project_name(encoded_name, first_cwd.as_deref());
         let actual_path = first_cwd.unwrap_or_else(|| self.resolve_project_path(encoded_name));
 
-        Some(Project {
+        vec![Project {
             id: encoded_name.to_string(),
             path: actual_path,
             name: base_name,
             sessions: session_ids,
             created_at: if created_at == u64::MAX { 0 } else { created_at },
             most_recent_session,
-        })
+        }]
     }
 
     /// Get a specific project by ID.
     pub fn get_project(&self, project_id: &str) -> Option<Project> {
         let base_dir = path_decoder::extract_base_dir(project_id);
-        self.scan_project(&base_dir)
+        self.scan_project(&base_dir).into_iter().find(|p| p.id == project_id)
     }
 
     /// List all sessions for a project.
@@ -271,7 +269,15 @@ impl ProjectScanner {
 
         for info in &file_infos {
             let entry_path = project_path.join(&info.name);
-            let preview = self.extract_session_preview(&entry_path);
+
+            // Skip noise-only sessions (local filesystem only)
+            if self.fs_provider.provider_type() != "ssh" {
+                if !crate::discovery::session_content_filter::has_non_noise_messages(&entry_path, self.fs_provider.as_ref()) {
+                    continue;
+                }
+            }
+
+            let preview = self.extract_session_preview(&entry_path, Some(info.mtime_ms));
 
             // Skip sessions that couldn't be read (file may have been deleted or is empty)
             if preview.message_count == 0 && preview.first_message.is_none() {
@@ -321,7 +327,7 @@ impl ProjectScanner {
     }
 
     /// Read the first 200 lines of a JSONL file to extract preview metadata.
-    fn extract_session_preview(&self, path: &Path) -> SessionPreview {
+    fn extract_session_preview(&self, path: &Path, mtime_ms: Option<u64>) -> SessionPreview {
         let content = match self.fs_provider.read_file_head(path, 200) {
             Ok(content) => content,
             Err(_) => return SessionPreview::default(),
@@ -330,6 +336,7 @@ impl ProjectScanner {
         let mut preview = SessionPreview::default();
         let mut found_first_user = false;
         let mut lines_read = 0u32;
+        let mut awaiting_ai_group = false;
         const MAX_LINES: u32 = 200;
 
         for line in content.lines() {
@@ -348,6 +355,8 @@ impl ProjectScanner {
             };
 
             let msg_type = json.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            let is_sidechain = json.get("isSidechain").and_then(|v| v.as_bool()).unwrap_or(false);
+            let model = json.get("model").and_then(|v| v.as_str());
 
             // Extract cwd from any entry that has it (first wins)
             if preview.cwd.is_none() {
@@ -360,8 +369,21 @@ impl ProjectScanner {
                 }
             }
 
-            if matches!(msg_type, "user" | "assistant" | "system") {
+            // Extract git_branch from any entry that has it (first wins)
+            if preview.git_branch.is_none() {
+                if let Some(branch) = json.get("gitBranch").and_then(|v| v.as_str()) {
+                    preview.git_branch = Some(branch.to_string());
+                }
+            }
+
+            // Paired message_count: count user then matching assistant
+            if crate::parsing::message_classifier::is_user_chunk_message(msg_type, is_sidechain) {
                 preview.message_count += 1;
+                awaiting_ai_group = true;
+            } else if awaiting_ai_group && msg_type == "assistant"
+                && model != Some("<synthetic>") && !is_sidechain {
+                preview.message_count += 1;
+                awaiting_ai_group = false;
             }
 
             if !found_first_user && msg_type == "user" {
@@ -407,13 +429,6 @@ impl ProjectScanner {
                                 preview.first_timestamp = Some(ts.to_string());
                             }
                         }
-                        if preview.git_branch.is_none() {
-                            if let Some(branch) =
-                                json.get("gitBranch").and_then(|v| v.as_str())
-                            {
-                                preview.git_branch = Some(branch.to_string());
-                            }
-                        }
                         continue;
                     }
 
@@ -443,9 +458,6 @@ impl ProjectScanner {
                 if let Some(ts) = json.get("timestamp").and_then(|v| v.as_str()) {
                     preview.first_timestamp = Some(ts.to_string());
                 }
-                if let Some(branch) = json.get("gitBranch").and_then(|v| v.as_str()) {
-                    preview.git_branch = Some(branch.to_string());
-                }
             }
 
             if !preview.has_task_calls {
@@ -467,6 +479,21 @@ impl ProjectScanner {
         // Fall back to command display if no real user text was found
         if preview.first_message.is_none() {
             preview.first_message = preview.command_fallback.take();
+        }
+
+        // Stale session threshold: if is_ongoing but file hasn't been modified
+        // in 5+ minutes, mark as not ongoing.
+        const STALE_SESSION_THRESHOLD_MS: u64 = 5 * 60 * 1000;
+        if preview.is_ongoing.unwrap_or(false) {
+            if let Some(file_mtime) = mtime_ms {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                if now.saturating_sub(file_mtime) >= STALE_SESSION_THRESHOLD_MS {
+                    preview.is_ongoing = Some(false);
+                }
+            }
         }
 
         preview
@@ -628,9 +655,11 @@ mod tests {
         let project_dir = temp_dir.path().join("projects").join(encoded_path);
         fs::create_dir_all(&project_dir).unwrap();
 
-        // Create session files
-        fs::write(project_dir.join("session-1.jsonl"), r#"{"type":"user"}"#).unwrap();
-        fs::write(project_dir.join("session-2.jsonl"), r#"{"type":"user"}"#).unwrap();
+        // Create session files (with assistant entries so noise filter passes)
+        fs::write(project_dir.join("session-1.jsonl"), r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"hello"}}
+{"type":"assistant","message":{"role":"assistant","content":"hi"}}"#).unwrap();
+        fs::write(project_dir.join("session-2.jsonl"), r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"world"}}
+{"type":"assistant","message":{"role":"assistant","content":"hi"}}"#).unwrap();
 
         let sessions = scanner.list_sessions(encoded_path);
         assert_eq!(sessions.len(), 2);
@@ -707,7 +736,8 @@ mod tests {
         let project_dir = temp_dir.path().join("projects").join(encoded_path);
         fs::create_dir_all(&project_dir).unwrap();
 
-        let jsonl = r#"{"type":"user","cwd":"/Users/test/happy-server","message":{"role":"user","content":"hello"}}"#;
+        let jsonl = r#"{"type":"user","isSidechain":false,"cwd":"/Users/test/happy-server","message":{"role":"user","content":"hello"}}
+{"type":"assistant","message":{"role":"assistant","content":"response"}}"#;
         fs::write(project_dir.join("session-1.jsonl"), jsonl).unwrap();
 
         let sessions = scanner.list_sessions(encoded_path);
@@ -743,7 +773,7 @@ mod tests {
 
         fs::write(&session_path, &content).unwrap();
 
-        let preview = scanner.extract_session_preview(&session_path);
+        let preview = scanner.extract_session_preview(&session_path, None);
         assert!(
             preview.first_message.is_some(),
             "first_message should be found when user message is beyond 8KB"
@@ -762,7 +792,7 @@ mod tests {
         let jsonl = r#"{"type":"user","isMeta":false,"message":{"role":"user","content":"Hello world"}}"#;
         fs::write(&session_path, jsonl).unwrap();
 
-        let preview = scanner.extract_session_preview(&session_path);
+        let preview = scanner.extract_session_preview(&session_path, None);
         assert_eq!(preview.first_message.as_deref(), Some("Hello world"));
     }
 
@@ -779,7 +809,7 @@ mod tests {
 {"type":"user","isMeta":false,"message":{"role":"user","content":"real user text"}}"#;
         fs::write(&session_path, jsonl).unwrap();
 
-        let preview = scanner.extract_session_preview(&session_path);
+        let preview = scanner.extract_session_preview(&session_path, None);
         assert_eq!(preview.first_message.as_deref(), Some("internal meta"));
     }
 
@@ -793,7 +823,7 @@ mod tests {
         let jsonl = r#"{"type":"user","isMeta":false,"message":{"role":"user","content":"<command-name>/compact</command-name><command-message>Compact context</command-message>"}}"#;
         fs::write(&session_path, jsonl).unwrap();
 
-        let preview = scanner.extract_session_preview(&session_path);
+        let preview = scanner.extract_session_preview(&session_path, None);
         assert_eq!(preview.first_message.as_deref(), Some("/compact"));
     }
 
@@ -808,7 +838,7 @@ mod tests {
 {"type":"user","isMeta":false,"message":{"role":"user","content":"real message"}}"#;
         fs::write(&session_path, jsonl).unwrap();
 
-        let preview = scanner.extract_session_preview(&session_path);
+        let preview = scanner.extract_session_preview(&session_path, None);
         assert_eq!(preview.first_message.as_deref(), Some("real message"));
     }
 
@@ -822,7 +852,7 @@ mod tests {
         let jsonl = r#"{"type":"user","isMeta":false,"message":{"role":"user","content":"<system-reminder>rules</system-reminder>Please fix the bug"}}"#;
         fs::write(&session_path, jsonl).unwrap();
 
-        let preview = scanner.extract_session_preview(&session_path);
+        let preview = scanner.extract_session_preview(&session_path, None);
         assert_eq!(preview.first_message.as_deref(), Some("Please fix the bug"));
     }
 
@@ -840,7 +870,7 @@ mod tests {
         );
         fs::write(&session_path, &jsonl).unwrap();
 
-        let preview = scanner.extract_session_preview(&session_path);
+        let preview = scanner.extract_session_preview(&session_path, None);
         assert_eq!(preview.first_message.unwrap().chars().count(), 500);
     }
 
@@ -855,7 +885,7 @@ mod tests {
         let jsonl = r#"{"type":"user","isMeta":false,"cwd":"/Users/test/my-project","message":{"role":"user","content":"hello"}}"#;
         fs::write(&session_path, jsonl).unwrap();
 
-        let preview = scanner.extract_session_preview(&session_path);
+        let preview = scanner.extract_session_preview(&session_path, None);
         assert_eq!(preview.cwd.as_deref(), Some("/Users/test/my-project"));
     }
 
@@ -869,7 +899,7 @@ mod tests {
         let jsonl = r#"{"type":"user","isMeta":false,"gitBranch":"feature/test","message":{"role":"user","content":"hello"}}"#;
         fs::write(&session_path, jsonl).unwrap();
 
-        let preview = scanner.extract_session_preview(&session_path);
+        let preview = scanner.extract_session_preview(&session_path, None);
         assert_eq!(preview.git_branch.as_deref(), Some("feature/test"));
     }
 
@@ -886,8 +916,9 @@ mod tests {
 {"type":"system","message":{"role":"system","content":"sys"}}"#;
         fs::write(&session_path, jsonl).unwrap();
 
-        let preview = scanner.extract_session_preview(&session_path);
-        assert_eq!(preview.message_count, 4);
+        let preview = scanner.extract_session_preview(&session_path, None);
+        // Paired counting: user=1, assistant=1, user=1 (system not counted)
+        assert_eq!(preview.message_count, 3);
     }
 
     #[test]
@@ -900,7 +931,7 @@ mod tests {
         let jsonl = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Task","input":{"prompt":"do something"}}]}}"#;
         fs::write(&session_path, jsonl).unwrap();
 
-        let preview = scanner.extract_session_preview(&session_path);
+        let preview = scanner.extract_session_preview(&session_path, None);
         assert!(preview.has_task_calls);
     }
 
@@ -914,7 +945,7 @@ mod tests {
         let jsonl = r#"{"type":"user","isMeta":false,"timestamp":"2026-03-29T10:00:00Z","message":{"role":"user","content":"hello"}}"#;
         fs::write(&session_path, jsonl).unwrap();
 
-        let preview = scanner.extract_session_preview(&session_path);
+        let preview = scanner.extract_session_preview(&session_path, None);
         assert_eq!(preview.first_timestamp.as_deref(), Some("2026-03-29T10:00:00Z"));
     }
 
@@ -928,7 +959,7 @@ mod tests {
 
         fs::write(&session_path, "").unwrap();
 
-        let preview = scanner.extract_session_preview(&session_path);
+        let preview = scanner.extract_session_preview(&session_path, None);
         assert!(preview.first_message.is_none());
         assert_eq!(preview.message_count, 0);
         assert!(!preview.has_task_calls);
@@ -939,7 +970,7 @@ mod tests {
         let (temp_dir, scanner) = setup_test_env();
         let path = temp_dir.path().join("nonexistent.jsonl");
 
-        let preview = scanner.extract_session_preview(&path);
+        let preview = scanner.extract_session_preview(&path, None);
         assert!(preview.first_message.is_none());
         assert_eq!(preview.message_count, 0);
     }
@@ -962,7 +993,7 @@ mod tests {
         content.push_str(r#"{"type":"user","isMeta":false,"message":{"role":"user","content":"found at line 200"}}"#);
         fs::write(&session_path, &content).unwrap();
 
-        let preview = scanner.extract_session_preview(&session_path);
+        let preview = scanner.extract_session_preview(&session_path, None);
         assert_eq!(preview.first_message.as_deref(), Some("found at line 200"));
     }
 
@@ -984,7 +1015,7 @@ mod tests {
         content.push_str(r#"{"type":"user","isMeta":false,"message":{"role":"user","content":"beyond 200 lines"}}"#);
         fs::write(&session_path, &content).unwrap();
 
-        let preview = scanner.extract_session_preview(&session_path);
+        let preview = scanner.extract_session_preview(&session_path, None);
         assert!(preview.first_message.is_none(), "user message beyond 200 lines should not be found");
     }
 }

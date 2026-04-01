@@ -12,7 +12,7 @@ use crate::types::chunks::SessionDetail;
 use crate::utils::content_sanitizer::{
     extract_command_display, sanitize_display_content, is_command_output_content, is_command_content,
 };
-use crate::utils::{decode_path, extract_base_dir, extract_project_name, get_default_claude_base_path, get_projects_base_path};
+use crate::utils::{decode_path, extract_base_dir, extract_project_name, get_default_claude_base_path, get_projects_base_path, get_todos_base_path};
 use crate::analysis::ChunkBuilder;
 use crate::infrastructure::ContextManager;
 use crate::types::domain::DeleteSessionResult;
@@ -232,48 +232,17 @@ pub async fn get_session_metrics(
 
 /// 获取所有项目列表。
 ///
-/// 扫描 `~/.claude/projects/` 下的所有子目录，统计每个目录下的会话数量。
+/// 扫描 `~/.claude/projects/` 下的所有子目录，返回按最近会话时间降序排列的项目列表。
 #[command]
 pub async fn get_projects() -> Result<Vec<crate::types::domain::Project>, String> {
-    let base_path = get_projects_base_path();
-
-    if !base_path.exists() {
-        return Ok(vec![]);
-    }
-
-    let mut projects = vec![];
-    let mut entries = tokio::fs::read_dir(&base_path)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let path = entry.path();
-        if path.is_dir() {
-            let project_id = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            let project_path = decode_path(&project_id);
-            let name = extract_project_name(&project_id, None);
-
-            // 统计会话数量
-            let session_count = count_sessions_in_dir(&path).await;
-
-            projects.push(crate::types::domain::Project {
-                id: project_id,
-                path: project_path,
-                name,
-                sessions: vec![], // 按需加载
-                created_at: path.metadata()
-                    .and_then(|m| m.created())
-                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64)
-                    .unwrap_or(0),
-                most_recent_session: None,
-            });
-        }
-    }
-
-    // 按创建时间降序排列（后续可改为按最近会话排序）
-    projects.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-
-    Ok(projects)
+    let projects_dir = get_projects_base_path();
+    let todos_dir = get_todos_base_path();
+    let scanner = ProjectScanner::with_paths(
+        projects_dir,
+        todos_dir,
+        std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
+    );
+    Ok(scanner.scan())
 }
 
 // =============================================================================
@@ -282,7 +251,7 @@ pub async fn get_projects() -> Result<Vec<crate::types::domain::Project>, String
 
 /// 分页获取指定项目的会话列表。
 ///
-/// 支持基于游标的分页，默认每页 50 条，最大 100 条。
+/// 支持基于游标的分页，默认每页 20 条，最大 200 条。
 #[command]
 pub async fn get_sessions_paginated(
     project_id: String,
@@ -290,9 +259,13 @@ pub async fn get_sessions_paginated(
     limit: Option<u32>,
     options: Option<SessionsPaginationOptions>,
 ) -> Result<PaginatedSessionsResult, String> {
-    let page_limit = limit.unwrap_or(50).min(100).max(1) as usize;
+    let page_limit = limit.unwrap_or(20).min(200).max(1) as usize;
 
-    let scanner = ProjectScanner::new();
+    let scanner = ProjectScanner::with_paths(
+        get_projects_base_path(),
+        get_todos_base_path(),
+        std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
+    );
     let all_sessions = scanner.list_sessions(&project_id);
 
     let opts = options.unwrap_or_default();
@@ -340,7 +313,11 @@ pub async fn get_sessions_by_ids(
         return Ok(Vec::new());
     }
 
-    let scanner = ProjectScanner::new();
+    let scanner = ProjectScanner::with_paths(
+        get_projects_base_path(),
+        get_todos_base_path(),
+        std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
+    );
     let all_sessions = scanner.list_sessions(&project_id);
 
     Ok(all_sessions
@@ -792,17 +769,4 @@ async fn build_session_metadata(path: &std::path::Path, project_id: &str) -> Opt
         compaction_count: None,
         phase_breakdown: None,
     })
-}
-
-/// 统计目录下的 `.jsonl` 会话文件数量。
-async fn count_sessions_in_dir(dir: &std::path::Path) -> u32 {
-    let mut count = 0u32;
-    if let Ok(mut entries) = tokio::fs::read_dir(dir).await {
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry.path().extension().map(|e| e == "jsonl").unwrap_or(false) {
-                count += 1;
-            }
-        }
-    }
-    count
 }

@@ -1,102 +1,103 @@
-//! Subagents 路由处理器。
-//!
-//! 对应 Tauri 命令：subagents.rs 中的子 Agent 命令。
+//! HTTP 路由处理器：子 Agent 操作。
 
+use std::sync::Arc;
 use axum::{Json, extract::State, http::StatusCode};
-use serde::Serialize;
 
-use crate::discovery::SubagentResolver;
+use crate::commands::guards;
 use crate::http::state::HttpState;
-use crate::parsing::parse_session_file;
-use crate::types::domain::SessionMetrics;
-use crate::utils::get_projects_base_path;
+use crate::types::chunks::SubagentDetail;
 
 use super::error_json;
 
-/// 子 Agent 详情（包含完整会话数据）。
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SubagentDetail {
-    pub id: String,
-    pub file_path: String,
-    pub start_time_ms: u64,
-    pub end_time_ms: u64,
-    pub duration_ms: u64,
-    pub is_parallel: bool,
-    pub is_ongoing: bool,
-    pub metrics: SessionMetrics,
-    pub messages: Vec<crate::types::messages::ParsedMessage>,
-    pub task_id: Option<String>,
-}
-
-/// 路径参数：project_id + session_id + subagent_id。
-#[derive(serde::Deserialize)]
-pub struct SubagentPath {
-    pub project_id: String,
-    pub session_id: String,
-    pub subagent_id: String,
-}
-
-/// 获取子 Agent 详细信息。
+/// 获取子 Agent 详情。
 ///
 /// GET /api/projects/{project_id}/sessions/{session_id}/subagents/{subagent_id}
 pub async fn get_subagent_detail(
-    State(_state): State<HttpState>,
-    axum::extract::Path(path): axum::extract::Path<SubagentPath>,
+    State(state): State<HttpState>,
+    axum::extract::Path((project_id, session_id, subagent_id)): axum::extract::Path<(String, String, String)>,
 ) -> Result<Json<Option<SubagentDetail>>, (StatusCode, Json<super::ErrorResponse>)> {
-    let SubagentPath {
-        project_id,
-        session_id,
-        subagent_id,
-    } = path;
+    // Validate inputs
+    let safe_project_id = match guards::validate_project_id(&project_id) {
+        Ok(id) => id,
+        Err(e) => {
+            log::error!("Invalid projectId: {e}");
+            return Err(error_json(&e));
+        }
+    };
+    let safe_session_id = match guards::validate_session_id(&session_id) {
+        Ok(id) => id,
+        Err(e) => {
+            log::error!("Invalid sessionId: {e}");
+            return Err(error_json(&e));
+        }
+    };
+    let safe_subagent_id = match guards::validate_subagent_id(&subagent_id) {
+        Ok(id) => id,
+        Err(e) => {
+            log::error!("Invalid subagentId: {e}");
+            return Err(error_json(&e));
+        }
+    };
 
-    let projects_dir = get_projects_base_path();
+    let app_state = state.app_state.read().await;
 
-    // 构建子 Agent 文件路径（文件命名为 "agent-{id}.jsonl"）
-    let base_dir = crate::utils::path_decoder::extract_base_dir(&project_id);
+    // Check cache
+    if let Some(cached_value) = app_state.cache.get_subagent(
+        &safe_project_id, &safe_session_id, &safe_subagent_id
+    ).await {
+        drop(app_state);
+        if let Ok(cached) = serde_json::from_value::<SubagentDetail>(cached_value) {
+            return Ok(Json(Some(cached)));
+        }
+    }
+
+    // Build subagent path
+    let projects_dir = crate::utils::path_decoder::get_projects_base_path();
+    let base_dir = crate::utils::path_decoder::extract_base_dir(&safe_project_id);
     let subagent_path = projects_dir
-        .join(base_dir)
-        .join(&session_id)
+        .join(&base_dir)
+        .join(&safe_session_id)
         .join("subagents")
-        .join(format!("agent-{}.jsonl", subagent_id));
+        .join(format!("agent-{safe_subagent_id}.jsonl"));
 
     if !subagent_path.exists() {
         return Ok(Json(None));
     }
 
-    // 解析子 Agent 文件
-    let parsed = parse_session_file(&subagent_path).await;
+    // Parse
+    let messages = crate::parsing::jsonl_parser::parse_jsonl_file(&subagent_path).await;
+    if messages.is_empty() {
+        return Ok(Json(None));
+    }
 
-    // 解析子 Agent 以获取时间/并行信息
-    let resolver = SubagentResolver::new(projects_dir, std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()));
-    let processes = resolver.resolve_subagents(&project_id, &session_id, None, None);
+    // Resolve nested subagents
+    let fs_provider: Arc<dyn crate::infrastructure::fs_provider::FsProvider> = Arc::new(
+        crate::infrastructure::fs_provider::LocalFsProvider::new()
+    );
+    let resolver = crate::discovery::subagent_resolver::SubagentResolver::new(
+        projects_dir.clone(),
+        fs_provider,
+    );
+    let nested = resolver.resolve_subagents(
+        &safe_project_id, &safe_subagent_id, None, None
+    );
 
-    // 查找匹配的进程
-    let process = processes.iter().find(|p| p.id == subagent_id);
+    // Convert resolver::Process → types::chunks::Process via From trait
+    let nested_chunks: Vec<crate::types::chunks::Process> =
+        nested.into_iter().map(Into::into).collect();
 
-    let (start_time_ms, end_time_ms, duration_ms, is_parallel, is_ongoing, task_id) = process
-        .map(|p| {
-            (
-                p.start_time_ms,
-                p.end_time_ms,
-                p.duration_ms,
-                p.is_parallel,
-                p.is_ongoing,
-                p.task_id.clone(),
-            )
-        })
-        .unwrap_or((0, 0, 0, false, false, None));
+    // Build detail
+    let detail = crate::analysis::chunk_builder::ChunkBuilder::build_subagent_detail(
+        &safe_subagent_id, &messages, &nested_chunks
+    );
 
-    Ok(Json(Some(SubagentDetail {
-        id: subagent_id,
-        file_path: subagent_path.to_string_lossy().to_string(),
-        start_time_ms,
-        end_time_ms,
-        duration_ms,
-        is_parallel,
-        is_ongoing,
-        metrics: parsed.metrics,
-        messages: parsed.messages,
-        task_id,
-    })))
+    // Cache — need to re-acquire read lock after potential drop
+    let app_state = state.app_state.read().await;
+    if let Ok(value) = serde_json::to_value(&detail) {
+        app_state.cache.set_subagent(
+            &safe_project_id, &safe_session_id, &safe_subagent_id, value
+        ).await;
+    }
+
+    Ok(Json(Some(detail)))
 }

@@ -413,15 +413,31 @@ export interface SessionDetail {
  */
 export interface RawSubagentDetail {
   id: string;
-  filePath: string;
+  description: string;
+  /** Raw chunks from backend (number timestamps, not Date). Use asEnhancedChunkArray() to adapt. */
+  chunks: Record<string, unknown>[];
+  semanticStepGroups?: Record<string, unknown>[];
   startTimeMs: number;
   endTimeMs: number;
   durationMs: number;
-  isParallel: boolean;
-  isOngoing: boolean;
-  metrics: SessionMetrics;
-  messages: ParsedMessage[];
-  taskId?: string;
+  metrics: {
+    inputTokens: number;
+    outputTokens: number;
+    thinkingTokens: number;
+    messageCount: number;
+  };
+}
+
+/**
+ * Raw semantic step group from backend.
+ */
+export interface RawSemanticStepGroup {
+  id: string;
+  label: string;
+  steps: Record<string, unknown>[];
+  startTime: number;
+  endTime: number;
+  totalDuration: number;
 }
 
 /**
