@@ -211,10 +211,10 @@ pub fn build_routes() -> Router<HttpState> {
         .route("/api/updater/download", post(deferred_not_implemented))
         .route("/api/updater/install", post(deferred_not_implemented));
 
-    // Catch-all for unmatched /api/ routes — return JSON 404
+    // Catch-all for unmatched /api/ routes — return JSON 404 for any HTTP method
     router = router.route(
         "/api/*rest",
-        axum::routing::get(|AxumPath(_rest): AxumPath<String>| async {
+        axum::routing::any(|AxumPath(_rest): AxumPath<String>| async {
             (
                 StatusCode::NOT_FOUND,
                 [(axum::http::header::CONTENT_TYPE, "application/json")],

@@ -5,6 +5,7 @@
 
 use once_cell::sync::Lazy;
 use regex::Regex;
+use regex::RegexBuilder;
 use std::path::{Path, PathBuf};
 
 use crate::utils::get_default_claude_base_path;
@@ -54,7 +55,7 @@ static SENSITIVE_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
     ];
     patterns
         .iter()
-        .map(|p| Regex::new(p).expect("invalid sensitive pattern"))
+        .map(|p| RegexBuilder::new(p).case_insensitive(true).build().expect(&format!("Invalid regex: {}", p)))
         .collect()
 });
 
@@ -438,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn all_23_sensitive_patterns_compiled() {
+    fn all_sensitive_patterns_compiled() {
         assert_eq!(SENSITIVE_PATTERNS.len(), 22); // Electron has 22 patterns
     }
 

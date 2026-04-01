@@ -303,6 +303,11 @@ pub async fn pin_session(
     State(state): State<HttpState>,
     Json(body): Json<SessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
+    let _safe_project_id = guards::validate_project_id(&body.project_id)
+        .map_err(|e| error_json(e))?;
+    let _safe_session_id = guards::validate_session_id(&body.session_id)
+        .map_err(|e| error_json(e))?;
+
     let app_state = state.app_state.read().await;
     Ok(Json(
         app_state
@@ -318,6 +323,11 @@ pub async fn unpin_session(
     State(state): State<HttpState>,
     Json(body): Json<SessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
+    let _safe_project_id = guards::validate_project_id(&body.project_id)
+        .map_err(|e| error_json(e))?;
+    let _safe_session_id = guards::validate_session_id(&body.session_id)
+        .map_err(|e| error_json(e))?;
+
     let app_state = state.app_state.read().await;
     Ok(Json(
         app_state
@@ -333,6 +343,11 @@ pub async fn hide_session(
     State(state): State<HttpState>,
     Json(body): Json<SessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
+    let _safe_project_id = guards::validate_project_id(&body.project_id)
+        .map_err(|e| error_json(e))?;
+    let _safe_session_id = guards::validate_session_id(&body.session_id)
+        .map_err(|e| error_json(e))?;
+
     let app_state = state.app_state.read().await;
     Ok(Json(
         app_state
@@ -348,6 +363,11 @@ pub async fn unhide_session(
     State(state): State<HttpState>,
     Json(body): Json<SessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
+    let _safe_project_id = guards::validate_project_id(&body.project_id)
+        .map_err(|e| error_json(e))?;
+    let _safe_session_id = guards::validate_session_id(&body.session_id)
+        .map_err(|e| error_json(e))?;
+
     let app_state = state.app_state.read().await;
     Ok(Json(
         app_state
@@ -375,6 +395,9 @@ pub async fn hide_sessions(
     State(state): State<HttpState>,
     Json(body): Json<BatchSessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
+    let _safe_project_id = guards::validate_project_id(&body.project_id)
+        .map_err(|e| error_json(e))?;
+
     let app_state = state.app_state.read().await;
     Ok(Json(
         app_state
@@ -390,6 +413,9 @@ pub async fn unhide_sessions(
     State(state): State<HttpState>,
     Json(body): Json<BatchSessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
+    let _safe_project_id = guards::validate_project_id(&body.project_id)
+        .map_err(|e| error_json(e))?;
+
     let app_state = state.app_state.read().await;
     Ok(Json(
         app_state
