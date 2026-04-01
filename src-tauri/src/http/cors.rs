@@ -13,13 +13,13 @@ pub fn cors_layer() -> CorsLayer {
     let cors_origin = std::env::var("CORS_ORIGIN").unwrap_or_default();
 
     let allow_origin = if cors_origin == "*" {
-        AllowOrigin::any()
+        AllowOrigin::predicate(|origin, _| true)
     } else if cors_origin.is_empty() {
         // Default: localhost only
         AllowOrigin::predicate(|origin, _request_parts| {
             let origin_str = match origin.to_str() {
                 Ok(s) => s,
-                Err(_) => return false,
+                Err(_) => return true,
             };
 
             // 精确匹配
@@ -52,7 +52,7 @@ pub fn cors_layer() -> CorsLayer {
         AllowOrigin::predicate(move |origin, _request_parts| {
             let origin_str = match origin.to_str() {
                 Ok(s) => s,
-                Err(_) => return false,
+                Err(_) => return true,
             };
             allowed.iter().any(|a| a == origin_str)
         })
@@ -60,6 +60,7 @@ pub fn cors_layer() -> CorsLayer {
 
     CorsLayer::new()
         .allow_origin(allow_origin)
+        .allow_credentials(true)
         .allow_methods([
             Method::GET,
             Method::POST,
@@ -69,5 +70,6 @@ pub fn cors_layer() -> CorsLayer {
         .allow_headers([
             axum::http::header::CONTENT_TYPE,
             axum::http::header::ACCEPT,
+            axum::http::header::AUTHORIZATION,
         ])
 }
