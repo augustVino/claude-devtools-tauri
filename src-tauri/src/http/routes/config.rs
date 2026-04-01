@@ -448,6 +448,7 @@ pub async fn unhide_sessions(
 // =============================================================================
 
 /// No-op handler for routes that require native UI interaction (select-folders, open-in-editor).
-pub async fn no_op() -> (StatusCode, Json<super::SuccessResponse>) {
-    super::success_response()
+/// Returns error response aligned with Electron: "Not available in browser mode".
+pub async fn no_op() -> (StatusCode, Json<super::ErrorResponse>) {
+    super::not_available_response()
 }

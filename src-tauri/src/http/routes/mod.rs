@@ -56,6 +56,17 @@ pub(crate) fn success_response() -> (StatusCode, Json<SuccessResponse>) {
     )
 }
 
+/// "Not available in browser mode" 响应 — 对齐 Electron HTTP no-op 语义。
+pub(crate) fn not_available_response() -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::OK,
+        Json(ErrorResponse {
+            success: false,
+            error: "Not available in browser mode".to_string(),
+        }),
+    )
+}
+
 /// 带数据的成功响应 — 序列化为 { "success": true, "data": <T> }。
 pub(crate) fn success_json<T: Serialize>(data: T) -> (StatusCode, Json<serde_json::Value>) {
     (
