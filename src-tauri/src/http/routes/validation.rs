@@ -6,6 +6,7 @@ use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::http::path_validation::is_path_contained;
 use crate::http::state::HttpState;
 
 /// 路径验证结果（匹配 httpClient.ts 的返回类型）。
@@ -46,6 +47,15 @@ pub async fn validate_path(
     } else {
         full_path
     };
+
+    // 路径遍历防护
+    if !is_path_contained(&expanded, Path::new(&body.project_path)) {
+        log::warn!("validate-path blocked path traversal: {}", body.relative_path);
+        return Ok(Json(PathValidationResult {
+            exists: false,
+            is_directory: None,
+        }));
+    }
 
     if !expanded.exists() {
         return Ok(Json(PathValidationResult {
@@ -89,18 +99,19 @@ pub async fn validate_mentions(
 
     for mention in &body.mentions {
         if mention.mention_type != "path" {
-            results.insert(mention.value.clone(), false);
-            continue;
-        }
-
-        // 检查路径遍历攻击
-        if mention.value.contains("..") {
-            results.insert(mention.value.clone(), false);
+            results.insert(format!("@{}", mention.value), false);
             continue;
         }
 
         let full_path = base.join(&mention.value);
-        results.insert(mention.value.clone(), full_path.exists());
+
+        // 替换 contains("..") 为 is_path_contained
+        if !is_path_contained(&full_path, base) {
+            results.insert(format!("@{}", mention.value), false);
+            continue;
+        }
+
+        results.insert(format!("@{}", mention.value), full_path.exists());
     }
 
     Ok(Json(results))
