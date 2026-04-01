@@ -7,7 +7,7 @@ use axum::{Json, extract::State, http::StatusCode};
 use crate::commands::guards;
 use crate::http::state::HttpState;
 use crate::types::config::{
-    GetNotificationsOptions, GetNotificationsResult, NotificationCountResult, NotificationStats,
+    GetNotificationsOptions, GetNotificationsResult, NotificationStats,
 };
 
 use super::error_json;
@@ -80,19 +80,15 @@ pub async fn clear_notifications(
     Ok(Json(mgr.clear_all().await))
 }
 
-/// 获取通知总数和未读数。
+/// 获取未读通知数。
 ///
 /// GET /api/notifications/unread-count
 pub async fn get_unread_count(
     State(state): State<HttpState>,
-) -> Result<Json<NotificationCountResult>, (StatusCode, Json<super::ErrorResponse>)> {
+) -> Result<Json<usize>, (StatusCode, Json<super::ErrorResponse>)> {
     let mgr = state.notification_manager.read().await;
     let unread_count = mgr.get_unread_count().await;
-    let stats = mgr.get_stats();
-    Ok(Json(NotificationCountResult {
-        total: stats.total,
-        unread_count,
-    }))
+    Ok(Json(unread_count))
 }
 
 /// 获取通知统计信息。
