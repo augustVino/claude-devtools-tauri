@@ -499,6 +499,39 @@ impl ConfigManager {
         if let Some(match_field) = updates.get("matchField").and_then(|v| v.as_str()) {
             trigger.match_field = Some(match_field.to_string());
         }
+        if let Some(require_error) = updates.get("requireError").and_then(|v| v.as_bool()) {
+            trigger.require_error = Some(require_error);
+        }
+        if let Some(mode) = updates.get("mode").and_then(|v| v.as_str()) {
+            match mode {
+                "error_status" => trigger.mode = crate::types::config::TriggerMode::ErrorStatus,
+                "content_match" => trigger.mode = crate::types::config::TriggerMode::ContentMatch,
+                "token_threshold" => trigger.mode = crate::types::config::TriggerMode::TokenThreshold,
+                _ => {}
+            }
+        }
+        if let Some(content_type) = updates.get("contentType").and_then(|v| v.as_str()) {
+            match content_type {
+                "tool_result" => trigger.content_type = crate::types::config::TriggerContentType::ToolResult,
+                "tool_use" => trigger.content_type = crate::types::config::TriggerContentType::ToolUse,
+                "thinking" => trigger.content_type = crate::types::config::TriggerContentType::Thinking,
+                "text" => trigger.content_type = crate::types::config::TriggerContentType::Text,
+                _ => {}
+            }
+        }
+        if let Some(token_type) = updates.get("tokenType").and_then(|v| v.as_str()) {
+            match token_type {
+                "input" => trigger.token_type = Some(crate::types::config::TriggerTokenType::Input),
+                "output" => trigger.token_type = Some(crate::types::config::TriggerTokenType::Output),
+                "total" => trigger.token_type = Some(crate::types::config::TriggerTokenType::Total),
+                _ => {}
+            }
+        }
+        if let Some(repository_ids) = updates.get("repositoryIds").and_then(|v| v.as_array()) {
+            trigger.repository_ids = Some(
+                repository_ids.iter().filter_map(|p| p.as_str().map(String::from)).collect()
+            );
+        }
 
         // Validate the updated trigger
         let validation = crate::infrastructure::trigger_manager::TriggerManager::validate_trigger_only(trigger);
@@ -520,6 +553,13 @@ impl ConfigManager {
             .config
             .write()
             .map_err(|e| format!("failed to acquire write lock: {e}"))?;
+
+        // Guard: builtin triggers cannot be removed, only disabled
+        if let Some(trigger) = config.notifications.triggers.iter().find(|t| t.id == trigger_id) {
+            if trigger.is_builtin.unwrap_or(false) {
+                return Err("Cannot remove built-in triggers. Disable them instead.".to_string());
+            }
+        }
 
         let len_before = config.notifications.triggers.len();
         config.notifications.triggers.retain(|t| t.id != trigger_id);
