@@ -39,13 +39,14 @@ export const AdvancedSection = ({
   const updateStatus = useStore((s) => s.updateStatus);
   const availableVersion = useStore((s) => s.availableVersion);
   const checkForUpdates = useStore((s) => s.checkForUpdates);
+  const resetUpdateStatus = useStore((s) => s.resetUpdateStatus);
 
   // Auto-revert "not-available" / "error" status back to idle after a brief display
   const revertTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
     if (updateStatus === "not-available" || updateStatus === "error" || updateStatus === "download-error") {
       revertTimerRef.current = setTimeout(() => {
-        useStore.setState({ updateStatus: "idle" });
+        resetUpdateStatus();
       }, 3000);
     }
     return () => {

@@ -184,7 +184,7 @@ export const UpdateDialog = (): React.JSX.Element | null => {
                 onClick={downloadUpdate}
                 className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500"
               >
-                下载更新
+                Download Update
               </button>
             </div>
           </>
@@ -195,7 +195,7 @@ export const UpdateDialog = (): React.JSX.Element | null => {
           <>
             <div className="mb-3">
               <h2 className="text-base font-semibold" style={{ color: 'var(--color-text)' }}>
-                正在下载更新...
+                Downloading Update...
               </h2>
               {availableVersion && (
                 <div className="mt-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
@@ -228,7 +228,7 @@ export const UpdateDialog = (): React.JSX.Element | null => {
           <>
             <div className="mb-3">
               <h2 className="text-base font-semibold" style={{ color: 'var(--color-text)' }}>
-                更新已就绪
+                Update Ready
               </h2>
               {availableVersion && (
                 <div className="mt-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
@@ -239,7 +239,7 @@ export const UpdateDialog = (): React.JSX.Element | null => {
 
             <div className="mb-4 flex items-center gap-2 text-sm" style={{ color: 'var(--color-text)' }}>
               <CheckCircle className="size-4 text-green-500" />
-              <span>更新已下载完成，点击下方按钮重启应用以完成安装。</span>
+              <span>Update downloaded. Click below to restart and install.</span>
             </div>
 
             <div className="flex justify-end">
@@ -247,7 +247,7 @@ export const UpdateDialog = (): React.JSX.Element | null => {
                 onClick={installAndRestart}
                 className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500"
               >
-                重启并安装
+                Restart & Install
               </button>
             </div>
           </>
@@ -258,7 +258,7 @@ export const UpdateDialog = (): React.JSX.Element | null => {
           <>
             <div className="mb-3">
               <h2 className="text-base font-semibold" style={{ color: 'var(--color-text)' }}>
-                下载失败
+                Download Failed
               </h2>
             </div>
 
@@ -278,13 +278,13 @@ export const UpdateDialog = (): React.JSX.Element | null => {
                   color: 'var(--color-text-secondary)',
                 }}
               >
-                关闭
+                Close
               </button>
               <button
                 onClick={retryDownload}
                 className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500"
               >
-                重试
+                Retry
               </button>
             </div>
           </>

@@ -42,6 +42,7 @@ export interface UpdateSlice {
   installAndRestart: () => void;
   retryDownload: () => void;
   dismissUpdateDialog: () => void;
+  resetUpdateStatus: () => void;
 }
 
 // =============================================================================
@@ -59,6 +60,7 @@ export const createUpdateSlice: StateCreator<AppState, [], [], UpdateSlice> = (s
   showUpdateDialog: false,
 
   checkForUpdates: () => {
+    if (get().updateStatus === 'checking' || get().updateStatus === 'downloading') return;
     set({ updateStatus: 'checking', updateError: null });
 
     import('@tauri-apps/plugin-updater')
@@ -86,6 +88,7 @@ export const createUpdateSlice: StateCreator<AppState, [], [], UpdateSlice> = (s
   },
 
   downloadUpdate: () => {
+    if (get().updateStatus === 'downloading') return;
     if (!pendingUpdate) {
       set({ updateStatus: 'error', updateError: 'No update available' });
       return;
@@ -166,5 +169,9 @@ export const createUpdateSlice: StateCreator<AppState, [], [], UpdateSlice> = (s
     const status = get().updateStatus;
     if (status === 'downloading' || status === 'downloaded') return;
     set({ showUpdateDialog: false });
+  },
+
+  resetUpdateStatus: () => {
+    set({ updateStatus: 'idle' });
   },
 });
