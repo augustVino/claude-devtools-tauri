@@ -381,8 +381,7 @@ impl SessionSearcher {
                     });
                 }
                 GroupedMessage::AiGroup { messages, group_id } => {
-                    // 注意：AI 消息不做 sanitize，与 Electron 行为一致。
-                    // 仅用户消息需要清洗噪声标签。
+                    // AI 文本不经过 sanitize — 与 Electron 对齐（仅清洗用户消息中的噪声标签）
                     let combined: String = messages
                         .iter()
                         .map(|m| extract_text_content(m))
