@@ -86,7 +86,8 @@ pub fn estimate_tokens(content: &serde_json::Value) -> usize {
         _ => content.to_string(),
     };
 
-    (text.len() / 4).max(1)
+    if text.is_empty() { return 0; }
+    (text.len() + 3) / 4  // 等价于 Math.ceil(len / 4)
 }
 
 /// Extract tool results from a single message.
@@ -211,7 +212,7 @@ mod tests {
     #[test]
     fn test_estimate_tokens_empty() {
         let tokens = estimate_tokens(&json!(""));
-        assert_eq!(tokens, 1); // minimum is 1
+        assert_eq!(tokens, 0);
     }
 
     #[test]
