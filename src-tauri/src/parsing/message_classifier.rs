@@ -1,4 +1,4 @@
-use crate::types::domain::{MessageCategory, MessageType};
+use crate::types::domain::{GroupedMessage, MessageCategory, MessageType};
 use crate::types::messages::ParsedMessage;
 
 /// Check if a raw JSON line represents a user chunk message for message_count counting.
@@ -245,6 +245,37 @@ fn extract_content_text(content: &serde_json::Value) -> String {
     }
 }
 
+/// 将分类结果中连续的 AI 消息合并为一组。
+pub fn group_ai_messages<'a>(
+    classified: Vec<(MessageCategory, &'a ParsedMessage)>,
+) -> Vec<GroupedMessage<'a>> {
+    let mut result = Vec::new();
+    let mut ai_buffer: Vec<&'a ParsedMessage> = Vec::new();
+
+    let flush_ai_buffer = |buf: &mut Vec<&'a ParsedMessage>, res: &mut Vec<GroupedMessage<'a>>| {
+        if buf.is_empty() {
+            return;
+        }
+        let group_id = format!("ai-{}", buf[0].uuid);
+        res.push(GroupedMessage::AiGroup {
+            messages: std::mem::take(buf),
+            group_id,
+        });
+    };
+
+    for (category, msg) in classified {
+        if category == MessageCategory::Ai {
+            ai_buffer.push(msg);
+        } else {
+            flush_ai_buffer(&mut ai_buffer, &mut result);
+            result.push(GroupedMessage::Single { category, message: msg });
+        }
+    }
+    flush_ai_buffer(&mut ai_buffer, &mut result);
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,5 +504,76 @@ mod tests {
         let mut msg = make_user_msg(true, "compacted summary");
         msg.is_compact_summary = Some(true);
         assert_eq!(classify_message(&msg), MessageCategory::Compact);
+    }
+
+    // --- group_ai_messages ---
+
+    #[test]
+    fn test_group_ai_messages_single_ai() {
+        // 1 User + 1 Assistant + 1 User -> Single, AiGroup(1), Single
+        let msg_u1 = make_user_msg(false, "hello");
+        let mut msg_a1 = make_assistant_msg("claude-3-opus");
+        msg_a1.uuid = "a-single".to_string();
+        let msg_u2 = make_user_msg(false, "thanks");
+        let msgs = vec![msg_u1, msg_a1, msg_u2];
+        let classified = classify_messages(&msgs);
+        let grouped = group_ai_messages(classified);
+        assert_eq!(grouped.len(), 3);
+        // First is user single
+        match &grouped[0] {
+            GroupedMessage::Single { category, .. } => {
+                assert_eq!(*category, MessageCategory::User);
+            }
+            _ => panic!("expected Single"),
+        }
+        // Second is AiGroup with 1 message
+        match &grouped[1] {
+            GroupedMessage::AiGroup { messages, group_id } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(group_id, "ai-a-single");
+            }
+            _ => panic!("expected AiGroup"),
+        }
+        // Third is user single
+        match &grouped[2] {
+            GroupedMessage::Single { category, .. } => {
+                assert_eq!(*category, MessageCategory::User);
+            }
+            _ => panic!("expected Single"),
+        }
+    }
+
+    #[test]
+    fn test_group_ai_messages_consecutive_ai() {
+        // 3 consecutive Assistant messages merge into 1 AiGroup
+        let msg_u1 = make_user_msg(false, "prompt");
+        let mut msg_a1 = make_assistant_msg("claude-3-opus");
+        msg_a1.uuid = "a-first".to_string();
+        let mut msg_a2 = make_assistant_msg("claude-3-opus");
+        msg_a2.uuid = "a-second".to_string();
+        let mut msg_a3 = make_assistant_msg("claude-3-opus");
+        msg_a3.uuid = "a-third".to_string();
+        let msg_u2 = make_user_msg(false, "follow-up");
+        let msgs = vec![msg_u1, msg_a1, msg_a2, msg_a3, msg_u2];
+        let classified = classify_messages(&msgs);
+        let grouped = group_ai_messages(classified);
+        assert_eq!(grouped.len(), 3);
+        // Middle item is the AiGroup
+        match &grouped[1] {
+            GroupedMessage::AiGroup { messages, group_id } => {
+                assert_eq!(messages.len(), 3);
+                assert_eq!(group_id, "ai-a-first");
+                assert_eq!(messages[0].uuid, "a-first");
+                assert_eq!(messages[1].uuid, "a-second");
+                assert_eq!(messages[2].uuid, "a-third");
+            }
+            _ => panic!("expected AiGroup"),
+        }
+    }
+
+    #[test]
+    fn test_group_ai_messages_empty_input() {
+        let grouped: Vec<GroupedMessage> = group_ai_messages(vec![]);
+        assert!(grouped.is_empty());
     }
 }

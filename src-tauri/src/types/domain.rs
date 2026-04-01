@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::jsonl::UsageMetadata;
+use super::messages::ParsedMessage;
 
 pub type TokenUsage = UsageMetadata;
 
@@ -31,6 +32,20 @@ pub enum MessageCategory {
     HardNoise,
     Ai,
     Compact,
+}
+
+/// 将连续 AI 分类消息合并为一组后的分组结果。
+pub enum GroupedMessage<'a> {
+    /// 非连续 AI 消息，独立保留
+    Single {
+        category: MessageCategory,
+        message: &'a ParsedMessage,
+    },
+    /// 连续 AI 消息合并为一组
+    AiGroup {
+        messages: Vec<&'a ParsedMessage>,
+        group_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
