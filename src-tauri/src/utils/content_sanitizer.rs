@@ -3,6 +3,8 @@
 //! 用于从原始 JSONL 内容中提取标题和格式化显示文本，
 //! 处理 Claude Code 注入的 XML 标签。
 
+use crate::types::messages::ParsedMessage;
+
 /// 需要完全移除的噪声标签列表。
 const NOISE_TAGS: &[&str] = &[
     "local-command-caveat",
@@ -195,6 +197,31 @@ where
 
     // 回退到已存储的命令文本
     first_command_text
+}
+
+/// 从已解析的 `ParsedMessage` 列表中提取会话标题。
+///
+/// 查找第一条真实的用户消息文本（type=user, is_meta=false），
+/// 截取前 500 字符作为标题。
+pub fn extract_session_title_from_parsed(messages: &[ParsedMessage]) -> Option<String> {
+    use crate::parsing::jsonl_parser::extract_text_content;
+    use crate::parsing::message_classifier::is_real_user_message;
+
+    for msg in messages {
+        if is_real_user_message(msg) {
+            let text = extract_text_content(msg);
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                let title = if trimmed.len() > 500 {
+                    trimmed[..500].to_string()
+                } else {
+                    trimmed.to_string()
+                };
+                return Some(title);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -489,5 +516,69 @@ mod tests {
             extract_session_title(messages.iter()),
             Some("after interruption".to_string())
         );
+    }
+
+    // =========================================================================
+    // extract_session_title_from_parsed tests
+    // =========================================================================
+
+    fn make_parsed_user_msg(is_meta: bool, content: &str) -> ParsedMessage {
+        ParsedMessage {
+            uuid: "u1".to_string(),
+            parent_uuid: None,
+            message_type: crate::types::domain::MessageType::User,
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+            role: Some("user".to_string()),
+            content: serde_json::Value::String(content.to_string()),
+            usage: None,
+            model: None,
+            cwd: None,
+            git_branch: None,
+            agent_id: None,
+            is_sidechain: false,
+            is_meta,
+            user_type: None,
+            tool_calls: vec![],
+            tool_results: vec![],
+            source_tool_use_id: None,
+            source_tool_assistant_uuid: None,
+            tool_use_result: None,
+            is_compact_summary: None,
+            request_id: None,
+        }
+    }
+
+    #[test]
+    fn test_extract_session_title_from_parsed_basic() {
+        let messages = vec![
+            make_parsed_user_msg(false, "Hello, please help me with my project"),
+        ];
+        assert_eq!(
+            extract_session_title_from_parsed(&messages),
+            Some("Hello, please help me with my project".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_session_title_from_parsed_skips_meta() {
+        let messages = vec![
+            make_parsed_user_msg(true, "internal meta message"),
+            make_parsed_user_msg(false, "real user message"),
+        ];
+        assert_eq!(
+            extract_session_title_from_parsed(&messages),
+            Some("real user message".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_session_title_from_parsed_truncates() {
+        let long_text = "a".repeat(600);
+        let messages = vec![
+            make_parsed_user_msg(false, &long_text),
+        ];
+        let result = extract_session_title_from_parsed(&messages).unwrap();
+        assert_eq!(result.len(), 500);
+        assert_eq!(result, "a".repeat(500));
     }
 }
