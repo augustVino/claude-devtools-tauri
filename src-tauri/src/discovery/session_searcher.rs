@@ -7,7 +7,10 @@
 
 use crate::discovery::project_scanner::ProjectScanner;
 use crate::infrastructure::fs_provider::FsProvider;
-use crate::types::domain::{SearchResult, SearchSessionsResult};
+use crate::parsing::jsonl_parser::{deduplicate_by_request_id, extract_text_content, parse_jsonl_content};
+use crate::parsing::message_classifier::{classify_messages, group_ai_messages};
+use crate::types::domain::{GroupedMessage, MessageCategory, SearchResult, SearchSessionsResult};
+use crate::utils::content_sanitizer::{extract_session_title_from_parsed, sanitize_display_content};
 use crate::utils::path_decoder;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -30,6 +33,7 @@ const CACHE_MAX_CAPACITY: u64 = 1000;
 struct CacheEntry {
     mtime: u64,
     entries: Vec<SearchableEntry>,
+    session_title: Option<String>,
 }
 
 /// SessionSearcher provides methods for searching sessions.
@@ -272,22 +276,24 @@ impl SessionSearcher {
         let mut results = Vec::new();
 
         // Check cache (LRU with mtime-based invalidation)
-        let entries = {
+        let (entries, session_title) = {
             let cache_key = file_path.to_string_lossy().to_string();
             if let Some(cached) = self.cache.get(&cache_key) {
                 if cached.mtime == mtime {
-                    cached.entries.clone()
+                    (cached.entries.clone(), cached.session_title.clone())
                 } else {
-                    let entries = self.extract_searchable_entries(file_path)?;
-                    self.cache.insert(cache_key, CacheEntry { mtime, entries: entries.clone() });
-                    entries
+                    let (entries, session_title) = self.extract_searchable_entries(file_path)?;
+                    self.cache.insert(cache_key, CacheEntry { mtime, entries: entries.clone(), session_title: session_title.clone() });
+                    (entries, session_title)
                 }
             } else {
-                let entries = self.extract_searchable_entries(file_path)?;
-                self.cache.insert(cache_key, CacheEntry { mtime, entries: entries.clone() });
-                entries
+                let (entries, session_title) = self.extract_searchable_entries(file_path)?;
+                self.cache.insert(cache_key, CacheEntry { mtime, entries: entries.clone(), session_title: session_title.clone() });
+                (entries, session_title)
             }
         };
+
+        let title_str = session_title.as_deref().unwrap_or("Untitled Session");
 
         // Fast pre-filter: skip sessions where no entry contains the query
         let has_any_match = entries.iter().any(|e| e.text.to_lowercase().contains(query));
@@ -308,6 +314,7 @@ impl SessionSearcher {
                 max_results,
                 project_id,
                 session_id,
+                title_str,
             );
         }
 
@@ -315,126 +322,69 @@ impl SessionSearcher {
     }
 
     /// Extract searchable entries from a session file.
-    fn extract_searchable_entries(&self, file_path: &Path) -> Result<Vec<SearchableEntry>, std::io::Error> {
+    ///
+    /// Uses the full parsing pipeline:
+    /// read file -> parse_jsonl_content() -> deduplicate_by_request_id() ->
+    /// classify_messages() -> group_ai_messages() -> generate SearchableEntry
+    fn extract_searchable_entries(&self, file_path: &Path) -> Result<(Vec<SearchableEntry>, Option<String>), std::io::Error> {
         let content = self.fs_provider.read_file(file_path)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        let parsed = parse_jsonl_content(&content);
+        let deduped = deduplicate_by_request_id(&parsed);
+        let classified = classify_messages(&deduped);
+        let grouped = group_ai_messages(classified);
+
         let mut entries = Vec::new();
 
-        for line in content.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            // Try to parse as JSON
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
-                // Extract text based on message type
-                let message_type = json.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
-
-                // 提取 uuid 用于 group_id 和 message_uuid
-                let uuid = json.get("uuid").and_then(|u| u.as_str()).map(|s| s.to_string());
-
-                // 噪声过滤：跳过 sidechain 消息
-                let is_sidechain = json.get("isSidechain").and_then(|v| v.as_bool()).unwrap_or(false);
-                if is_sidechain {
-                    continue;
-                }
-
-                // 噪声过滤：跳过 synthetic assistant 消息
-                if message_type == "assistant" {
-                    let model = json.get("message")
-                        .and_then(|m| m.get("model"))
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("");
-                    if model == "<synthetic>" {
+        for gm in &grouped {
+            match gm {
+                GroupedMessage::Single { category: MessageCategory::User, message } => {
+                    let raw_text = extract_text_content(message);
+                    let text = sanitize_display_content(&raw_text);
+                    if text.is_empty() {
                         continue;
                     }
-                }
-
-                // 噪声过滤：硬噪声类型
-                let hard_noise_types = ["system", "summary", "file-history-snapshot", "queue-operation"];
-                if hard_noise_types.contains(&message_type) {
-                    continue;
-                }
-
-                let text = match message_type {
-                    "user" => {
-                        // 用户消息：提取 content
-                        // 噪声过滤：跳过仅含噪声标签的用户消息
-                        let raw = json.get("message")
-                            .and_then(|m| m.as_str())
-                            .unwrap_or("");
-                        if is_noise_only_user_message(raw) {
-                            String::new()
-                        } else {
-                            raw.to_string()
-                        }
-                    }
-                    "assistant" => {
-                        // Assistant 消息：仅使用最后一个文本输出块（与 Electron 对齐）
-                        if let Some(content) = json.get("content") {
-                            if let Some(arr) = content.as_array() {
-                                // 反向查找最后一个 text 类型的块
-                                arr.iter()
-                                    .rev()
-                                    .filter_map(|item| {
-                                        if item.get("type")?.as_str()? == "text" {
-                                            item.get("text").and_then(|t| t.as_str())
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .next()
-                                    .unwrap_or("")
-                                    .to_string()
-                            } else {
-                                String::new()
-                            }
-                        } else {
-                            String::new()
-                        }
-                    }
-                    _ => String::new(),
-                };
-
-                let timestamp = json.get("timestamp")
-                    .and_then(|t| t.as_str())
-                    .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-                    .map(|dt| dt.timestamp_millis() as u64)
-                    .unwrap_or(0);
-
-                if !text.is_empty() {
-                    // 构建 group_id 和 item_type（与 Electron 的 chunk ID 格式对齐）
-                    // 注意：assistant 消息的 group_id 使用 "ai-" 前缀（与 chunk_builder 一致），
-                    // 而非 message_type 中的 "assistant"，前端 DOM 使用 data-search-item-id="ai-{uuid}"
-                    let (group_id, item_type) = if let Some(ref id) = uuid {
-                        let group = match message_type {
-                            "assistant" => format!("ai-{}", id),
-                            "user" => format!("user-{}", id),
-                            _ => format!("{}-{}", message_type, id),
-                        };
-                        let itype = match message_type {
-                            "user" => Some("user".to_string()),
-                            "assistant" => Some("ai".to_string()),
-                            _ => None,
-                        };
-                        (Some(group), itype)
-                    } else {
-                        (None, None)
-                    };
-
                     entries.push(SearchableEntry {
                         text,
-                        message_type: message_type.to_string(),
+                        message_type: "user".to_string(),
+                        timestamp: parse_timestamp(&message.timestamp),
+                        group_id: Some(format!("user-{}", message.uuid)),
+                        item_type: Some("user".to_string()),
+                        message_uuid: Some(message.uuid.clone()),
+                    });
+                }
+                GroupedMessage::AiGroup { messages, group_id } => {
+                    let combined: String = messages
+                        .iter()
+                        .map(|m| extract_text_content(m))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if combined.is_empty() {
+                        continue;
+                    }
+                    let timestamp = messages
+                        .first()
+                        .map(|m| parse_timestamp(&m.timestamp))
+                        .unwrap_or(0);
+                    let uuid = messages.first().map(|m| m.uuid.clone());
+                    entries.push(SearchableEntry {
+                        text: combined,
+                        message_type: "assistant".to_string(),
                         timestamp,
-                        group_id,
-                        item_type,
+                        group_id: Some(group_id.clone()),
+                        item_type: Some("ai".to_string()),
                         message_uuid: uuid,
                     });
                 }
+                // Skip HardNoise, System, Compact categories
+                _ => {}
             }
         }
 
-        Ok(entries)
+        let session_title = extract_session_title_from_parsed(&deduped);
+
+        Ok((entries, session_title))
     }
 
     /// Collect matches from an entry.
@@ -446,6 +396,7 @@ impl SessionSearcher {
         max_results: usize,
         project_id: &str,
         session_id: &str,
+        session_title: &str,
     ) {
         let lower_text = entry.text.to_lowercase();
         let mut pos = 0;
@@ -473,7 +424,7 @@ impl SessionSearcher {
             results.push(SearchResult {
                 session_id: session_id.to_string(),
                 project_id: project_id.to_string(),
-                session_title: "Untitled Session".to_string(),
+                session_title: session_title.to_string(),
                 matched_text: matched_text.to_string(),
                 context: context_with_ellipsis,
                 message_type: entry.message_type.clone(),
@@ -491,33 +442,11 @@ impl SessionSearcher {
     }
 }
 
-/// 检查用户消息是否仅包含噪声标签（与 Electron 的 `isParsedHardNoiseMessage` 对齐）。
-///
-/// Electron 的检测逻辑：检查消息是否被噪声标签完整包裹（以 `<tag>` 开头，以 `</tag>` 结尾），
-/// 而非剥离所有标签后检查内容。这确保了包含噪声标签但同时也包含用户文本的消息不被误过滤。
-fn is_noise_only_user_message(text: &str) -> bool {
-    let trimmed = text.trim();
-
-    if trimmed.is_empty() {
-        return true;
-    }
-
-    // 检查噪声标签包裹（与 Electron HARD_NOISE_TAGS 对齐）
-    const NOISE_TAGS: &[&str] = &["<local-command-caveat>", "<system-reminder>"];
-
-    for &tag in NOISE_TAGS {
-        let close_tag = tag.replacen('<', "</", 1);
-        if trimmed.starts_with(tag) && trimmed.ends_with(&close_tag) {
-            return true;
-        }
-    }
-
-    // 过滤中断消息（与 Electron 对齐）
-    if trimmed.starts_with("[Request interrupted by user") {
-        return true;
-    }
-
-    false
+/// Parse an RFC 3339 timestamp string to milliseconds since epoch.
+fn parse_timestamp(ts: &str) -> u64 {
+    chrono::DateTime::parse_from_rfc3339(ts)
+        .map(|dt| dt.timestamp_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// 构建 SSH 快速搜索的分阶段边界索引（与 Electron 对齐）。
@@ -538,52 +467,6 @@ mod tests {
     use std::fs;
     use std::sync::Arc;
     use tempfile::TempDir;
-
-    // ---------------------------------------------------------------------------
-    // is_noise_only_user_message tests
-    // ---------------------------------------------------------------------------
-
-    #[test]
-    fn test_noise_filter_empty() {
-        assert!(is_noise_only_user_message(""));
-        assert!(is_noise_only_user_message("   "));
-    }
-
-    #[test]
-    fn test_noise_filter_wrapped_system_reminder() {
-        assert!(is_noise_only_user_message("<system-reminder>rules here</system-reminder>"));
-    }
-
-    #[test]
-    fn test_noise_filter_wrapped_local_command_caveat() {
-        assert!(is_noise_only_user_message("<local-command-caveat>some caveat</local-command-caveat>"));
-    }
-
-    #[test]
-    fn test_noise_filter_mixed_content_not_filtered() {
-        // 包含噪声标签但同时也包含用户文本 → 不应过滤
-        assert!(!is_noise_only_user_message(
-            "<system-reminder>rules</system-reminder>Please help me with this"
-        ));
-    }
-
-    #[test]
-    fn test_noise_filter_normal_user_text_not_filtered() {
-        assert!(!is_noise_only_user_message("Hello, can you help me?"));
-    }
-
-    #[test]
-    fn test_noise_filter_interruption_message() {
-        assert!(is_noise_only_user_message("[Request interrupted by user at 2024-01-01]"));
-    }
-
-    #[test]
-    fn test_noise_filter_tag_with_extra_content_after_close() {
-        // 关闭标签后有额外内容 → 不应过滤
-        assert!(!is_noise_only_user_message(
-            "<system-reminder>rules</system-reminder>extra text"
-        ));
-    }
 
     // ---------------------------------------------------------------------------
     // setup helpers
@@ -618,12 +501,11 @@ mod tests {
     fn test_search_with_match() {
         let (temp_dir, mut searcher) = setup_test_env();
 
-        // Create a project directory with a session file
         let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
         fs::create_dir_all(&project_dir).unwrap();
 
-        let session_content = r#"{"type":"user","message":"Hello world this is a test","timestamp":"2024-01-01T00:00:00Z"}
-{"type":"assistant","content":[{"type":"text","text":"This is the assistant response with test keyword"}],"timestamp":"2024-01-01T00:01:00Z"}
+        let session_content = r#"{"type":"user","message":{"role":"user","content":"Hello world this is a test"},"uuid":"u1","timestamp":"2024-01-01T00:00:00Z"}
+{"type":"assistant","message":{"role":"assistant","id":"msg_1","type":"message","content":[{"type":"text","text":"This is the assistant response with test keyword"}],"model":"claude-3","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}},"uuid":"a1","timestamp":"2024-01-01T00:01:00Z"}
 "#;
         fs::write(project_dir.join("session-123.jsonl"), session_content).unwrap();
 
@@ -636,12 +518,10 @@ mod tests {
     fn test_search_max_results() {
         let (temp_dir, mut searcher) = setup_test_env();
 
-        // Create a project directory with a session file
         let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
         fs::create_dir_all(&project_dir).unwrap();
 
-        // Create content with multiple occurrences
-        let session_content = r#"{"type":"user","message":"test test test test test","timestamp":"2024-01-01T00:00:00Z"}
+        let session_content = r#"{"type":"user","message":{"role":"user","content":"test test test test test"},"uuid":"u1","timestamp":"2024-01-01T00:00:00Z"}
 "#;
         fs::write(project_dir.join("session-123.jsonl"), session_content).unwrap();
 
@@ -682,5 +562,93 @@ mod tests {
         // Ord: ascending by timestamp, so r2 (200) > r1 (100)
         assert!(r2 > r1);
         assert!(r1 < r2);
+    }
+
+    // ---------------------------------------------------------------------------
+    // New tests: AI buffer grouping, isMeta filtering, sanitization, session title
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_search_ai_buffer_grouping() {
+        let (temp_dir, mut searcher) = setup_test_env();
+
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+
+        // 3 consecutive assistant messages with different requestIds should merge into 1 AiGroup.
+        // Using distinct requestIds prevents deduplication from collapsing them.
+        let session_content = r#"{"type":"user","message":{"role":"user","content":"please respond"},"uuid":"u1","timestamp":"2024-01-01T00:00:00Z"}
+{"type":"assistant","message":{"role":"assistant","id":"msg_1","type":"message","content":[{"type":"text","text":"First response part"}],"model":"claude-3","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}},"requestId":"r1","uuid":"a1","timestamp":"2024-01-01T00:00:01Z"}
+{"type":"assistant","message":{"role":"assistant","id":"msg_2","type":"message","content":[{"type":"text","text":"Second response part with keyword match"}],"model":"claude-3","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}},"requestId":"r2","uuid":"a2","timestamp":"2024-01-01T00:00:02Z"}
+{"type":"assistant","message":{"role":"assistant","id":"msg_3","type":"message","content":[{"type":"text","text":"Third response part"}],"model":"claude-3","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}},"requestId":"r3","uuid":"a3","timestamp":"2024-01-01T00:00:03Z"}
+"#;
+        fs::write(project_dir.join("session-grouping.jsonl"), session_content).unwrap();
+
+        let result = searcher.search_sessions("-Users-test-project", "keyword", 50);
+        assert_eq!(result.total_matches, 1, "should find exactly 1 match in the merged AI group");
+        let sr = &result.results[0];
+        assert_eq!(sr.group_id.as_deref(), Some("ai-a1"), "group_id should be ai-a1 (first assistant uuid)");
+        assert_eq!(sr.item_type.as_deref(), Some("ai"));
+    }
+
+    #[test]
+    fn test_search_ismeta_filtered() {
+        let (temp_dir, mut searcher) = setup_test_env();
+
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+
+        // isMeta=true user messages should NOT appear as "user" item_type in search results.
+        // They are classified as Ai (not User), so item_type should be "ai" rather than "user".
+        let session_content = r#"{"type":"user","message":{"role":"user","content":"This is a meta message with unique_keyword_xyz"},"uuid":"u1","timestamp":"2024-01-01T00:00:00Z","isMeta":true}
+{"type":"user","message":{"role":"user","content":"Normal user message"},"uuid":"u2","timestamp":"2024-01-01T00:01:00Z","isMeta":false}
+"#;
+        fs::write(project_dir.join("session-meta.jsonl"), session_content).unwrap();
+
+        let result = searcher.search_sessions("-Users-test-project", "unique_keyword_xyz", 50);
+        // The meta message is classified as Ai (not User), so it appears with item_type="ai", not "user"
+        if result.total_matches > 0 {
+            let sr = &result.results[0];
+            assert_ne!(sr.item_type.as_deref(), Some("user"),
+                "isMeta=true messages must not have item_type=user");
+        }
+    }
+
+    #[test]
+    fn test_search_sanitized_content() {
+        let (temp_dir, mut searcher) = setup_test_env();
+
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+
+        // User message with noise tags should be cleaned before searching
+        let session_content = r#"{"type":"user","message":{"role":"user","content":"<system-reminder>internal rules here</system-reminder>Please fix the bug"},"uuid":"u1","timestamp":"2024-01-01T00:00:00Z"}
+"#;
+        fs::write(project_dir.join("session-sanitize.jsonl"), session_content).unwrap();
+
+        let result = searcher.search_sessions("-Users-test-project", "bug", 50);
+        assert!(result.total_matches > 0, "should find 'bug' in sanitized content");
+        let sr = &result.results[0];
+        assert!(!sr.context.contains("<system-reminder>"), "context should not contain noise tags");
+        assert!(sr.context.contains("bug"), "context should contain the actual search term");
+    }
+
+    #[test]
+    fn test_search_session_title_extracted() {
+        let (temp_dir, mut searcher) = setup_test_env();
+
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+
+        let session_content = r#"{"type":"user","message":{"role":"user","content":"Help me implement authentication feature"},"uuid":"u1","timestamp":"2024-01-01T00:00:00Z"}
+{"type":"assistant","message":{"role":"assistant","id":"msg_1","type":"message","content":[{"type":"text","text":"Sure, I will help with authentication"}],"model":"claude-3","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}},"uuid":"a1","timestamp":"2024-01-01T00:01:00Z"}
+"#;
+        fs::write(project_dir.join("session-title.jsonl"), session_content).unwrap();
+
+        let result = searcher.search_sessions("-Users-test-project", "authentication", 50);
+        assert!(result.total_matches > 0);
+        let sr = &result.results[0];
+        assert_ne!(sr.session_title, "Untitled Session", "session_title should be extracted from first user message");
+        assert!(sr.session_title.contains("Help me implement authentication feature"));
     }
 }
