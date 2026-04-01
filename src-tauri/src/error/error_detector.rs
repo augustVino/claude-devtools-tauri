@@ -15,7 +15,6 @@
 //!
 //! 从 Electron `src/main/services/error/ErrorDetector.ts` 移植而来。
 
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::analysis::tool_extraction::{build_tool_result_map, build_tool_use_map};
@@ -109,8 +108,8 @@ impl ErrorDetector {
             }
         }
 
-        // 按 tool_use_id 去重
-        Self::deduplicate_errors(errors)
+        // 去重由 NotificationManager 负责
+        errors
     }
 
     // ===========================================================================
@@ -208,38 +207,6 @@ impl ErrorDetector {
         vec![]
     }
 
-    // ===========================================================================
-    // 私有方法：去重
-    // ===========================================================================
-
-    /// 按 `tool_use_id` 去重错误。当多个触发器检测到同一个 tool_use 时，
-    /// 优先保留带 `subagent_id` 的版本（与 Electron 行为对齐）。
-    fn deduplicate_errors(errors: Vec<DetectedError>) -> Vec<DetectedError> {
-        let mut best: HashMap<String, usize> = HashMap::new();
-        let mut result = Vec::with_capacity(errors.len());
-
-        for (i, error) in errors.iter().enumerate() {
-            if let Some(ref tool_use_id) = error.tool_use_id {
-                if let Some(&prev_idx) = best.get(tool_use_id) {
-                    // 如果新条目有 subagent_id 而已有的没有，则替换
-                    let prev_has_subagent = errors[prev_idx].subagent_id.is_some();
-                    let curr_has_subagent = error.subagent_id.is_some();
-                    if !prev_has_subagent && curr_has_subagent {
-                        // 移除之前的版本，push 当前版本
-                        result.retain(|e: &DetectedError| e.tool_use_id.as_ref() != Some(tool_use_id));
-                        result.push(error.clone());
-                        best.insert(tool_use_id.clone(), i);
-                    }
-                    // 否则保留已有序列中的版本
-                    continue;
-                }
-                best.insert(tool_use_id.clone(), i);
-            }
-            result.push(error.clone());
-        }
-
-        result
-    }
 }
 
 // =============================================================================
@@ -524,8 +491,8 @@ mod tests {
             .detect_errors(&messages, "session-1", "-Users-test", "/path.jsonl")
             .await;
 
-        // 两个触发器匹配同一个 tool_use_id，因此只保留一个
-        assert_eq!(errors.len(), 1);
+        // 两个触发器匹配同一个 tool_use_id，每条对应一个 trigger
+        assert_eq!(errors.len(), 2);
     }
 
     #[tokio::test]
@@ -558,260 +525,6 @@ mod tests {
         let _ = result.total_count;
         let _ = &result.errors;
         let _ = result.truncated;
-    }
-
-    // ---------------------------------------------------------------------------
-    // deduplicate_errors tests
-    // ---------------------------------------------------------------------------
-
-    #[test]
-    fn test_deduplicate_errors_no_duplicates() {
-        let errors = vec![
-            DetectedError {
-                id: "e1".to_string(),
-                session_id: "s1".to_string(),
-                project_id: "p1".to_string(),
-                file_path: "/f.jsonl".to_string(),
-                source: "Bash".to_string(),
-                message: "error 1".to_string(),
-                timestamp: 0,
-                line_number: None,
-                tool_use_id: Some("tu1".to_string()),
-                subagent_id: None,
-                trigger_color: None,
-                trigger_id: None,
-                trigger_name: None,
-                context: crate::types::config::ErrorContext {
-                    project_name: "proj".to_string(),
-                    cwd: None,
-                },
-            },
-            DetectedError {
-                id: "e2".to_string(),
-                session_id: "s1".to_string(),
-                project_id: "p1".to_string(),
-                file_path: "/f.jsonl".to_string(),
-                source: "Read".to_string(),
-                message: "error 2".to_string(),
-                timestamp: 0,
-                line_number: None,
-                tool_use_id: Some("tu2".to_string()),
-                subagent_id: None,
-                trigger_color: None,
-                trigger_id: None,
-                trigger_name: None,
-                context: crate::types::config::ErrorContext {
-                    project_name: "proj".to_string(),
-                    cwd: None,
-                },
-            },
-        ];
-
-        let deduped = ErrorDetector::deduplicate_errors(errors);
-        assert_eq!(deduped.len(), 2);
-    }
-
-    #[test]
-    fn test_deduplicate_errors_removes_duplicates() {
-        let errors = vec![
-            DetectedError {
-                id: "e1".to_string(),
-                session_id: "s1".to_string(),
-                project_id: "p1".to_string(),
-                file_path: "/f.jsonl".to_string(),
-                source: "Bash".to_string(),
-                message: "error 1".to_string(),
-                timestamp: 0,
-                line_number: None,
-                tool_use_id: Some("tu1".to_string()),
-                subagent_id: None,
-                trigger_color: None,
-                trigger_id: Some("t1".to_string()),
-                trigger_name: None,
-                context: crate::types::config::ErrorContext {
-                    project_name: "proj".to_string(),
-                    cwd: None,
-                },
-            },
-            DetectedError {
-                id: "e2".to_string(),
-                session_id: "s1".to_string(),
-                project_id: "p1".to_string(),
-                file_path: "/f.jsonl".to_string(),
-                source: "Bash".to_string(),
-                message: "error 1".to_string(),
-                timestamp: 0,
-                line_number: None,
-                tool_use_id: Some("tu1".to_string()),
-                subagent_id: None,
-                trigger_color: None,
-                trigger_id: Some("t2".to_string()),
-                trigger_name: None,
-                context: crate::types::config::ErrorContext {
-                    project_name: "proj".to_string(),
-                    cwd: None,
-                },
-            },
-        ];
-
-        let deduped = ErrorDetector::deduplicate_errors(errors);
-        assert_eq!(deduped.len(), 1);
-        assert_eq!(deduped[0].trigger_id, Some("t1".to_string()));
-    }
-
-    #[test]
-    fn test_deduplicate_errors_keeps_errors_without_tool_use_id() {
-        let errors = vec![
-            DetectedError {
-                id: "e1".to_string(),
-                session_id: "s1".to_string(),
-                project_id: "p1".to_string(),
-                file_path: "/f.jsonl".to_string(),
-                source: "Bash".to_string(),
-                message: "error 1".to_string(),
-                timestamp: 0,
-                line_number: None,
-                tool_use_id: None,
-                subagent_id: None,
-                trigger_color: None,
-                trigger_id: None,
-                trigger_name: None,
-                context: crate::types::config::ErrorContext {
-                    project_name: "proj".to_string(),
-                    cwd: None,
-                },
-            },
-            DetectedError {
-                id: "e2".to_string(),
-                session_id: "s1".to_string(),
-                project_id: "p1".to_string(),
-                file_path: "/f.jsonl".to_string(),
-                source: "Read".to_string(),
-                message: "error 2".to_string(),
-                timestamp: 0,
-                line_number: None,
-                tool_use_id: None,
-                subagent_id: None,
-                trigger_color: None,
-                trigger_id: None,
-                trigger_name: None,
-                context: crate::types::config::ErrorContext {
-                    project_name: "proj".to_string(),
-                    cwd: None,
-                },
-            },
-        ];
-
-        let deduped = ErrorDetector::deduplicate_errors(errors);
-        // 没有 tool_use_id 的错误全部保留（无去重键）
-        assert_eq!(deduped.len(), 2);
-    }
-
-    #[test]
-    fn test_deduplicate_errors_empty() {
-        let deduped = ErrorDetector::deduplicate_errors(vec![]);
-        assert!(deduped.is_empty());
-    }
-
-    #[test]
-    fn test_deduplicate_errors_prefers_subagent_version() {
-        // 父会话先出现（无 subagent_id），子代理后出现（有 subagent_id）
-        let errors = vec![
-            DetectedError {
-                id: "e1".to_string(),
-                session_id: "s1".to_string(),
-                project_id: "p1".to_string(),
-                file_path: "/f.jsonl".to_string(),
-                source: "Bash".to_string(),
-                message: "error from parent".to_string(),
-                timestamp: 0,
-                line_number: None,
-                tool_use_id: Some("tu1".to_string()),
-                subagent_id: None,
-                trigger_color: None,
-                trigger_id: Some("t1".to_string()),
-                trigger_name: None,
-                context: crate::types::config::ErrorContext {
-                    project_name: "proj".to_string(),
-                    cwd: None,
-                },
-            },
-            DetectedError {
-                id: "e2".to_string(),
-                session_id: "s1".to_string(),
-                project_id: "p1".to_string(),
-                file_path: "/f.jsonl".to_string(),
-                source: "Bash".to_string(),
-                message: "error from subagent".to_string(),
-                timestamp: 0,
-                line_number: None,
-                tool_use_id: Some("tu1".to_string()),
-                subagent_id: Some("sub_1".to_string()),
-                trigger_color: None,
-                trigger_id: Some("t2".to_string()),
-                trigger_name: None,
-                context: crate::types::config::ErrorContext {
-                    project_name: "proj".to_string(),
-                    cwd: None,
-                },
-            },
-        ];
-
-        let deduped = ErrorDetector::deduplicate_errors(errors);
-        assert_eq!(deduped.len(), 1);
-        // 应保留带 subagent_id 的版本
-        assert_eq!(deduped[0].subagent_id, Some("sub_1".to_string()));
-        assert_eq!(deduped[0].trigger_id, Some("t2".to_string()));
-    }
-
-    #[test]
-    fn test_deduplicate_errors_keeps_existing_subagent_over_non_subagent() {
-        // 子代理版本先出现，父版本后出现 → 保留已有的子代理版本
-        let errors = vec![
-            DetectedError {
-                id: "e1".to_string(),
-                session_id: "s1".to_string(),
-                project_id: "p1".to_string(),
-                file_path: "/f.jsonl".to_string(),
-                source: "Bash".to_string(),
-                message: "error from subagent".to_string(),
-                timestamp: 0,
-                line_number: None,
-                tool_use_id: Some("tu1".to_string()),
-                subagent_id: Some("sub_1".to_string()),
-                trigger_color: None,
-                trigger_id: Some("t1".to_string()),
-                trigger_name: None,
-                context: crate::types::config::ErrorContext {
-                    project_name: "proj".to_string(),
-                    cwd: None,
-                },
-            },
-            DetectedError {
-                id: "e2".to_string(),
-                session_id: "s1".to_string(),
-                project_id: "p1".to_string(),
-                file_path: "/f.jsonl".to_string(),
-                source: "Bash".to_string(),
-                message: "error from parent".to_string(),
-                timestamp: 0,
-                line_number: None,
-                tool_use_id: Some("tu1".to_string()),
-                subagent_id: None,
-                trigger_color: None,
-                trigger_id: Some("t2".to_string()),
-                trigger_name: None,
-                context: crate::types::config::ErrorContext {
-                    project_name: "proj".to_string(),
-                    cwd: None,
-                },
-            },
-        ];
-
-        let deduped = ErrorDetector::deduplicate_errors(errors);
-        assert_eq!(deduped.len(), 1);
-        // 已有的是 subagent 版本，不应被替换
-        assert_eq!(deduped[0].subagent_id, Some("sub_1".to_string()));
     }
 
     // ---------------------------------------------------------------------------
