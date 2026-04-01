@@ -19,11 +19,17 @@ pub async fn sse_handler(
     let rx = state.broadcaster.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(|result| {
         async move {
-            result.ok().map(|event| {
-                let name = event.event_name();
-                let data = serde_json::to_string(&event).unwrap_or_default();
-                Ok(Event::default().event(name).data(data))
-            })
+            match result {
+                Ok(event) => {
+                    let name = event.event_name();
+                    let data = serde_json::to_string(&event).unwrap_or_default();
+                    Some(Ok(Event::default().event(name).data(data)))
+                }
+                Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
+                    log::warn!("SSE broadcast receiver lagged, skipped {} messages", n);
+                    None
+                }
+            }
         }
     });
     Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(30)))

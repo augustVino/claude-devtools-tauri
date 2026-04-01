@@ -46,9 +46,9 @@ pub struct SSEBroadcaster {
 }
 
 impl SSEBroadcaster {
-    /// 创建新的广播器。channel 容量 256。
+    /// 创建新的广播器。channel 容量 1024。
     pub fn new() -> Self {
-        let (tx, _) = broadcast::channel(256);
+        let (tx, _) = broadcast::channel(1024);
         Self { tx }
     }
 
