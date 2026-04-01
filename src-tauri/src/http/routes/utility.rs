@@ -8,6 +8,7 @@ use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::http::path_validation::validate_file_path;
 use crate::http::state::HttpState;
 use crate::parsing::claude_md_reader::{ClaudeMdReader, ClaudeMdFileInfo};
 
@@ -103,7 +104,25 @@ pub async fn read_mentioned_file(
     Json(body): Json<ReadMentionedFileRequest>,
 ) -> Result<Json<Option<MentionedFileInfo>>, (StatusCode, Json<super::ErrorResponse>)> {
     let max_tokens_limit = body.max_tokens.unwrap_or(25000);
-    let path = Path::new(&body.absolute_path);
+
+    // 路径安全验证
+    let project_root: Option<&str> = if body.project_root.is_empty() {
+        None
+    } else {
+        Some(&body.project_root)
+    };
+    let validation = validate_file_path(&body.absolute_path, project_root);
+    if !validation.valid {
+        log::warn!(
+            "read-mentioned-file blocked: {}",
+            validation.error.as_deref().unwrap_or("")
+        );
+        return Err(error_json(
+            validation.error.unwrap_or_else(|| "Path validation failed".into()),
+        ));
+    }
+
+    let path = validation.normalized_path.unwrap_or_else(|| Path::new(&body.absolute_path).to_path_buf());
 
     // 跳过不存在的路径和目录
     if !path.exists() || path.is_dir() {
