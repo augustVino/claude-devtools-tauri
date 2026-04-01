@@ -381,22 +381,44 @@ impl SessionSearcher {
                     });
                 }
                 GroupedMessage::AiGroup { messages, group_id } => {
-                    // AI 文本不经过 sanitize — 与 Electron 对齐（仅清洗用户消息中的噪声标签）
-                    let combined: String = messages
-                        .iter()
-                        .map(|m| extract_text_content(m))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    if combined.is_empty() {
-                        continue;
+                    // AI 文本提取 — 对齐 Electron: 仅取最后一条 assistant message
+                    // 的最后一个 text content block（反向扫描）
+                    let mut extracted_text: Option<String> = None;
+                    for i in (0..messages.len()).rev() {
+                        let msg = &messages[i];
+                        if msg.role.as_deref() != Some("assistant") || !msg.content.is_array() {
+                            continue;
+                        }
+                        if let Some(content_arr) = msg.content.as_array() {
+                            for j in (0..content_arr.len()).rev() {
+                                let block = &content_arr[j];
+                                if block.get("type").and_then(|v| v.as_str()) == Some("text") {
+                                    if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                                        if !text.is_empty() {
+                                            extracted_text = Some(text.to_string());
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if extracted_text.is_some() {
+                            break;
+                        }
                     }
+
+                    let text = match extracted_text {
+                        Some(t) => t,
+                        None => continue,
+                    };
+
                     let timestamp = messages
                         .first()
                         .map(|m| parse_timestamp(&m.timestamp))
                         .unwrap_or(0);
                     let uuid = messages.first().map(|m| m.uuid.clone());
                     entries.push(SearchableEntry {
-                        text: combined,
+                        text,
                         message_type: "assistant".to_string(),
                         timestamp,
                         group_id: Some(group_id.clone()),
@@ -609,10 +631,12 @@ mod tests {
 
         // 3 consecutive assistant messages with different requestIds should merge into 1 AiGroup.
         // Using distinct requestIds prevents deduplication from collapsing them.
+        // New behavior (aligned with Electron): only the LAST assistant message's last text
+        // content block is extracted, so the search keyword must be in the last message.
         let session_content = r#"{"type":"user","message":{"role":"user","content":"please respond"},"uuid":"u1","timestamp":"2024-01-01T00:00:00Z"}
 {"type":"assistant","message":{"role":"assistant","id":"msg_1","type":"message","content":[{"type":"text","text":"First response part"}],"model":"claude-3","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}},"requestId":"r1","uuid":"a1","timestamp":"2024-01-01T00:00:01Z"}
-{"type":"assistant","message":{"role":"assistant","id":"msg_2","type":"message","content":[{"type":"text","text":"Second response part with keyword match"}],"model":"claude-3","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}},"requestId":"r2","uuid":"a2","timestamp":"2024-01-01T00:00:02Z"}
-{"type":"assistant","message":{"role":"assistant","id":"msg_3","type":"message","content":[{"type":"text","text":"Third response part"}],"model":"claude-3","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}},"requestId":"r3","uuid":"a3","timestamp":"2024-01-01T00:00:03Z"}
+{"type":"assistant","message":{"role":"assistant","id":"msg_2","type":"message","content":[{"type":"text","text":"Second response part"}],"model":"claude-3","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}},"requestId":"r2","uuid":"a2","timestamp":"2024-01-01T00:00:02Z"}
+{"type":"assistant","message":{"role":"assistant","id":"msg_3","type":"message","content":[{"type":"text","text":"Third response part with keyword match"}],"model":"claude-3","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}},"requestId":"r3","uuid":"a3","timestamp":"2024-01-01T00:00:03Z"}
 "#;
         fs::write(project_dir.join("session-grouping.jsonl"), session_content).unwrap();
 
