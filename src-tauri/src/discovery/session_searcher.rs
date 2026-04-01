@@ -133,8 +133,11 @@ impl SessionSearcher {
                 continue;
             }
 
-            let mtime = dirent.mtime_ms.unwrap_or(0);
             let path = project_path.join(&dirent.name);
+            let mtime = match dirent.mtime_ms {
+                Some(ms) => ms,
+                None => self.fs_provider.stat(&path).map(|m| m.mtime_ms).unwrap_or(0),
+            };
             session_files.push((dirent.name, path, mtime));
         }
 
