@@ -187,11 +187,20 @@ fn is_user_chunk(msg: &ParsedMessage) -> bool {
             "<local-command-stderr>",
             "<local-command-stdout>",
             "<local-command-caveat>",
-            "<system-reminder>",
         ] {
             if trimmed.starts_with(tag) {
                 return false;
             }
+        }
+        // <system-reminder>: only exclude if content is entirely noise (tag-wrapped).
+        // Mixed content like "<system-reminder>...rules...</system-reminder>actual text"
+        // has real user text after the noise tag — treat as User chunk.
+        if trimmed.starts_with("<system-reminder>") {
+            let close_tag = "</system-reminder>";
+            if trimmed.ends_with(close_tag) {
+                return false; // Pure noise: entirely wrapped in <system-reminder>
+            }
+            // Has content after the closing tag — real user message, keep as User
         }
         return true;
     }
