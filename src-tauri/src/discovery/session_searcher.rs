@@ -6,6 +6,7 @@
 //! - Extract context around each match occurrence
 
 use crate::discovery::project_scanner::ProjectScanner;
+use crate::discovery::SubprojectRegistry;
 use crate::infrastructure::fs_provider::FsProvider;
 use crate::parsing::jsonl_parser::{deduplicate_by_request_id, extract_text_content, parse_jsonl_content};
 use crate::parsing::message_classifier::{classify_messages, group_ai_messages};
@@ -44,6 +45,8 @@ pub struct SessionSearcher {
     cache: moka::sync::Cache<String, CacheEntry>,
     /// ProjectScanner used for cross-project search.
     project_scanner: ProjectScanner,
+    /// Optional subproject registry for session filtering by composite project ID.
+    subproject_registry: Option<Arc<std::sync::Mutex<SubprojectRegistry>>>,
 }
 
 /// A searchable entry extracted from a message.
@@ -59,7 +62,12 @@ struct SearchableEntry {
 
 impl SessionSearcher {
     /// Create a new SessionSearcher.
-    pub fn new(projects_dir: PathBuf, todos_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Self {
+    pub fn new(
+        projects_dir: PathBuf,
+        todos_dir: PathBuf,
+        fs_provider: Arc<dyn FsProvider>,
+        subproject_registry: Option<Arc<std::sync::Mutex<SubprojectRegistry>>>,
+    ) -> Self {
         let project_scanner = ProjectScanner::with_paths(
             projects_dir.clone(),
             todos_dir,
@@ -72,6 +80,7 @@ impl SessionSearcher {
                 .max_capacity(CACHE_MAX_CAPACITY)
                 .build(),
             project_scanner,
+            subproject_registry,
         }
     }
 
@@ -144,6 +153,12 @@ impl SessionSearcher {
         // Sort by modification time (most recent first)
         session_files.sort_by(|a, b| b.2.cmp(&a.2));
 
+        // Resolve subproject session filter if a registry is available
+        let session_filter = self.subproject_registry
+            .as_ref()
+            .and_then(|reg| reg.lock().ok())
+            .and_then(|guard| guard.get_session_filter(project_id).cloned());
+
         // 构建分阶段搜索边界（SSH fast search 使用）
         let stage_boundaries = if fast_mode {
             build_fast_search_stage_boundaries(session_files.len())
@@ -174,6 +189,14 @@ impl SessionSearcher {
             }
 
             let session_id = path_decoder::extract_session_id(file_name);
+
+            // Skip sessions not belonging to this subproject
+            if let Some(ref filter) = session_filter {
+                if !filter.contains(&session_id) {
+                    continue;
+                }
+            }
+
             sessions_searched += 1;
 
             if let Ok(file_results) = self.search_session_file(
@@ -487,7 +510,7 @@ mod tests {
         fs::create_dir_all(&projects_dir).unwrap();
         fs::create_dir_all(&todos_dir).unwrap();
 
-        let searcher = SessionSearcher::new(projects_dir, todos_dir, Arc::new(LocalFsProvider::new()));
+        let searcher = SessionSearcher::new(projects_dir, todos_dir, Arc::new(LocalFsProvider::new()), None);
         (temp_dir, searcher)
     }
 

@@ -83,5 +83,5 @@ pub fn create_searcher_state(
     todos_dir: PathBuf,
     fs_provider: Arc<dyn FsProvider>,
 ) -> Arc<Mutex<SessionSearcher>> {
-    Arc::new(Mutex::new(SessionSearcher::new(projects_dir, todos_dir, fs_provider)))
+    Arc::new(Mutex::new(SessionSearcher::new(projects_dir, todos_dir, fs_provider, None)))
 }

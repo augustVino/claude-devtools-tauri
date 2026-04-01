@@ -60,7 +60,7 @@ impl ServiceContext {
             config.fs_provider.clone(),
         );
         let session_searcher = Arc::new(Mutex::new(
-            SessionSearcher::new(config.projects_dir.clone(), config.todos_dir.clone(), config.fs_provider.clone()),
+            SessionSearcher::new(config.projects_dir.clone(), config.todos_dir.clone(), config.fs_provider.clone(), None),
         ));
         let subagent_resolver = SubagentResolver::new(config.projects_dir.clone(), config.fs_provider.clone());
         let cache = config.cache.unwrap_or_else(DataCache::new);
