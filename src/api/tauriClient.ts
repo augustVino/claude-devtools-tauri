@@ -80,9 +80,14 @@ function createContextAPI() {
 function createHttpServerAPI() {
   return {
     getStatus: (): Promise<HttpServerStatus> =>
-      invoke<HttpServerStatus>("get_status"),
-    start: (): Promise<HttpServerStatus> => invoke<HttpServerStatus>("start"),
-    stop: (): Promise<HttpServerStatus> => invoke<HttpServerStatus>("stop"),
+      invoke<{ success: boolean; data: HttpServerStatus }>("get_status")
+        .then((r) => r.data),
+    start: (): Promise<HttpServerStatus> =>
+      invoke<{ success: boolean; data: HttpServerStatus }>("start")
+        .then((r) => r.data),
+    stop: (): Promise<HttpServerStatus> =>
+      invoke<{ success: boolean; data: HttpServerStatus }>("stop")
+        .then((r) => r.data),
   };
 }
 

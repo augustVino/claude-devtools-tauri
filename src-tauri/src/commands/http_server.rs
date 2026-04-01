@@ -13,20 +13,37 @@ use crate::infrastructure::fs_provider::LocalFsProvider;
 use crate::infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConnectionManager};
 use crate::utils::{get_projects_base_path, get_todos_base_path};
 
+/// IPC 响应包装 — 与 Electron 格式对齐
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IpcResponse<T: serde::Serialize> {
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<T>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+impl<T: serde::Serialize> IpcResponse<T> {
+    fn ok(data: T) -> Self {
+        Self { success: true, data: Some(data), error: None }
+    }
+}
+
+impl IpcResponse<()> {
+    fn err(msg: impl Into<String>) -> IpcResponse<serde_json::Value> {
+        IpcResponse { success: false, data: None, error: Some(msg.into()) }
+    }
+}
+
 /// 获取 HTTP 服务器状态。
 #[command]
-pub async fn get_status(app: AppHandle) -> Result<HttpServerStatus, String> {
+pub async fn get_status(app: AppHandle) -> Result<IpcResponse<HttpServerStatus>, String> {
     let handle = app.state::<Mutex<Option<HttpServerHandle>>>();
     let guard = handle.lock().map_err(|e| e.to_string())?;
     match guard.as_ref() {
-        Some(h) => Ok(HttpServerStatus {
-            running: true,
-            port: h.port,
-        }),
-        None => Ok(HttpServerStatus {
-            running: false,
-            port: 3456,
-        }),
+        Some(h) => Ok(IpcResponse::ok(HttpServerStatus { running: true, port: h.port })),
+        None => Ok(IpcResponse::ok(HttpServerStatus { running: false, port: 3456 })),
     }
 }
 
@@ -35,7 +52,7 @@ pub async fn get_status(app: AppHandle) -> Result<HttpServerStatus, String> {
 pub async fn start(
     app: AppHandle,
     state: State<'_, Arc<RwLock<AppState>>>,
-) -> Result<HttpServerStatus, String> {
+) -> Result<IpcResponse<HttpServerStatus>, String> {
     // Read config port first (before acquiring std::sync::Mutex to avoid holding it across await)
     let preferred_port = {
         let state_read = state.read().await;
@@ -56,10 +73,10 @@ pub async fn start(
         // Already running?
         if handle.is_some() {
             let existing = handle.as_ref().unwrap();
-            return Ok(HttpServerStatus {
+            return Ok(IpcResponse::ok(HttpServerStatus {
                 running: true,
                 port: existing.port,
-            });
+            }));
         }
 
         let broadcaster = app.state::<SSEBroadcaster>().inner().clone();
@@ -109,16 +126,16 @@ pub async fn start(
         *handle = Some(new_handle);
 
         log::info!("HTTP server started on port {}", port);
-        Ok(HttpServerStatus {
+        Ok(IpcResponse::ok(HttpServerStatus {
             running: true,
             port,
-        })
+        }))
     }
 }
 
 /// 停止 HTTP 服务器。
 #[command]
-pub async fn stop(app: AppHandle) -> Result<HttpServerStatus, String> {
+pub async fn stop(app: AppHandle) -> Result<IpcResponse<HttpServerStatus>, String> {
     let handle_guard = app.state::<Mutex<Option<HttpServerHandle>>>();
     let mut handle = handle_guard.lock().map_err(|e| e.to_string())?;
 
@@ -127,8 +144,8 @@ pub async fn stop(app: AppHandle) -> Result<HttpServerStatus, String> {
         log::info!("HTTP server stopped");
     }
 
-    Ok(HttpServerStatus {
+    Ok(IpcResponse::ok(HttpServerStatus {
         running: false,
         port: 3456,
-    })
+    }))
 }
