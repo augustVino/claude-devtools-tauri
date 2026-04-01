@@ -47,7 +47,7 @@ pub async fn search_sessions(
 ///
 /// GET /api/search?q=&maxResults=
 pub async fn search_all_projects(
-    State(_state): State<HttpState>,
+    State(state): State<HttpState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<SearchSessionsResult>, (StatusCode, Json<super::ErrorResponse>)> {
     let query = params.get("q").cloned().unwrap_or_default();
@@ -55,7 +55,7 @@ pub async fn search_all_projects(
         .get("maxResults")
         .and_then(|v| v.parse::<u32>().ok());
 
-    let _max = max_results.unwrap_or(50).min(200).max(1);
+    let max = max_results.unwrap_or(50).min(200).max(1);
 
     if query.trim().is_empty() {
         return Ok(Json(SearchSessionsResult {
@@ -67,14 +67,10 @@ pub async fn search_all_projects(
         }));
     }
 
-    // TODO: Implement cross-project search
-    // For now, return empty results
-    Ok(SearchSessionsResult {
-        results: Vec::new(),
-        total_matches: 0,
-        sessions_searched: 0,
-        query,
-        is_partial: None,
-    }
-    .into())
+    let mut searcher = state
+        .searcher
+        .lock()
+        .map_err(|e| error_json(e.to_string()))?;
+    let result = searcher.search_all_projects(&query, max);
+    Ok(Json(result))
 }
