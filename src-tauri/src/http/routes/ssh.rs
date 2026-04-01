@@ -111,7 +111,21 @@ pub async fn ssh_connect(
             if let Some(ssh_ctx) = mgr.get(&active_id) {
                 ssh_ctx.read().await.stop_watcher_tasks().await;
             }
-            let _ = mgr.switch("local");
+            let switch_result = mgr.switch("local");
+            // Start local watcher tasks after switching back (aligns with IPC path)
+            if let Ok(result) = &switch_result {
+                if let Some(local_ctx) = mgr.get(&result.current_id) {
+                    let local = local_ctx.read().await;
+                    let config_manager = state.app_handle
+                        .state::<std::sync::Arc<crate::infrastructure::ConfigManager>>()
+                        .inner().clone();
+                    let notification_manager = state.app_handle
+                        .state::<std::sync::Arc<tokio::sync::RwLock<crate::infrastructure::NotificationManager>>>()
+                        .inner().clone();
+                    local.spawn_watcher_tasks(state.app_handle.clone(), config_manager, notification_manager).await;
+                }
+            }
+            let _ = switch_result;
             let _ = mgr.destroy_context(&active_id).await;
         }
     }
