@@ -6,8 +6,9 @@ use axum::{Json, extract::State, http::StatusCode};
 
 use crate::discovery::{ProjectScanner, WorktreeGrouper};
 use crate::http::state::HttpState;
+use crate::infrastructure::fs_provider::LocalFsProvider;
 use crate::types::domain::{Project, RepositoryGroup, Session};
-use crate::utils::{get_projects_base_path};
+use crate::utils::{get_projects_base_path, get_todos_base_path};
 
 use super::error_json;
 
@@ -39,7 +40,11 @@ pub async fn get_repository_groups(
         return Ok(Json(Vec::new()));
     }
 
-    let scanner = ProjectScanner::new();
+    let scanner = ProjectScanner::with_paths(
+        get_projects_base_path(),
+        get_todos_base_path(),
+        std::sync::Arc::new(LocalFsProvider::new()),
+    );
     let projects = scanner.scan();
 
     if projects.is_empty() {
@@ -57,7 +62,11 @@ pub async fn get_worktree_sessions(
     State(_state): State<HttpState>,
     axum::extract::Path(worktree_id): axum::extract::Path<String>,
 ) -> Result<Json<Vec<Session>>, (StatusCode, Json<super::ErrorResponse>)> {
-    let scanner = ProjectScanner::new();
+    let scanner = ProjectScanner::with_paths(
+        get_projects_base_path(),
+        get_todos_base_path(),
+        std::sync::Arc::new(LocalFsProvider::new()),
+    );
     Ok(Json(scanner.list_sessions(&worktree_id)))
 }
 

@@ -261,7 +261,11 @@ pub async fn get_sessions_paginated(
 ) -> Result<PaginatedSessionsResult, String> {
     let page_limit = limit.unwrap_or(20).min(200).max(1) as usize;
 
-    let scanner = ProjectScanner::new();
+    let scanner = ProjectScanner::with_paths(
+        get_projects_base_path(),
+        get_todos_base_path(),
+        std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
+    );
     let all_sessions = scanner.list_sessions(&project_id);
 
     let opts = options.unwrap_or_default();
@@ -309,7 +313,11 @@ pub async fn get_sessions_by_ids(
         return Ok(Vec::new());
     }
 
-    let scanner = ProjectScanner::new();
+    let scanner = ProjectScanner::with_paths(
+        get_projects_base_path(),
+        get_todos_base_path(),
+        std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
+    );
     let all_sessions = scanner.list_sessions(&project_id);
 
     Ok(all_sessions

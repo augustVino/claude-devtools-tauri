@@ -46,7 +46,9 @@ pub fn has_non_noise_messages(path: &Path, fs_provider: &dyn FsProvider) -> bool
         // Extract fields
         let msg_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("");
         let is_sidechain = json.get("isSidechain").and_then(|v| v.as_bool()).unwrap_or(false);
-        let model = json.get("model").and_then(|v| v.as_str());
+        let model = json.get("model")
+            .and_then(|v| v.as_str())
+            .or_else(|| json.get("message").and_then(|m| m.get("model")).and_then(|v| v.as_str()));
 
         // Skip hard noise types
         if HARD_NOISE_TYPES.contains(&msg_type) {
@@ -122,10 +124,13 @@ pub fn has_non_noise_messages(path: &Path, fs_provider: &dyn FsProvider) -> bool
 }
 
 /// Check if text is entirely wrapped in a hard noise tag.
+///
+/// Matches Electron behavior: checks both `startsWith(openTag)` AND `endsWith(closeTag)`.
 fn is_wrapped_in_noise_tags(text: &str) -> bool {
     let trimmed = text.trim();
     HARD_NOISE_TAGS.iter().any(|tag| {
-        trimmed.starts_with(tag)
+        let close_tag = tag.replace('<', "</");
+        trimmed.starts_with(tag) && trimmed.ends_with(&close_tag)
     })
 }
 

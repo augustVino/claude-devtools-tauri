@@ -13,6 +13,8 @@ use tauri::{
 };
 
 use crate::discovery::ProjectScanner;
+use crate::infrastructure::fs_provider::LocalFsProvider;
+use crate::utils::{get_projects_base_path, get_todos_base_path};
 
 /// Manages the system tray icon and its context menu.
 pub struct TrayIconManager {
@@ -91,7 +93,11 @@ impl TrayIconManager {
         }
 
         // Build recent sessions submenu
-        let scanner = ProjectScanner::new();
+        let scanner = ProjectScanner::with_paths(
+            get_projects_base_path(),
+            get_todos_base_path(),
+            std::sync::Arc::new(LocalFsProvider::new()),
+        );
         let projects = scanner.scan();
 
         let recent: Vec<_> = projects

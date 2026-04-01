@@ -125,7 +125,11 @@ impl ErrorDetector {
         trigger: &NotificationTrigger,
         limit: Option<usize>,
     ) -> TriggerTestResult {
-        let scanner = crate::discovery::project_scanner::ProjectScanner::new();
+        let scanner = crate::discovery::project_scanner::ProjectScanner::with_paths(
+            crate::utils::get_projects_base_path(),
+            crate::utils::get_todos_base_path(),
+            std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
+        );
         crate::error::error_trigger_tester::test_trigger(trigger, &scanner, limit).await
     }
 

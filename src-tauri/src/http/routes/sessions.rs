@@ -113,7 +113,11 @@ pub async fn get_sessions_paginated(
 
     let page_limit = limit.unwrap_or(50).min(100).max(1) as usize;
 
-    let scanner = ProjectScanner::new();
+    let scanner = ProjectScanner::with_paths(
+        crate::utils::path_decoder::get_projects_base_path(),
+        crate::utils::path_decoder::get_todos_base_path(),
+        std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
+    );
     let all_sessions = scanner.list_sessions(&project_id);
 
     let total_count = all_sessions.len() as u32;
@@ -166,7 +170,11 @@ pub async fn get_sessions_by_ids(
         return Ok(Json(Vec::new()));
     }
 
-    let scanner = ProjectScanner::new();
+    let scanner = ProjectScanner::with_paths(
+        crate::utils::path_decoder::get_projects_base_path(),
+        crate::utils::path_decoder::get_todos_base_path(),
+        std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
+    );
     let all_sessions = scanner.list_sessions(&project_id);
 
     Ok(Json(
