@@ -496,6 +496,20 @@ mod tests {
         assert_ne!(classify_message(&msg), MessageCategory::User);
     }
 
+    // --- Mixed system-reminder + user text ---
+
+    #[test]
+    fn test_user_mixed_system_reminder_with_real_text_is_user() {
+        let msg = make_user_msg(false, "<system-reminder>rules here</system-reminder>Please fix the bug");
+        assert_eq!(classify_message(&msg), MessageCategory::User);
+    }
+
+    #[test]
+    fn test_user_pure_system_reminder_still_noise() {
+        let msg = make_user_msg(false, "<system-reminder>rules here</system-reminder>");
+        assert_eq!(classify_message(&msg), MessageCategory::HardNoise);
+    }
+
     // --- Teammate messages ---
 
     #[test]
