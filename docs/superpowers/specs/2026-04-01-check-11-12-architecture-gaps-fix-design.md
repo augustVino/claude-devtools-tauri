@@ -139,21 +139,21 @@ fn build_fast_search_stage_boundaries(total_files: usize) -> Vec<usize> {
 
 ### 2.5 L-3 mtime 回退 — `session_searcher.rs`
 
-将 `dirent.mtime_ms.unwrap_or(0)` 改为异步回退到 `fs_provider.stat()`：
+将 `dirent.mtime_ms.unwrap_or(0)` 改为同步回退到 `fs_provider.stat()`：
 
 ```rust
 let mtime = match dirent.mtime_ms {
     Some(ms) => ms,
     None => {
-        match self.fs_provider.stat(&path).await {
-            Ok(metadata) => metadata.mtime_ms.unwrap_or(0),
+        match self.fs_provider.stat(&path) {
+            Ok(metadata) => metadata.mtime_ms,
             Err(_) => 0,
         }
     }
 };
 ```
 
-注意：此处需要确认 `search_sessions` 中文件排序所在代码块是否已为 async 上下文。
+注意：`search_sessions` 是同步方法，`FsProvider::stat()` 也是同步方法（非 async）。`FsStatResult.mtime_ms` 是 `u64`（非 Option），无需 `unwrap_or`。
 
 ## 阶段三：通知模块修复
 
@@ -199,14 +199,16 @@ const MAX_REGEX_CACHE_SIZE: usize = 500;
 
 ### 3.4 L-4 Token 估算修正 — `tool_extraction.rs`
 
-将 `(text.len() / 4).max(1)` 改为：
+将 `(text.len() / 4).max(1)` 改为（保持返回类型 `usize` 不变，与调用方一致）：
 
 ```rust
-fn estimate_tokens(text: &str) -> u32 {
+fn estimate_tokens(text: &str) -> usize {
     if text.is_empty() { return 0; }
-    ((text.len() as u32 + 3) / 4)  // 等价于 Math.ceil(len / 4)
+    (text.len() + 3) / 4  // 等价于 Math.ceil(len / 4)
 }
 ```
+
+注意：空内容返回值从 `1` 变为 `0`，现有测试 `test_estimate_tokens_empty` 需更新断言。
 
 ### 3.5 L-5 Regex 长度限制收紧 — `regex_validation.rs`
 
