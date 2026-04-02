@@ -102,6 +102,12 @@ export const UpdateDialog = (): React.JSX.Element | null => {
 
   if (!showUpdateDialog) return null;
 
+  const ariaLabel = updateStatus === 'downloading' ? 'Downloading update'
+    : updateStatus === 'downloaded' ? 'Update ready to install'
+    : updateStatus === 'download-error' ? 'Download failed'
+    : updateStatus === 'checking' ? 'Checking for updates'
+    : 'Update available';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop — only clickable when dismissable */}
@@ -123,7 +129,7 @@ export const UpdateDialog = (): React.JSX.Element | null => {
         className="relative mx-4 w-full max-w-sm rounded-md border p-4 shadow-lg"
         role="dialog"
         aria-modal="true"
-        aria-label="Update available"
+        aria-label={ariaLabel}
         style={{
           backgroundColor: 'var(--color-surface-overlay)',
           borderColor: 'var(--color-border-emphasis)',
@@ -138,6 +144,13 @@ export const UpdateDialog = (): React.JSX.Element | null => {
           >
             <X className="size-4" />
           </button>
+        )}
+
+        {/* Checking phase (retry) */}
+        {updateStatus === 'checking' && (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="size-5 animate-spin" style={{ color: 'var(--color-text-muted)' }} />
+          </div>
         )}
 
         {/* Phase 1: Update available */}

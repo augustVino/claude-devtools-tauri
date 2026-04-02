@@ -116,12 +116,16 @@ export const createUpdateSlice: StateCreator<AppState, [], [], UpdateSlice> = (s
               }
               break;
             case 'Finished':
-              set({ updateStatus: 'downloaded', downloadProgress: 100 });
+              set({ downloadProgress: 100 });
               break;
           }
         },
         { timeout: DOWNLOAD_TIMEOUT_MS },
       )
+      .then(() => {
+        // downloadAndInstall resolves after both download AND install are complete
+        set({ updateStatus: 'downloaded', downloadProgress: 100 });
+      })
       .catch((error: unknown) => {
         logger.error('Failed to download update:', error);
         set({
@@ -137,12 +141,16 @@ export const createUpdateSlice: StateCreator<AppState, [], [], UpdateSlice> = (s
       .then(({ relaunch }) => relaunch())
       .catch((error: unknown) => {
         logger.error('Failed to relaunch:', error);
+        set({
+          updateStatus: 'download-error',
+          downloadError: `Failed to restart application: ${error instanceof Error ? error.message : String(error)}`,
+        });
       });
   },
 
   retryDownload: () => {
-    // Re-check to get a fresh Update object (the previous one's download may be in bad state)
-    set({ downloadError: null });
+    if (get().updateStatus === 'checking' || get().updateStatus === 'downloading') return;
+    set({ downloadError: null, updateStatus: 'checking' });
     // Re-run check first, then auto-download if update is still available
     import('@tauri-apps/plugin-updater')
       .then(({ check }) => check())
@@ -168,7 +176,7 @@ export const createUpdateSlice: StateCreator<AppState, [], [], UpdateSlice> = (s
     // Block dismiss during active download or when update is ready to install
     const status = get().updateStatus;
     if (status === 'downloading' || status === 'downloaded') return;
-    set({ showUpdateDialog: false });
+    set({ showUpdateDialog: false, updateStatus: 'idle' });
   },
 
   resetUpdateStatus: () => {

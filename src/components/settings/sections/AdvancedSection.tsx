@@ -39,12 +39,13 @@ export const AdvancedSection = ({
   const updateStatus = useStore((s) => s.updateStatus);
   const availableVersion = useStore((s) => s.availableVersion);
   const checkForUpdates = useStore((s) => s.checkForUpdates);
+  const installAndRestart = useStore((s) => s.installAndRestart);
   const resetUpdateStatus = useStore((s) => s.resetUpdateStatus);
 
   // Auto-revert "not-available" / "error" status back to idle after a brief display
   const revertTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
-    if (updateStatus === "not-available" || updateStatus === "error" || updateStatus === "download-error") {
+    if (updateStatus === "not-available" || updateStatus === "error") {
       revertTimerRef.current = setTimeout(() => {
         resetUpdateStatus();
       }, 3000);
@@ -184,8 +185,8 @@ export const AdvancedSection = ({
             </p>
             {isDesktop && (
               <button
-                onClick={handleCheckForUpdates}
-                disabled={updateStatus === "checking" || updateStatus === "downloading" || updateStatus === "downloaded"}
+                onClick={updateStatus === "downloaded" ? installAndRestart : handleCheckForUpdates}
+                disabled={updateStatus === "checking" || updateStatus === "downloading"}
                 className="flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-white/5 disabled:opacity-50"
                 style={{
                   borderColor: "var(--color-border)",
