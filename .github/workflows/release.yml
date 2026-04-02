@@ -167,12 +167,12 @@ jobs:
 
           echo "Found release asset: $TAR_GZ_NAME"
 
-          # Download the signature file from release and extract the signature key
-          # The .sig file uploaded by tauri-action is base64-encoded; decode it and extract
-          # the second line which contains the actual minisign signature (RUST...)
+          # The Tauri v2 updater expects the raw content of the .sig file as the signature.
+          # The .sig file is base64-encoded minisign format; the updater will base64-decode
+          # it to get the text minisign format, then parse and verify the signature.
           SIG_NAME="${TAR_GZ_NAME}.sig"
-          gh release download "${GITHUB_REF_NAME}" -p "$SIG_NAME" -O /tmp/signature.b64
-          SIG=$(base64 -d < /tmp/signature.b64 | sed -n '2p')
+          gh release download "${GITHUB_REF_NAME}" -p "$SIG_NAME" -O /tmp/signature.sig
+          SIG=$(tr -d '\n\r' < /tmp/signature.sig)
 
           DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}/${TAR_GZ_NAME}"
 

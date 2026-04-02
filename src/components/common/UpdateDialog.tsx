@@ -277,7 +277,7 @@ export const UpdateDialog = (): React.JSX.Element | null => {
 
             <div className="mb-4 flex items-start gap-2 rounded border p-2 text-sm" style={{ backgroundColor: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>
               <AlertCircle className="mt-0.5 size-4 shrink-0 text-red-400" />
-              <span style={{ color: 'var(--color-text-muted)' }}>
+              <span className="break-all" style={{ color: 'var(--color-text-muted)' }}>
                 {downloadError ?? 'Unknown download error'}
               </span>
             </div>
