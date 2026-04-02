@@ -289,6 +289,120 @@ impl SessionSearcher {
         }
     }
 
+    /// Find a session by its exact UUID across all projects.
+    pub fn find_session_by_id(
+        &mut self,
+        session_id: &str,
+    ) -> crate::types::domain::FindSessionByIdResult {
+        use crate::types::domain::FindSessionByIdResult;
+
+        let entries = match self.fs_provider.read_dir(&self.projects_dir) {
+            Ok(e) => e,
+            Err(_) => {
+                return FindSessionByIdResult {
+                    found: false,
+                    project_id: None,
+                    session: None,
+                }
+            }
+        };
+
+        for entry in entries {
+            if !entry.is_directory {
+                continue;
+            }
+            let session_file = self.projects_dir.join(&entry.name).join(format!(
+                "{}.jsonl",
+                session_id
+            ));
+            if self.fs_provider.exists(&session_file).unwrap_or(false) {
+                let project_id = entry.name.clone();
+                let session = self
+                    .project_scanner
+                    .get_session_by_id(&project_id, session_id);
+                return FindSessionByIdResult {
+                    found: true,
+                    project_id: Some(project_id),
+                    session,
+                };
+            }
+        }
+
+        FindSessionByIdResult {
+            found: false,
+            project_id: None,
+            session: None,
+        }
+    }
+
+    /// Find sessions whose IDs contain the given fragment (case-insensitive).
+    pub fn find_sessions_by_partial_id(
+        &mut self,
+        fragment: &str,
+        max_results: usize,
+    ) -> crate::types::domain::FindSessionsByPartialIdResult {
+        use crate::types::domain::{FindSessionsByPartialIdResult, PartialIdMatch};
+
+        let lower_fragment = fragment.to_lowercase();
+        let entries = match self.fs_provider.read_dir(&self.projects_dir) {
+            Ok(e) => e,
+            Err(_) => {
+                return FindSessionsByPartialIdResult {
+                    found: false,
+                    results: vec![],
+                }
+            }
+        };
+
+        let mut all_matches: Vec<PartialIdMatch> = Vec::new();
+
+        for entry in entries {
+            if !entry.is_directory {
+                continue;
+            }
+            let project_path = self.projects_dir.join(&entry.name);
+            let project_id = entry.name.clone();
+
+            let session_entries = match self.fs_provider.read_dir(&project_path) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            for se in session_entries {
+                if !se.is_file || !se.name.ends_with(".jsonl") {
+                    continue;
+                }
+                if !se.name.to_lowercase().contains(&lower_fragment) {
+                    continue;
+                }
+                let session_id = se.name.trim_end_matches(".jsonl").to_string();
+                if let Some(session) = self
+                    .project_scanner
+                    .get_session_by_id(&project_id, &session_id) {
+                    all_matches.push(PartialIdMatch {
+                        project_id: project_id.clone(),
+                        session,
+                    });
+                    if all_matches.len() >= max_results {
+                        break;
+                    }
+                }
+            }
+
+            if all_matches.len() >= max_results {
+                break;
+            }
+        }
+
+        all_matches.sort_by(|a, b| b.session.created_at.cmp(&a.session.created_at));
+
+        let found = !all_matches.is_empty();
+        FindSessionsByPartialIdResult {
+            found,
+            results: all_matches,
+        }
+    }
+
     /// Search a single session file for a query string.
     fn search_session_file(
         &mut self,

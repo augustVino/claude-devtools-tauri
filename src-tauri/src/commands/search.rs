@@ -85,3 +85,47 @@ pub fn create_searcher_state(
 ) -> Arc<Mutex<SessionSearcher>> {
     Arc::new(Mutex::new(SessionSearcher::new(projects_dir, todos_dir, fs_provider, None)))
 }
+
+/// Find a session by its exact UUID across all projects.
+#[tauri::command]
+pub async fn find_session_by_id(
+    session_id: String,
+    searcher: State<'_, Arc<Mutex<SessionSearcher>>>,
+) -> Result<crate::types::domain::FindSessionByIdResult, String> {
+    let safe_session_id = crate::commands::guards::validate_session_id(&session_id)?;
+
+    let searcher = searcher.inner().clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<crate::types::domain::FindSessionByIdResult, String> {
+        let mut searcher = searcher.lock().map_err(|e| e.to_string())?;
+        Ok(searcher.find_session_by_id(&safe_session_id))
+    })
+    .await
+    .map_err(|e| format!("find_session_by_id task panicked: {}", e))?;
+    result
+}
+
+/// Find sessions whose IDs contain the given fragment (case-insensitive).
+#[tauri::command]
+pub async fn find_sessions_by_partial_id(
+    fragment: String,
+    max_results: Option<usize>,
+    searcher: State<'_, Arc<Mutex<SessionSearcher>>>,
+) -> Result<crate::types::domain::FindSessionsByPartialIdResult, String> {
+    let max = max_results.unwrap_or(20).min(100).max(1);
+
+    if fragment.trim().len() < 3 {
+        return Ok(crate::types::domain::FindSessionsByPartialIdResult {
+            found: false,
+            results: vec![],
+        });
+    }
+
+    let searcher = searcher.inner().clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<crate::types::domain::FindSessionsByPartialIdResult, String> {
+        let mut searcher = searcher.lock().map_err(|e| e.to_string())?;
+        Ok(searcher.find_sessions_by_partial_id(&fragment, max))
+    })
+    .await
+    .map_err(|e| format!("find_sessions_by_partial_id task panicked: {}", e))?;
+    result
+}

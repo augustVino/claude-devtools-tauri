@@ -135,6 +135,15 @@ pub fn build_routes() -> Router<HttpState> {
             get(search::search_sessions),
         )
         .route("/api/search", get(search::search_all_projects))
+        // Session ID lookup
+        .route(
+            "/api/sessions/{session_id}/locate",
+            get(search::find_session_by_id),
+        )
+        .route(
+            "/api/sessions/search-by-id/{fragment}",
+            get(search::find_sessions_by_partial_id),
+        )
         // Config
         .route("/api/config", get(config::get_config))
         .route("/api/config/update", post(config::update_config))

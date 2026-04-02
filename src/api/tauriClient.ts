@@ -35,6 +35,8 @@ import type {
   RepositoryGroup,
   RawSubagentDetail,
   ConversationGroup,
+  FindSessionByIdResult,
+  FindSessionsByPartialIdResult,
 } from "@main/types";
 import type { WaterfallData } from "@shared/types/visualization";
 import {
@@ -188,6 +190,16 @@ export class TauriAPIClient implements ElectronAPI {
     maxResults?: number,
   ): Promise<SearchSessionsResult> =>
     invoke("search_all_projects", { query, maxResults });
+
+  readonly findSessionById = (
+    sessionId: string,
+  ): Promise<FindSessionByIdResult> =>
+    invoke("find_session_by_id", { sessionId });
+
+  readonly findSessionsByPartialId = (
+    fragment: string,
+  ): Promise<FindSessionsByPartialIdResult> =>
+    invoke("find_sessions_by_partial_id", { fragment });
 
   // ===========================================================================
   // Validation commands

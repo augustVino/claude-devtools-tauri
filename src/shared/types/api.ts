@@ -28,6 +28,8 @@ import type {
   SessionsByIdsOptions,
   SessionsPaginationOptions,
   RawSubagentDetail,
+  FindSessionByIdResult,
+  FindSessionsByPartialIdResult,
 } from "@main/types";
 
 // =============================================================================
@@ -356,6 +358,10 @@ export interface ElectronAPI {
     query: string,
     maxResults?: number,
   ) => Promise<SearchSessionsResult>;
+  findSessionById: (sessionId: string) => Promise<FindSessionByIdResult>;
+  findSessionsByPartialId: (
+    fragment: string,
+  ) => Promise<FindSessionsByPartialIdResult>;
   getSessionDetail: (
     projectId: string,
     sessionId: string,

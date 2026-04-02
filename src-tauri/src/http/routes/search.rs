@@ -84,3 +84,50 @@ pub async fn search_all_projects(
     let result = searcher.search_all_projects(&query, max);
     Ok(Json(result))
 }
+
+/// Find a session by its exact UUID across all projects.
+///
+/// GET /api/sessions/{session_id}/locate
+pub async fn find_session_by_id(
+    State(state): State<HttpState>,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> Result<Json<crate::types::domain::FindSessionByIdResult>, (StatusCode, Json<super::ErrorResponse>)> {
+    let safe_session_id = guards::validate_session_id(&session_id)
+        .map_err(|e| error_json(e))?;
+
+    let mut searcher = state
+        .searcher
+        .lock()
+        .map_err(|e| error_json(e.to_string()))?;
+    Ok(Json(searcher.find_session_by_id(&safe_session_id)))
+}
+
+/// Find sessions whose IDs contain the given fragment (case-insensitive).
+///
+/// GET /api/sessions/search-by-id/{fragment}
+pub async fn find_sessions_by_partial_id(
+    State(state): State<HttpState>,
+    axum::extract::Path(fragment): axum::extract::Path<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<crate::types::domain::FindSessionsByPartialIdResult>, (StatusCode, Json<super::ErrorResponse>)> {
+    let fragment = fragment.trim().to_string();
+    if fragment.len() < 3 {
+        return Ok(Json(crate::types::domain::FindSessionsByPartialIdResult {
+            found: false,
+            results: vec![],
+        }));
+    }
+
+    let max_results = params
+        .get("maxResults")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(20)
+        .min(100)
+        .max(1);
+
+    let mut searcher = state
+        .searcher
+        .lock()
+        .map_err(|e| error_json(e.to_string()))?;
+    Ok(Json(searcher.find_sessions_by_partial_id(&fragment, max_results)))
+}

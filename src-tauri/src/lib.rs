@@ -335,6 +335,8 @@ pub fn run() {
       commands::config::check_projects_dir_exists,
       commands::search::search_sessions,
       commands::search::search_all_projects,
+      commands::search::find_session_by_id,
+      commands::search::find_sessions_by_partial_id,
       commands::validation::validate_path,
       commands::validation::validate_mentions,
       commands::validation::scroll_to_line,

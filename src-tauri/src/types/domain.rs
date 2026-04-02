@@ -244,6 +244,31 @@ pub struct SearchSessionsResult {
     pub is_partial: Option<bool>,
 }
 
+/// Result of finding a session by its exact ID across all projects.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct FindSessionByIdResult {
+    pub found: bool,
+    #[serde(rename = "projectId", skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<Session>,
+}
+
+/// A single match in a partial ID search.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct PartialIdMatch {
+    #[serde(rename = "projectId")]
+    pub project_id: String,
+    pub session: Session,
+}
+
+/// Result of finding sessions by a partial ID fragment across all projects.
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct FindSessionsByPartialIdResult {
+    pub found: bool,
+    pub results: Vec<PartialIdMatch>,
+}
+
 impl Eq for SearchResult {}
 
 impl Ord for SearchResult {
