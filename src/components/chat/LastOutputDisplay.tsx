@@ -156,7 +156,9 @@ export const LastOutputDisplay = ({
             className="max-h-96 overflow-y-auto whitespace-pre-wrap break-words font-mono text-sm"
             style={{ color: 'var(--color-text)' }}
           >
-            {lastOutput.toolResult}
+            {typeof lastOutput.toolResult === 'string'
+              ? lastOutput.toolResult
+              : JSON.stringify(lastOutput.toolResult)}
           </pre>
         </div>
       </div>

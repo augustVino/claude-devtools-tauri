@@ -11,6 +11,36 @@ import type { SemanticStep } from '../types/data';
 import type { AIGroupLastOutput } from '../types/groups';
 
 /**
+ * Normalize tool result content to a string.
+ *
+ * The JSONL data can have `content` as either a plain string or an array of
+ * content blocks like `[{type: "text", text: "..."}]`. The TypeScript type
+ * says `string` but the runtime value can be an array (the Rust backend uses
+ * `serde_json::Value`). This helper ensures we always produce a string for
+ * rendering.
+ */
+function normalizeContentToString(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((block: unknown) => {
+        if (
+          typeof block === 'object' &&
+          block !== null &&
+          'text' in block &&
+          typeof (block as { text: unknown }).text === 'string'
+        ) {
+          return (block as { text: string }).text;
+        }
+        return JSON.stringify(block);
+      })
+      .join('\n');
+  }
+  if (content != null) return JSON.stringify(content);
+  return '';
+}
+
+/**
  * Find the last visible output in the AI Group.
  *
  * Strategy:
@@ -127,7 +157,7 @@ export function findLastOutput(
       return {
         type: 'tool_result',
         toolName: step.content.toolName,
-        toolResult: step.content.toolResultContent,
+        toolResult: normalizeContentToString(step.content.toolResultContent),
         isError: step.content.isError ?? false,
         timestamp: step.startTime,
       };
