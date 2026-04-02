@@ -248,7 +248,7 @@ pub struct SearchSessionsResult {
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct FindSessionByIdResult {
     pub found: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "projectId", skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<Session>,
@@ -257,6 +257,7 @@ pub struct FindSessionByIdResult {
 /// A single match in a partial ID search.
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct PartialIdMatch {
+    #[serde(rename = "projectId")]
     pub project_id: String,
     pub session: Session,
 }
