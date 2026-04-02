@@ -499,6 +499,72 @@ impl ProjectScanner {
         preview
     }
 
+    /// Get a single session's metadata by its ID within a project.
+    /// More efficient than list_sessions + find when you only need one session.
+    pub fn get_session_by_id(&self, project_id: &str, session_id: &str) -> Option<Session> {
+        let base_dir = path_decoder::extract_base_dir(project_id);
+        let project_path = self.projects_dir.join(&base_dir);
+        let session_file_name = format!("{}.jsonl", session_id);
+        let session_path = project_path.join(&session_file_name);
+
+        if !self.fs_provider.exists(&session_path).unwrap_or(false) {
+            return None;
+        }
+
+        // Get file stat for timestamps
+        let stat = self.fs_provider.stat(&session_path).ok()?;
+        let mtime_ms = stat.mtime_ms;
+        let birthtime_ms = stat.birthtime_ms;
+
+        // Skip noise-only sessions (local filesystem only)
+        if self.fs_provider.provider_type() != "ssh" {
+            if !crate::discovery::session_content_filter::has_non_noise_messages(&session_path, self.fs_provider.as_ref()) {
+                return None;
+            }
+        }
+
+        // Extract preview (first message, message count, etc.)
+        let preview = self.extract_session_preview(&session_path, Some(mtime_ms));
+
+        // Skip sessions that couldn't be read
+        if preview.message_count == 0 && preview.first_message.is_none() {
+            return None;
+        }
+
+        let decoded_path = preview
+            .cwd
+            .unwrap_or_else(|| self.resolve_project_path(&base_dir));
+
+        let created_at = preview
+            .first_timestamp
+            .as_ref()
+            .and_then(|ts| {
+                chrono::DateTime::parse_from_rfc3339(ts)
+                    .or_else(|_| chrono::DateTime::parse_from_rfc2822(ts))
+                    .ok()
+                    .and_then(|dt| dt.timestamp_millis().try_into().ok())
+            })
+            .unwrap_or(birthtime_ms);
+
+        Some(Session {
+            id: session_id.to_string(),
+            project_id: project_id.to_string(),
+            project_path: decoded_path,
+            created_at,
+            todo_data: self.load_todo_data(session_id),
+            first_message: preview.first_message,
+            message_timestamp: preview.first_timestamp,
+            has_subagents: preview.has_task_calls,
+            message_count: preview.message_count,
+            is_ongoing: preview.is_ongoing,
+            git_branch: preview.git_branch,
+            metadata_level: Some(SessionMetadataLevel::Light),
+            context_consumption: None,
+            compaction_count: None,
+            phase_breakdown: None,
+        })
+    }
+
     /// Get the path to a session file.
     pub fn get_session_path(&self, project_id: &str, session_id: &str) -> PathBuf {
         let base_dir = path_decoder::extract_base_dir(project_id);

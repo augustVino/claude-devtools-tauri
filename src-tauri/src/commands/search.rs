@@ -113,6 +113,13 @@ pub async fn find_sessions_by_partial_id(
 ) -> Result<crate::types::domain::FindSessionsByPartialIdResult, String> {
     let max = max_results.unwrap_or(20).min(100).max(1);
 
+    if fragment.trim().len() < 3 {
+        return Ok(crate::types::domain::FindSessionsByPartialIdResult {
+            found: false,
+            results: vec![],
+        });
+    }
+
     let searcher = searcher.inner().clone();
     let result = tokio::task::spawn_blocking(move || -> Result<crate::types::domain::FindSessionsByPartialIdResult, String> {
         let mut searcher = searcher.lock().map_err(|e| e.to_string())?;

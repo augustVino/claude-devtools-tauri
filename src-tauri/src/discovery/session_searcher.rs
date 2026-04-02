@@ -317,10 +317,9 @@ impl SessionSearcher {
             ));
             if self.fs_provider.exists(&session_file).unwrap_or(false) {
                 let project_id = entry.name.clone();
-                let sessions = self
+                let session = self
                     .project_scanner
-                    .list_sessions(&project_id);
-                let session = sessions.into_iter().find(|s| s.id == session_id);
+                    .get_session_by_id(&project_id, session_id);
                 return FindSessionByIdResult {
                     found: true,
                     project_id: Some(project_id),
@@ -377,10 +376,9 @@ impl SessionSearcher {
                     continue;
                 }
                 let session_id = se.name.trim_end_matches(".jsonl").to_string();
-                let sessions = self
+                if let Some(session) = self
                     .project_scanner
-                    .list_sessions(&project_id);
-                if let Some(session) = sessions.into_iter().find(|s| s.id == session_id) {
+                    .get_session_by_id(&project_id, &session_id) {
                     all_matches.push(PartialIdMatch {
                         project_id: project_id.clone(),
                         session,

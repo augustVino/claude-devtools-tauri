@@ -110,6 +110,14 @@ pub async fn find_sessions_by_partial_id(
     axum::extract::Path(fragment): axum::extract::Path<String>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<crate::types::domain::FindSessionsByPartialIdResult>, (StatusCode, Json<super::ErrorResponse>)> {
+    let fragment = fragment.trim().to_string();
+    if fragment.len() < 3 {
+        return Ok(Json(crate::types::domain::FindSessionsByPartialIdResult {
+            found: false,
+            results: vec![],
+        }));
+    }
+
     let max_results = params
         .get("maxResults")
         .and_then(|v| v.parse::<usize>().ok())
