@@ -332,25 +332,27 @@ impl SshConnectionManager {
                     }
                 }
 
-                // Health check failed — clean up
+                // Health check failed — clean up safely.
+                // Use take() to atomically claim the connection, preventing
+                // double-cleanup if disconnect() is called concurrently.
                 log::info!("SSH health monitor: cleaning up disconnected session");
 
-                // Dispose SFTP resources (read lock first)
-                {
-                    let conn = connection_lock.read().await;
-                    if let Some(ref c) = *conn {
-                        c.fs_provider.dispose_async().await;
-                    }
-                }
-
-                // Set connection to None (write lock)
-                {
+                let taken = {
                     let mut conn = connection_lock.write().await;
-                    *conn = None;
-                }
+                    conn.take()
+                };
 
-                // Broadcast disconnected status
-                let _ = sender.send(SshConnectionStatus::disconnected());
+                if let Some(mut c) = taken {
+                    let _ = c.fs_provider.dispose_async().await;
+                    let _ = c.session
+                        .disconnect(russh::Disconnect::ByApplication, "", "")
+                        .await;
+                    let _ = sender.send(SshConnectionStatus::disconnected());
+                } else {
+                    log::info!(
+                        "SSH health monitor: connection already cleaned up by disconnect()"
+                    );
+                }
             });
         }
 
@@ -369,34 +371,30 @@ impl SshConnectionManager {
     /// # Events emitted
     /// - `Disconnected` (if there was an active connection)
     pub async fn disconnect(&self) -> Result<SshConnectionStatus, String> {
-        // 先释放 SFTP 资源（在获取写锁之前）
-        {
-            let conn = self.connection.read().await;
-            if let Some(ref connection) = *conn {
-                connection.fs_provider.dispose_async().await;
-            }
-        }
+        // Atomically claim the connection via take() — prevents double-cleanup
+        // if the health monitor is concurrently cleaning up.
+        let taken = {
+            let mut conn = self.connection.write().await;
+            conn.take()
+        };
 
-        // 获取写锁，停止监控并断开连接
-        let mut conn = self.connection.write().await;
-        if conn.is_none() {
-            return Ok(SshConnectionStatus::disconnected());
-        }
+        let status = SshConnectionStatus::disconnected();
 
-        if let Some(ref mut connection) = *conn {
-            // Signal monitor to stop
+        if let Some(mut connection) = taken {
+            // Signal monitor to stop (no-op if already exited)
             let _ = connection.monitor_stop.send(true);
 
-            // Graceful disconnect
+            // Dispose SFTP resources
+            connection.fs_provider.dispose_async().await;
+
+            // Graceful SSH disconnect
             let _ = connection
                 .session
                 .disconnect(russh::Disconnect::ByApplication, "", "")
                 .await;
-        }
 
-        *conn = None;
-        let status = SshConnectionStatus::disconnected();
-        let _ = self.event_sender.send(status.clone());
+            let _ = self.event_sender.send(status.clone());
+        }
 
         Ok(status)
     }

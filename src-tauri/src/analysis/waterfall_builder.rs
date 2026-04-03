@@ -8,6 +8,8 @@
 
 use std::collections::HashSet;
 
+use crate::utils::timestamp::parse_ts_ms_opt;
+
 use crate::types::chunks::{Chunk, Process};
 
 // =============================================================================
@@ -89,10 +91,8 @@ pub fn build_waterfall_data(chunks: &[Chunk], processes: &[Process]) -> Waterfal
             for tool_exec in &ai.tool_executions {
                 let end_time = tool_exec
                     .end_time
-                    .as_deref()
-                    .and_then(parse_ts_ms)
-                    .unwrap_or_else(|| parse_ts_ms(&tool_exec.start_time).unwrap_or(0));
-                let start_time = parse_ts_ms(&tool_exec.start_time).unwrap_or(0);
+                    .unwrap_or(tool_exec.start_time);
+                let start_time = tool_exec.start_time;
                 let duration_ms = tool_exec
                     .duration_ms
                     .unwrap_or_else(|| end_time.saturating_sub(start_time));
@@ -246,12 +246,6 @@ fn process_label(process: &Process) -> String {
         .unwrap_or_else(|| process.id.clone())
 }
 
-/// Parse an RFC 3339 timestamp string to epoch milliseconds.
-fn parse_ts_ms(ts: &str) -> Option<u64> {
-    chrono::DateTime::parse_from_rfc3339(ts)
-        .ok()
-        .map(|dt| dt.timestamp_millis() as u64)
-}
 
 // =============================================================================
 // Tests
@@ -323,9 +317,9 @@ mod tests {
     }
 
     fn make_tool_execution(id: &str, name: &str, start: &str, end: Option<&str>) -> ToolExecution {
-        let duration_ms = end.and_then(|e| parse_ts_ms(start).and_then(|s| {
-            parse_ts_ms(e).map(|end_ms| end_ms.saturating_sub(s))
-        }));
+        let start_ms = parse_ts_ms_opt(start).unwrap_or(0);
+        let end_ms = end.and_then(|e| parse_ts_ms_opt(e));
+        let duration_ms = end_ms.map(|e| e.saturating_sub(start_ms));
         ToolExecution {
             tool_call: ToolCall {
                 id: id.to_string(),
@@ -336,8 +330,8 @@ mod tests {
                 task_subagent_type: None,
             },
             result: None,
-            start_time: start.to_string(),
-            end_time: end.map(String::from),
+            start_time: start_ms,
+            end_time: end_ms,
             duration_ms,
         }
     }
@@ -526,7 +520,7 @@ mod tests {
             Some("2026-01-01T00:00:02Z"),
         );
         // Use timestamps in the same range as the RFC3339-parsed tool times
-        let base_ts = parse_ts_ms("2026-01-01T00:00:00Z").unwrap();
+        let base_ts = parse_ts_ms_opt("2026-01-01T00:00:00Z").unwrap();
         let process = make_process("sub-1", base_ts + 1500, base_ts + 3000, None, None);
         let chunks = vec![make_ai_chunk("a1", base_ts + 1000, base_ts + 4000, vec![tool_exec], vec![process])];
         let data = build_waterfall_data(&chunks, &[]);
@@ -688,18 +682,18 @@ mod tests {
     #[test]
     fn test_parse_ts_ms_valid() {
         assert_eq!(
-            parse_ts_ms("2026-01-01T00:00:00Z"),
+            parse_ts_ms_opt("2026-01-01T00:00:00Z"),
             Some(1767225600000)
         );
     }
 
     #[test]
     fn test_parse_ts_ms_invalid() {
-        assert_eq!(parse_ts_ms("not-a-timestamp"), None);
+        assert_eq!(parse_ts_ms_opt("not-a-timestamp"), None);
     }
 
     #[test]
     fn test_parse_ts_ms_empty() {
-        assert_eq!(parse_ts_ms(""), None);
+        assert_eq!(parse_ts_ms_opt(""), None);
     }
 }

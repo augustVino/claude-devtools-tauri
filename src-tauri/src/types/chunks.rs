@@ -137,9 +137,9 @@ pub struct ToolExecution {
     pub tool_call: ToolCall,
     pub result: Option<ToolResult>,
     #[serde(rename = "startTime")]
-    pub start_time: String,
+    pub start_time: u64,
     #[serde(rename = "endTime")]
-    pub end_time: Option<String>,
+    pub end_time: Option<u64>,
     #[serde(rename = "durationMs")]
     pub duration_ms: Option<u64>,
 }

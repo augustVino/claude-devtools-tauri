@@ -3,6 +3,7 @@
  */
 
 import { api } from '@renderer/api';
+import { cleanupProjectRefreshCoordination } from './sessionSlice';
 
 import { getSessionResetState } from '../utils/stateResetHelpers';
 
@@ -67,6 +68,12 @@ export const createProjectSlice: StateCreator<AppState, [], [], ProjectSlice> = 
 
   // Select a project and fetch its sessions (paginated)
   selectProject: (id: string) => {
+    // Cleanup old project's refresh coordination data
+    const prevId = get().selectedProjectId;
+    if (prevId && prevId !== id) {
+      cleanupProjectRefreshCoordination(prevId);
+    }
+
     const cached = get()._sessionCache.get(id);
 
     if (cached) {

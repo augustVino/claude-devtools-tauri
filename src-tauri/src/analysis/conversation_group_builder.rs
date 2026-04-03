@@ -15,6 +15,7 @@ use crate::parsing::{calculate_metrics, is_real_user_message};
 use crate::types::chunks::{ConversationGroup, Process, TaskExecution, ToolExecution};
 use crate::types::domain::MessageType;
 use crate::types::messages::ParsedMessage;
+use crate::utils::timestamp::parse_ts_ms;
 
 /// Build conversation groups using simplified grouping strategy.
 ///
@@ -138,14 +139,15 @@ fn separate_task_executions(
         .filter_map(|s| s.parent_task_id.as_deref().map(|tid| (tid, s)))
         .collect();
 
-    // Collect all tool calls: id -> (call, timestamp)
-    let tool_call_map: HashMap<&str, (&crate::types::messages::ToolCall, &str)> = responses
+    // Collect all tool calls: id -> (call, timestamp_ms)
+    let tool_call_map: HashMap<&str, (&crate::types::messages::ToolCall, u64)> = responses
         .iter()
         .filter(|m| m.message_type == MessageType::Assistant)
         .flat_map(|msg| {
+            let ts_ms = parse_ts_ms(&msg.timestamp);
             msg.tool_calls
                 .iter()
-                .map(|tc| (tc.id.as_str(), (tc, msg.timestamp.as_str())))
+                .map(move |tc| (tc.id.as_str(), (tc, ts_ms)))
         })
         .collect();
 
@@ -169,13 +171,8 @@ fn separate_task_executions(
         let subagent = subagent_map.get(source_id);
         if call.name == "Task" {
             if let Some(sub) = subagent {
-                let call_ts_ms = parse_ts_ms(call_ts);
                 let result_ts_ms = parse_ts_ms(&msg.timestamp);
-                let duration_ms = if result_ts_ms > call_ts_ms {
-                    (result_ts_ms - call_ts_ms) as u64
-                } else {
-                    0
-                };
+                let duration_ms = result_ts_ms.saturating_sub(call_ts);
 
                 task_executions.push(TaskExecution {
                     task_id: call.id.clone(),
@@ -183,8 +180,8 @@ fn separate_task_executions(
                     input: call.input.clone(),
                     subagent: (*sub).clone(),
                     tool_result: msg.clone(),
-                    task_call_timestamp: call_ts_ms,
-                    result_timestamp: result_ts_ms,
+                    task_call_timestamp: call_ts as f64,
+                    result_timestamp: result_ts_ms as f64,
                     duration_ms,
                 });
                 continue;
@@ -194,14 +191,18 @@ fn separate_task_executions(
         // Regular tool execution
         let result = msg.tool_results.first();
         if let Some(r) = result {
-            let end_time = Some(msg.timestamp.clone());
-            let duration_ms = parse_duration_ms(call_ts, &msg.timestamp);
+            let end_time_ms = parse_ts_ms(&msg.timestamp);
+            let duration_ms = if end_time_ms > call_ts {
+                Some(end_time_ms - call_ts)
+            } else {
+                None
+            };
 
             regular_tool_executions.push(ToolExecution {
                 tool_call: (*call).clone(),
                 result: Some(r.clone()),
-                start_time: call_ts.to_string(),
-                end_time,
+                start_time: call_ts,
+                end_time: Some(end_time_ms),
                 duration_ms,
             });
         }
@@ -223,12 +224,12 @@ fn link_subagents_to_group(
     // If no next user message, use a far-future timestamp so all subagents match
     let group_end = next_user_msg
         .map(|m| parse_ts_ms(&m.timestamp))
-        .unwrap_or(f64::MAX);
+        .unwrap_or(u64::MAX);
 
     all_subagents
         .iter()
         .filter(|s| {
-            let s_start = s.start_time as f64;
+            let s_start = s.start_time;
             s_start >= group_start && s_start < group_end
         })
         .cloned()
@@ -242,11 +243,11 @@ fn calculate_group_timing(
     user_msg: &ParsedMessage,
     ai_responses: &[ParsedMessage],
 ) -> (f64, f64, u64) {
-    let start_time = parse_ts_ms(&user_msg.timestamp);
+    let start_time = parse_ts_ms(&user_msg.timestamp) as f64;
 
     let mut end_time = start_time;
     for resp in ai_responses {
-        let ts = parse_ts_ms(&resp.timestamp);
+        let ts = parse_ts_ms(&resp.timestamp) as f64;
         if ts > end_time {
             end_time = ts;
         }
@@ -265,23 +266,8 @@ fn calculate_group_timing(
 // Timestamp Helpers
 // =============================================================================
 
-/// Parse an RFC 3339 timestamp string to epoch milliseconds as f64.
-///
-/// Returns 0.0 if the timestamp cannot be parsed.
-fn parse_ts_ms(ts: &str) -> f64 {
-    chrono::DateTime::parse_from_rfc3339(ts)
-        .map(|dt| dt.timestamp_millis() as f64)
-        .unwrap_or(0.0)
-}
-
-/// Parse the duration in milliseconds between two RFC 3339 timestamp strings.
-///
-/// Returns `None` if either timestamp cannot be parsed.
-fn parse_duration_ms(start: &str, end: &str) -> Option<u64> {
-    let start_dt = chrono::DateTime::parse_from_rfc3339(start).ok()?;
-    let end_dt = chrono::DateTime::parse_from_rfc3339(end).ok()?;
-    Some(end_dt.timestamp_millis().saturating_sub(start_dt.timestamp_millis()) as u64)
-}
+// parse_ts_ms is provided by crate::utils::timestamp (returns u64).
+// Callers needing f64 use `parse_ts_ms(...) as f64`.
 
 // =============================================================================
 // Tests

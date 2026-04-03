@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::types::chunks::ToolExecution;
 use crate::types::messages::{ParsedMessage, ToolCall, ToolResult};
+use crate::utils::timestamp::parse_ts_ms;
 
 /// Build tool execution tracking from parsed messages.
 ///
@@ -21,12 +22,13 @@ use crate::types::messages::{ParsedMessage, ToolCall, ToolResult};
 /// - **Pass 3**: Sort all executions by start time.
 pub fn build_tool_executions(messages: &[ParsedMessage]) -> Vec<ToolExecution> {
     // Pass 1: collect all tool calls keyed by their id
-    let tool_call_map: HashMap<String, (&ToolCall, String)> = messages
+    let tool_call_map: HashMap<String, (&ToolCall, u64)> = messages
         .iter()
         .flat_map(|msg| {
+            let ts_ms = parse_ts_ms(&msg.timestamp);
             msg.tool_calls
                 .iter()
-                .map(move |tc| (tc.id.clone(), (tc, msg.timestamp.clone())))
+                .map(move |tc| (tc.id.clone(), (tc, ts_ms)))
         })
         .collect();
 
@@ -38,20 +40,20 @@ pub fn build_tool_executions(messages: &[ParsedMessage]) -> Vec<ToolExecution> {
     for msg in messages {
         // Strategy A: use sourceToolUseID (most accurate for internal user messages)
         if let Some(ref source_id) = msg.source_tool_use_id {
-            if let Some(&(call, ref start_time)) = tool_call_map.get(source_id) {
+            if let Some(&(call, start_time)) = tool_call_map.get(source_id) {
                 if !msg.tool_results.is_empty() {
                     let result = &msg.tool_results[0];
                     matched_result_ids.insert(result.tool_use_id.clone());
                     matched_call_ids.insert(source_id.clone());
 
-                    let end_time = Some(msg.timestamp.clone());
-                    let duration_ms = parse_duration_ms(start_time, &msg.timestamp);
+                    let end_time = parse_ts_ms(&msg.timestamp);
+                    let duration_ms = compute_duration(start_time, end_time);
 
                     executions.push(ToolExecution {
                         tool_call: call.clone(),
                         result: Some(result.clone()),
-                        start_time: start_time.clone(),
-                        end_time,
+                        start_time,
+                        end_time: Some(end_time),
                         duration_ms,
                     });
                 }
@@ -65,17 +67,17 @@ pub fn build_tool_executions(messages: &[ParsedMessage]) -> Vec<ToolExecution> {
                 continue;
             }
 
-            if let Some(&(call, ref start_time)) = tool_call_map.get(&result.tool_use_id) {
+            if let Some(&(call, start_time)) = tool_call_map.get(&result.tool_use_id) {
                 matched_call_ids.insert(result.tool_use_id.clone());
 
-                let end_time = Some(msg.timestamp.clone());
-                let duration_ms = parse_duration_ms(start_time, &msg.timestamp);
+                let end_time = parse_ts_ms(&msg.timestamp);
+                let duration_ms = compute_duration(start_time, end_time);
 
                 executions.push(ToolExecution {
                     tool_call: call.clone(),
                     result: Some(result.clone()),
-                    start_time: start_time.clone(),
-                    end_time,
+                    start_time,
+                    end_time: Some(end_time),
                     duration_ms,
                 });
             }
@@ -88,7 +90,7 @@ pub fn build_tool_executions(messages: &[ParsedMessage]) -> Vec<ToolExecution> {
             executions.push(ToolExecution {
                 tool_call: (*call).clone(),
                 result: None,
-                start_time: start_time.clone(),
+                start_time: *start_time,
                 end_time: None,
                 duration_ms: None,
             });
@@ -101,13 +103,25 @@ pub fn build_tool_executions(messages: &[ParsedMessage]) -> Vec<ToolExecution> {
     executions
 }
 
+/// Compute the duration between two u64 timestamps, returning `Some(duration)`
+/// when `end > start`, or `None` otherwise.
+pub fn compute_duration(start: u64, end: u64) -> Option<u64> {
+    if end > start {
+        Some(end.saturating_sub(start))
+    } else {
+        None
+    }
+}
+
 /// Parse the duration in milliseconds between two RFC 3339 timestamp strings.
 ///
-/// Returns `None` if either timestamp cannot be parsed.
-pub fn parse_duration_ms(start: &str, end: &str) -> Option<u64> {
+/// Returns `None` if either timestamp cannot be parsed or if the duration is zero.
+#[cfg(test)]
+fn parse_duration_ms(start: &str, end: &str) -> Option<u64> {
     let start_dt = chrono::DateTime::parse_from_rfc3339(start).ok()?;
     let end_dt = chrono::DateTime::parse_from_rfc3339(end).ok()?;
-    Some(end_dt.timestamp_millis().saturating_sub(start_dt.timestamp_millis()) as u64)
+    let duration = end_dt.timestamp_millis().saturating_sub(start_dt.timestamp_millis()) as u64;
+    if duration > 0 { Some(duration) } else { None }
 }
 
 #[cfg(test)]
@@ -217,7 +231,7 @@ mod tests {
         assert_eq!(execs.len(), 1);
         assert_eq!(execs[0].tool_call.id, "tc1");
         assert!(execs[0].result.is_some());
-        assert_eq!(execs[0].end_time.as_deref(), Some("2026-01-01T00:00:02Z"));
+        assert_eq!(execs[0].end_time, Some(parse_ts_ms("2026-01-01T00:00:02Z")));
         assert_eq!(execs[0].duration_ms, Some(2000));
     }
 

@@ -3,6 +3,7 @@ use crate::types::domain::MessageType;
 use crate::types::messages::{
     SemanticStep, SemanticStepContent, SemanticStepType, StepTokens,
 };
+use crate::utils::timestamp::parse_ts_ms;
 
 /// Extract semantic steps from an AI chunk's responses and processes.
 ///
@@ -30,7 +31,7 @@ pub fn extract_semantic_steps(chunk: &AiChunk) -> Vec<SemanticStep> {
                         steps.push(SemanticStep {
                             id: format!("{}-thinking-{}", msg.uuid, step_id_counter),
                             step_type: SemanticStepType::Thinking,
-                            start_time: msg.timestamp.clone(),
+                            start_time: parse_ts_ms(&msg.timestamp),
                             end_time: None,
                             duration_ms: 0,
                             content: SemanticStepContent {
@@ -70,7 +71,7 @@ pub fn extract_semantic_steps(chunk: &AiChunk) -> Vec<SemanticStep> {
                         steps.push(SemanticStep {
                             id: id.clone(),
                             step_type: SemanticStepType::ToolCall,
-                            start_time: msg.timestamp.clone(),
+                            start_time: parse_ts_ms(&msg.timestamp),
                             end_time: None,
                             duration_ms: 0,
                             content: SemanticStepContent {
@@ -106,7 +107,7 @@ pub fn extract_semantic_steps(chunk: &AiChunk) -> Vec<SemanticStep> {
                         steps.push(SemanticStep {
                             id: format!("{}-output-{}", msg.uuid, step_id_counter),
                             step_type: SemanticStepType::Output,
-                            start_time: msg.timestamp.clone(),
+                            start_time: parse_ts_ms(&msg.timestamp),
                             end_time: None,
                             duration_ms: 0,
                             content: SemanticStepContent {
@@ -154,7 +155,7 @@ pub fn extract_semantic_steps(chunk: &AiChunk) -> Vec<SemanticStep> {
                 steps.push(SemanticStep {
                     id: result.tool_use_id.clone(),
                     step_type: SemanticStepType::ToolResult,
-                    start_time: msg.timestamp.clone(),
+                    start_time: parse_ts_ms(&msg.timestamp),
                     end_time: None,
                     duration_ms: 0,
                     content: SemanticStepContent {
@@ -203,7 +204,7 @@ pub fn extract_semantic_steps(chunk: &AiChunk) -> Vec<SemanticStep> {
                         steps.push(SemanticStep {
                             id: format!("{}-interruption-{}", msg.uuid, step_id_counter),
                             step_type: SemanticStepType::Interruption,
-                            start_time: msg.timestamp.clone(),
+                            start_time: parse_ts_ms(&msg.timestamp),
                             end_time: None,
                             duration_ms: 0,
                             content: SemanticStepContent {
@@ -239,7 +240,7 @@ pub fn extract_semantic_steps(chunk: &AiChunk) -> Vec<SemanticStep> {
                             steps.push(SemanticStep {
                                 id: format!("{}-interruption-{}", msg.uuid, step_id_counter),
                                 step_type: SemanticStepType::Interruption,
-                                start_time: msg.timestamp.clone(),
+                                start_time: parse_ts_ms(&msg.timestamp),
                                 end_time: None,
                                 duration_ms: 0,
                                 content: SemanticStepContent {
@@ -287,8 +288,8 @@ fn build_subagent_step(process: &Process) -> SemanticStep {
     SemanticStep {
         id: process.id.clone(),
         step_type: SemanticStepType::Subagent,
-        start_time: format_timestamp_ms(process.start_time),
-        end_time: Some(format_timestamp_ms(process.end_time)),
+        start_time: process.start_time,
+        end_time: Some(process.end_time),
         duration_ms: process.duration_ms,
         content: SemanticStepContent {
             subagent_id: Some(process.id.clone()),
@@ -318,13 +319,6 @@ fn build_subagent_step(process: &Process) -> SemanticStep {
 /// Uses the standard heuristic: `char_length / 4`.
 fn count_tokens(text: &str) -> u64 {
     ((text.len() as f64) / 4.0).ceil() as u64
-}
-
-/// Format a millisecond timestamp to ISO 8601 string.
-fn format_timestamp_ms(ms: u64) -> String {
-    chrono::DateTime::from_timestamp_millis(ms as i64)
-        .map(|dt| dt.to_rfc3339())
-        .unwrap_or_default()
 }
 
 // =============================================================================

@@ -183,7 +183,7 @@ export function asEnhancedChunkArray(chunks: Chunk[]): EnhancedChunk[] | null {
         base.endTime,
       ) as unknown as EnhancedChunk["endTime"];
     }
-    // SemanticStep times arrive as ISO strings from Rust — convert to Date objects
+    // SemanticStep times arrive as u64 milliseconds from Rust — convert to Date objects
     if (chunk.chunkType === "ai") {
       const record = base as Record<string, unknown>;
       if (
@@ -195,32 +195,32 @@ export function asEnhancedChunkArray(chunks: Chunk[]): EnhancedChunk[] | null {
         ).map((step) => ({
           ...step,
           startTime:
-            typeof step.startTime === "string"
+            typeof step.startTime === "number"
               ? new Date(step.startTime)
               : step.startTime,
           endTime:
-            step.endTime != null && typeof step.endTime === "string"
+            step.endTime != null && typeof step.endTime === "number"
               ? new Date(step.endTime)
               : step.endTime,
           effectiveEndTime:
             step.effectiveEndTime != null &&
-            typeof step.effectiveEndTime === "string"
+            typeof step.effectiveEndTime === "number"
               ? new Date(step.effectiveEndTime)
               : step.effectiveEndTime,
         }));
       }
-      // ToolExecution times also arrive as ISO strings — convert to Date objects
+      // ToolExecution times arrive as u64 milliseconds from Rust — convert to Date objects
       if (Array.isArray(record.toolExecutions)) {
         record.toolExecutions = (
           record.toolExecutions as Array<Record<string, unknown>>
         ).map((te) => ({
           ...te,
           startTime:
-            typeof te.startTime === "string"
+            typeof te.startTime === "number"
               ? new Date(te.startTime)
               : te.startTime,
           endTime:
-            te.endTime != null && typeof te.endTime === "string"
+            te.endTime != null && typeof te.endTime === "number"
               ? new Date(te.endTime)
               : te.endTime,
         }));
@@ -318,8 +318,9 @@ export function adaptWaterfallData(data: WaterfallDataRust): WaterfallData {
 // =============================================================================
 
 /**
- * Convert a number (milliseconds since epoch) or ISO string to a Date.
+ * Convert a number (milliseconds since epoch) to a Date.
  * Returns the value as-is if it is already a Date.
+ * String fallback retained for backward compatibility with cached/legacy data.
  */
 function toTimestamp(value: unknown): Date | undefined {
   if (value instanceof Date) return value;
@@ -342,7 +343,7 @@ function adaptProcess(process: Record<string, unknown>): Process {
 
 /**
  * Adapt a raw ToolExecution from the Rust backend.
- * Rust sends startTime as ISO string, endTime as optional ISO string.
+ * Rust sends startTime as u64 milliseconds, endTime as optional u64 milliseconds.
  */
 function adaptToolExecution(te: Record<string, unknown>): ToolExecution {
   return {
@@ -375,7 +376,7 @@ function adaptTaskExecution(taskExec: Record<string, unknown>): TaskExecution {
  * Convert a raw ConversationGroup from the Tauri backend to the frontend type.
  * - Top-level startTime/endTime (f64 ms) → Date
  * - Nested Process timestamps (u64 ms) → Date
- * - Nested ToolExecution timestamps (ISO strings) → Date
+ * - Nested ToolExecution timestamps (u64 milliseconds) → Date
  * - Nested TaskExecution timestamps (f64 ms) → Date
  */
 export function adaptConversationGroup(

@@ -27,6 +27,16 @@ const sessionRefreshQueued = new Set<string>();
 let sessionDetailFetchGeneration = 0;
 let agentConfigsCachedForProject = '';
 
+/**
+ * Cleanup coordination entries for a session when its tab is closed.
+ * Safe to call at any time — entries are only stale data, not live refs.
+ */
+export function cleanupSessionRefreshCoordination(refreshKey: string): void {
+  sessionRefreshGeneration.delete(refreshKey);
+  sessionRefreshInFlight.delete(refreshKey);
+  sessionRefreshQueued.delete(refreshKey);
+}
+
 import { getAllTabs } from '../utils/paneHelpers';
 
 import type { AppState } from '../types';
@@ -660,9 +670,15 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
       // Don't set error state - this is a background refresh
     } finally {
       sessionRefreshInFlight.delete(refreshKey);
+      // NOTE: Relies on cleanupSessionRefreshCoordination not being invoked between
+      // the delete() above and this has() check — both run in the same event-loop tick.
+      // Only re-trigger refresh if the key is still tracked (tab not closed mid-refresh)
       if (sessionRefreshQueued.has(refreshKey)) {
         sessionRefreshQueued.delete(refreshKey);
-        void get().refreshSessionInPlace(projectId, sessionId);
+        // Guard: if generation was cleaned up (tab closed), skip the queued refresh
+        if (sessionRefreshGeneration.has(refreshKey)) {
+          void get().refreshSessionInPlace(projectId, sessionId);
+        }
       }
     }
   },

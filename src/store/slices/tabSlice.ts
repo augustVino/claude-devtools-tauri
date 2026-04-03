@@ -28,6 +28,8 @@ import type { PaneLayout } from '@renderer/types/panes';
 import type { OpenTabOptions, Tab, TabInput, TabNavigationRequest } from '@renderer/types/tabs';
 import type { StateCreator } from 'zustand';
 
+import { cleanupSessionRefreshCoordination } from './sessionDetailSlice';
+
 // =============================================================================
 // Slice Interface
 // =============================================================================
@@ -197,8 +199,15 @@ export const createTabSlice: StateCreator<AppState, [], [], TabSlice> = (set, ge
     if (index === -1) return;
 
     // Cleanup per-tab UI state and session data
+    const closingTab = pane.tabs[index];
     state.cleanupTabUIState(tabId);
     state.cleanupTabSessionData(tabId);
+
+    // Cleanup refresh coordination entries to prevent stale data accumulation
+    if (closingTab.sessionId && closingTab.projectId) {
+      const refreshKey = `${closingTab.projectId}/${closingTab.sessionId}`;
+      cleanupSessionRefreshCoordination(refreshKey);
+    }
 
     const newTabs = pane.tabs.filter((t) => t.id !== tabId);
 
@@ -508,6 +517,9 @@ export const createTabSlice: StateCreator<AppState, [], [], TabSlice> = (set, ge
     const tabsToClose = pane.tabs.slice(index + 1);
     for (const tab of tabsToClose) {
       state.cleanupTabUIState(tab.id);
+      if (tab.sessionId && tab.projectId) {
+        cleanupSessionRefreshCoordination(`${tab.projectId}/${tab.sessionId}`);
+      }
     }
 
     const newTabs = pane.tabs.slice(0, index + 1);
@@ -535,6 +547,9 @@ export const createTabSlice: StateCreator<AppState, [], [], TabSlice> = (set, ge
     for (const tab of allTabs) {
       state.cleanupTabUIState(tab.id);
       state.cleanupTabSessionData(tab.id);
+      if (tab.sessionId && tab.projectId) {
+        cleanupSessionRefreshCoordination(`${tab.projectId}/${tab.sessionId}`);
+      }
     }
 
     // Reset to single empty pane
@@ -563,10 +578,21 @@ export const createTabSlice: StateCreator<AppState, [], [], TabSlice> = (set, ge
     const state = get();
     const idSet = new Set(tabIds);
 
+    // Collect tab objects for coordination cleanup before removing them
+    const allTabs = getAllTabs(state.paneLayout);
+    const tabsToRemove = allTabs.filter((t) => idSet.has(t.id));
+
     // Cleanup UI state and session data
     for (const id of idSet) {
       state.cleanupTabUIState(id);
       state.cleanupTabSessionData(id);
+    }
+
+    // Cleanup refresh coordination entries
+    for (const tab of tabsToRemove) {
+      if (tab.sessionId && tab.projectId) {
+        cleanupSessionRefreshCoordination(`${tab.projectId}/${tab.sessionId}`);
+      }
     }
 
     // Group tabs by pane for batch removal

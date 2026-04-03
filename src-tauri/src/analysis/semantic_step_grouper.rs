@@ -106,7 +106,7 @@ mod tests {
         SemanticStep {
             id: id.to_string(),
             step_type,
-            start_time: String::new(),
+            start_time: 0,
             end_time: None,
             duration_ms: 0,
             content: SemanticStepContent::default(),

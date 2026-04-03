@@ -13,6 +13,7 @@ use crate::parsing::message_classifier::{classify_messages, group_ai_messages};
 use crate::types::domain::{GroupedMessage, MessageCategory, SearchResult, SearchSessionsResult};
 use crate::utils::content_sanitizer::{extract_session_title_from_parsed, sanitize_display_content};
 use crate::utils::path_decoder;
+use crate::utils::timestamp::parse_ts_ms;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -321,7 +322,7 @@ impl SessionSearcher {
                     .project_scanner
                     .get_session_by_id(&project_id, session_id);
                 return FindSessionByIdResult {
-                    found: true,
+                    found: session.is_some(),
                     project_id: Some(project_id),
                     session,
                 };
@@ -488,7 +489,7 @@ impl SessionSearcher {
                     entries.push(SearchableEntry {
                         text,
                         message_type: "user".to_string(),
-                        timestamp: parse_timestamp(&message.timestamp),
+                        timestamp: parse_ts_ms(&message.timestamp),
                         group_id: Some(format!("user-{}", message.uuid)),
                         item_type: Some("user".to_string()),
                         message_uuid: Some(message.uuid.clone()),
@@ -528,7 +529,7 @@ impl SessionSearcher {
 
                     let timestamp = messages
                         .first()
-                        .map(|m| parse_timestamp(&m.timestamp))
+                        .map(|m| parse_ts_ms(&m.timestamp))
                         .unwrap_or(0);
                     let uuid = messages.first().map(|m| m.uuid.clone());
                     entries.push(SearchableEntry {
@@ -603,13 +604,6 @@ impl SessionSearcher {
             pos = absolute_pos + query.len();
         }
     }
-}
-
-/// Parse an RFC 3339 timestamp string to milliseconds since epoch.
-fn parse_timestamp(ts: &str) -> u64 {
-    chrono::DateTime::parse_from_rfc3339(ts)
-        .map(|dt| dt.timestamp_millis() as u64)
-        .unwrap_or(0)
 }
 
 /// 构建 SSH 快速搜索的分阶段边界索引（与 Electron 对齐）。

@@ -1,7 +1,10 @@
 //! SSH SFTP 文件系统提供者 — 基于 russh-sftp 的完整实现。
 //!
-//! 通过 `SftpSession` 执行远程文件操作，使用 `tokio::runtime::Handle::block_on()`
-//! 将异步 SFTP 调用桥接到同步的 `FsProvider` trait 方法。
+//! 通过 `SftpSession` 执行远程文件操作，使用 `tokio::task::block_in_place` +
+//! `Handle::block_on()` 将异步 SFTP 调用安全桥接到同步的 `FsProvider` trait 方法。
+//!
+//! `block_in_place` 告知 tokio 当前工作线程将阻塞，调度器会将其他任务移至其他线程，
+//! 从而避免在 tokio async 上下文中调用 `block_on` 导致的 panic。
 
 use std::path::Path;
 use std::sync::Arc;
@@ -109,16 +112,33 @@ impl SshFsProvider {
         }
     }
 
-    /// Block on an async SFTP operation using the stored tokio runtime handle.
+    /// Execute an async SFTP operation, safe to call from any context.
     ///
-    /// **WARNING:** Must NOT be called from within an async context on the same
-    /// tokio runtime — this will panic. Use `exists_async()` instead when calling
-    /// from async code.
-    fn block_on<F, T>(&self, f: F) -> T
+    /// When inside a tokio runtime, uses `block_in_place` to avoid panicking
+    /// on the same-runtime `block_on` call. When outside tokio (e.g. sync tests),
+    /// falls back to direct `block_on`.
+    fn blocking_sftp<F, T>(&self, f: F) -> T
     where
         F: std::future::Future<Output = T>,
     {
-        self.handle.block_on(f)
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                // Inside a tokio runtime — use block_in_place to tell the
+                // scheduler this thread will block, so it can move other
+                // tasks to another worker thread.
+                //
+                // Safety: `handle` from try_current() is always the same
+                // runtime as `self.handle`, because SshFsProvider is
+                // constructed via new(sftp, Handle::current()) on the same
+                // runtime. The cross-runtime block_on scenario cannot occur.
+                tokio::task::block_in_place(|| handle.block_on(f))
+            }
+            Err(_) => {
+                // Not inside a tokio runtime (e.g. plain unit test) —
+                // safe to use handle.block_on directly.
+                self.handle.block_on(f)
+            }
+        }
     }
 
     /// Async version of `exists` — safe to call from async contexts.
@@ -153,7 +173,7 @@ impl FsProvider for SshFsProvider {
 
     fn exists(&self, path: &Path) -> Result<bool, String> {
         let path_str = path.to_string_lossy().to_string();
-        match self.block_on(self.sftp.try_exists(&path_str)) {
+        match self.blocking_sftp(self.sftp.try_exists(&path_str)) {
             Ok(exists) => Ok(exists),
             Err(err) => {
                 let kind = classify_sftp_error(&err);
@@ -180,7 +200,7 @@ impl FsProvider for SshFsProvider {
         let mut last_err = None;
 
         for attempt in 0..=MAX_RETRIES {
-            match self.block_on(self.sftp.read(&path_str)) {
+            match self.blocking_sftp(self.sftp.read(&path_str)) {
                 Ok(bytes) => {
                     return String::from_utf8(bytes).map_err(|e| {
                         format!("Failed to decode UTF-8 for {}: {}", path.display(), e)
@@ -229,7 +249,7 @@ impl FsProvider for SshFsProvider {
         let mut last_err = None;
 
         for attempt in 0..=MAX_RETRIES {
-            match self.block_on(self.sftp.metadata(&path_str)) {
+            match self.blocking_sftp(self.sftp.metadata(&path_str)) {
                 Ok(metadata) => {
                     return Ok(FsStatResult {
                         size: metadata.len(),
@@ -276,7 +296,7 @@ impl FsProvider for SshFsProvider {
         let mut last_err = None;
 
         for attempt in 0..=MAX_RETRIES {
-            match self.block_on(self.sftp.read_dir(&path_str)) {
+            match self.blocking_sftp(self.sftp.read_dir(&path_str)) {
                 Ok(read_dir) => {
                     let entries: Vec<FsDirent> = read_dir
                         .map(|entry| {

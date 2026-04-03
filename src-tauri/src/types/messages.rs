@@ -105,9 +105,9 @@ pub struct SemanticStep {
     #[serde(rename = "type")]
     pub step_type: SemanticStepType,
     #[serde(rename = "startTime")]
-    pub start_time: String,
+    pub start_time: u64,
     #[serde(rename = "endTime", skip_serializing_if = "Option::is_none")]
-    pub end_time: Option<String>,
+    pub end_time: Option<u64>,
     #[serde(rename = "durationMs")]
     pub duration_ms: u64,
     pub content: SemanticStepContent,
@@ -123,7 +123,7 @@ pub struct SemanticStep {
     #[serde(rename = "sourceMessageId", skip_serializing_if = "Option::is_none")]
     pub source_message_id: Option<String>,
     #[serde(rename = "effectiveEndTime", skip_serializing_if = "Option::is_none")]
-    pub effective_end_time: Option<String>,
+    pub effective_end_time: Option<u64>,
     #[serde(rename = "effectiveDurationMs", skip_serializing_if = "Option::is_none")]
     pub effective_duration_ms: Option<u64>,
     #[serde(rename = "isGapFilled", skip_serializing_if = "Option::is_none")]

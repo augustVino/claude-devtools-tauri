@@ -10,6 +10,9 @@ pub mod path_decoder;
 pub mod regex_validation;
 pub mod session_state_detection;
 pub mod timeline_gap_filling;
+pub mod timestamp;
 
 // 导出路径解码器的所有公共项，供外部模块直接使用
 pub use path_decoder::*;
+// 导出时间戳解析工具
+pub use timestamp::{parse_ts_ms, parse_ts_ms_opt};

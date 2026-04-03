@@ -10,6 +10,7 @@ use crate::types::domain::{MessageCategory, Session, SessionMetrics};
 use crate::types::messages::ParsedMessage;
 use crate::utils::context_accumulator::calculate_step_context;
 use crate::utils::timeline_gap_filling::{fill_timeline_gaps, GapFillingInput};
+use crate::utils::timestamp::parse_ts_ms_opt;
 
 /// ChunkBuilder service - Builds visualization chunks from parsed session data.
 pub struct ChunkBuilder;
@@ -104,8 +105,8 @@ impl ChunkBuilder {
         if buf.is_empty() { return; }
 
         let id = format!("ai-{}", buf.first().map(|m| m.uuid.as_str()).unwrap_or("empty"));
-        let start = buf.first().and_then(|m| parse_ts_ms(&m.timestamp)).unwrap_or(0);
-        let end = buf.last().and_then(|m| parse_ts_ms(&m.timestamp)).unwrap_or(0);
+        let start = buf.first().and_then(|m| parse_ts_ms_opt(&m.timestamp)).unwrap_or(0);
+        let end = buf.last().and_then(|m| parse_ts_ms_opt(&m.timestamp)).unwrap_or(0);
 
         let mut ai = AiChunk {
             id,
@@ -139,7 +140,7 @@ impl ChunkBuilder {
     }
 
     fn user_chunk(msg: &ParsedMessage) -> Chunk {
-        let ts = parse_ts_ms(&msg.timestamp).unwrap_or(0);
+        let ts = parse_ts_ms_opt(&msg.timestamp).unwrap_or(0);
         Chunk::User(UserChunk {
             id: format!("user-{}", msg.uuid),
             start_time: ts,
@@ -151,7 +152,7 @@ impl ChunkBuilder {
     }
 
     fn system_chunk(msg: &ParsedMessage) -> Chunk {
-        let ts = parse_ts_ms(&msg.timestamp).unwrap_or(0);
+        let ts = parse_ts_ms_opt(&msg.timestamp).unwrap_or(0);
         Chunk::System(SystemChunk {
             id: format!("system-{}", msg.uuid),
             start_time: ts,
@@ -164,7 +165,7 @@ impl ChunkBuilder {
     }
 
     fn compact_chunk(msg: &ParsedMessage) -> Chunk {
-        let ts = parse_ts_ms(&msg.timestamp).unwrap_or(0);
+        let ts = parse_ts_ms_opt(&msg.timestamp).unwrap_or(0);
         Chunk::Compact(CompactChunk {
             id: format!("compact-{}", msg.uuid),
             start_time: ts,
@@ -185,7 +186,7 @@ impl ChunkBuilder {
             .iter()
             .filter(|m| {
                 if !m.is_sidechain { return false; }
-                let ts = parse_ts_ms(&m.timestamp).unwrap_or(0);
+                let ts = parse_ts_ms_opt(&m.timestamp).unwrap_or(0);
                 ts >= chunk_start && ts <= chunk_end
             })
             .cloned()
@@ -346,12 +347,9 @@ impl ChunkBuilder {
 
     fn duration_ms(msgs: &[ParsedMessage]) -> u64 {
         if msgs.len() < 2 { return 0; }
-        let first = msgs.first().and_then(|m| parse_ts_ms(&m.timestamp));
-        let last = msgs.last().and_then(|m| parse_ts_ms(&m.timestamp));
+        let first = msgs.first().and_then(|m| parse_ts_ms_opt(&m.timestamp));
+        let last = msgs.last().and_then(|m| parse_ts_ms_opt(&m.timestamp));
         match (first, last) { (Some(f), Some(l)) => l.saturating_sub(f), _ => 0 }
     }
 }
 
-fn parse_ts_ms(ts: &str) -> Option<u64> {
-    chrono::DateTime::parse_from_rfc3339(ts).ok().map(|dt| dt.timestamp_millis() as u64)
-}

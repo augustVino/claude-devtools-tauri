@@ -44,25 +44,21 @@ pub fn fill_timeline_gaps(input: GapFillingInput<'_>) {
         {
             let effective_end = step
                 .end_time
-                .as_deref()
-                .and_then(parse_ts_ms)
-                .unwrap_or_else(|| {
-                    parse_ts_ms(&step.start_time).unwrap_or(0) + step.duration_ms
-                });
+                .unwrap_or(step.start_time + step.duration_ms);
 
-            let start_ms = parse_ts_ms(&step.start_time).unwrap_or(0);
+            let start_ms = step.start_time;
             let effective_duration = effective_end.saturating_sub(start_ms);
 
-            steps[i].effective_end_time = Some(format_ts_ms(effective_end));
+            steps[i].effective_end_time = Some(effective_end);
             steps[i].effective_duration_ms = Some(effective_duration);
             steps[i].is_gap_filled = Some(true);
             continue;
         }
 
-        let current_start_ms = parse_ts_ms(&step.start_time).unwrap_or(0);
+        let current_start_ms = step.start_time;
 
         let effective_end = if i + 1 < steps.len() {
-            let next_start_ms = parse_ts_ms(&steps[i + 1].start_time).unwrap_or(0);
+            let next_start_ms = steps[i + 1].start_time;
             let time_diff = next_start_ms.saturating_sub(current_start_ms);
 
             if time_diff <= PARALLEL_WINDOW_MS {
@@ -79,24 +75,10 @@ pub fn fill_timeline_gaps(input: GapFillingInput<'_>) {
 
         let effective_duration = effective_end.saturating_sub(current_start_ms);
 
-        steps[i].effective_end_time = Some(format_ts_ms(effective_end));
+        steps[i].effective_end_time = Some(effective_end);
         steps[i].effective_duration_ms = Some(effective_duration);
         steps[i].is_gap_filled = Some(true);
     }
-}
-
-/// 将 RFC 3339 时间戳字符串解析为 epoch 毫秒。
-pub fn parse_ts_ms(ts: &str) -> Option<u64> {
-    chrono::DateTime::parse_from_rfc3339(ts)
-        .ok()
-        .map(|dt| dt.timestamp_millis() as u64)
-}
-
-/// 将 epoch 毫秒格式化为 RFC 3339 时间戳字符串。
-pub fn format_ts_ms(ms: u64) -> String {
-    chrono::DateTime::from_timestamp_millis(ms as i64)
-        .map(|dt| dt.to_rfc3339())
-        .unwrap_or_default()
 }
 
 // =============================================================================
@@ -110,16 +92,16 @@ mod tests {
 
     fn make_step(
         id: &str,
-        start_time: &str,
-        end_time: Option<&str>,
+        start_time: u64,
+        end_time: Option<u64>,
         duration_ms: u64,
         step_type: SemanticStepType,
     ) -> SemanticStep {
         SemanticStep {
             id: id.to_string(),
             step_type,
-            start_time: start_time.to_string(),
-            end_time: end_time.map(|s| s.to_string()),
+            start_time,
+            end_time,
             duration_ms,
             content: SemanticStepContent::default(),
             tokens: Some(StepTokens {
@@ -141,37 +123,11 @@ mod tests {
         }
     }
 
-    // -- 时间戳辅助函数 --------------------------------------------------------
-
-    #[test]
-    fn parse_ts_ms_valid() {
-        let ms = parse_ts_ms("2026-03-25T10:00:00.000Z").unwrap();
-        // 验证值通过 格式化 -> 解析 的往返一致性
-        let formatted = format_ts_ms(ms);
-        let roundtrip = parse_ts_ms(&formatted).unwrap();
-        assert_eq!(ms, roundtrip);
-    }
-
-    #[test]
-    fn parse_ts_ms_invalid_returns_none() {
-        assert!(parse_ts_ms("not-a-date").is_none());
-        assert!(parse_ts_ms("").is_none());
-    }
-
-    #[test]
-    fn format_ts_ms_roundtrip() {
-        let original = "2026-03-25T10:00:00.000+00:00";
-        let ms = parse_ts_ms(original).unwrap();
-        let formatted = format_ts_ms(ms);
-        let roundtrip = parse_ts_ms(&formatted).unwrap();
-        assert_eq!(ms, roundtrip);
-    }
-
-    #[test]
-    fn format_ts_ms_zero_returns_epoch() {
-        let result = format_ts_ms(0);
-        assert!(!result.is_empty(), "Epoch zero should produce a valid timestamp");
-        assert!(result.starts_with("1970-01-01"));
+    /// Helper: parse ISO timestamp to u64 ms, panics on failure.
+    fn ts(s: &str) -> u64 {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .map(|dt| dt.timestamp_millis() as u64)
+            .expect("valid timestamp")
     }
 
     // -- 间隙填充 --------------------------------------------------------------
@@ -189,15 +145,16 @@ mod tests {
 
     #[test]
     fn fill_gaps_single_step_extends_to_chunk_end() {
+        let start = ts("2026-03-25T10:00:00.000Z");
+        let chunk_end = ts("2026-03-25T10:00:05.000Z");
+
         let mut steps = vec![make_step(
             "s1",
-            "2026-03-25T10:00:00.000Z",
+            start,
             None,
             50,
             SemanticStepType::Thinking,
         )];
-
-        let chunk_end = parse_ts_ms("2026-03-25T10:00:05.000Z").unwrap();
 
         fill_timeline_gaps(GapFillingInput {
             steps: &mut steps,
@@ -212,31 +169,21 @@ mod tests {
             "Single step should extend to chunk end (5000ms)"
         );
         assert_eq!(
-            steps[0].effective_end_time.as_deref(),
-            Some("2026-03-25T10:00:05+00:00")
+            steps[0].effective_end_time,
+            Some(chunk_end)
         );
     }
 
     #[test]
     fn fill_gaps_parallel_steps_no_extension() {
-        let mut steps = vec![
-            make_step(
-                "s1",
-                "2026-03-25T10:00:00.000Z",
-                None,
-                50,
-                SemanticStepType::Thinking,
-            ),
-            make_step(
-                "s2",
-                "2026-03-25T10:00:00.050Z",
-                None,
-                30,
-                SemanticStepType::Output,
-            ),
-        ];
+        let t0 = ts("2026-03-25T10:00:00.000Z");
+        let t1 = ts("2026-03-25T10:00:00.050Z");
+        let chunk_end = ts("2026-03-25T10:00:10.000Z");
 
-        let chunk_end = parse_ts_ms("2026-03-25T10:00:10.000Z").unwrap();
+        let mut steps = vec![
+            make_step("s1", t0, None, 50, SemanticStepType::Thinking),
+            make_step("s2", t1, None, 30, SemanticStepType::Output),
+        ];
 
         fill_timeline_gaps(GapFillingInput {
             steps: &mut steps,
@@ -244,33 +191,23 @@ mod tests {
             chunk_end_time_ms: chunk_end,
         });
 
-        // s1: time_diff = 50ms <= 100ms => 并行，保持原始 50ms
+        // s1: time_diff = 50ms <= 100ms => parallel, keep original 50ms
         assert_eq!(steps[0].effective_duration_ms, Some(50));
 
-        // s2: 最后一个步骤，延伸到块结束时间
+        // s2: last step, extend to chunk end
         assert_eq!(steps[1].effective_duration_ms, Some(9950));
     }
 
     #[test]
     fn fill_gaps_gap_between_steps() {
-        let mut steps = vec![
-            make_step(
-                "s1",
-                "2026-03-25T10:00:00.000Z",
-                None,
-                50,
-                SemanticStepType::Thinking,
-            ),
-            make_step(
-                "s2",
-                "2026-03-25T10:00:01.000Z",
-                None,
-                30,
-                SemanticStepType::ToolCall,
-            ),
-        ];
+        let t0 = ts("2026-03-25T10:00:00.000Z");
+        let t1 = ts("2026-03-25T10:00:01.000Z");
+        let chunk_end = ts("2026-03-25T10:00:10.000Z");
 
-        let chunk_end = parse_ts_ms("2026-03-25T10:00:10.000Z").unwrap();
+        let mut steps = vec![
+            make_step("s1", t0, None, 50, SemanticStepType::Thinking),
+            make_step("s2", t1, None, 30, SemanticStepType::ToolCall),
+        ];
 
         fill_timeline_gaps(GapFillingInput {
             steps: &mut steps,
@@ -278,24 +215,26 @@ mod tests {
             chunk_end_time_ms: chunk_end,
         });
 
-        // s1: time_diff = 1000ms > 100ms => 延伸到下一个步骤起始
+        // s1: time_diff = 1000ms > 100ms => extend to next step start
         assert_eq!(steps[0].effective_duration_ms, Some(1000));
 
-        // s2: 最后一个步骤，延伸到块结束时间
+        // s2: last step, extend to chunk end
         assert_eq!(steps[1].effective_duration_ms, Some(9000));
     }
 
     #[test]
     fn fill_gaps_meaningful_subagent_keeps_original_timing() {
+        let start = ts("2026-03-25T10:00:00.000Z");
+        let end = ts("2026-03-25T10:00:05.000Z");
+        let chunk_end = ts("2026-03-25T10:00:10.000Z");
+
         let mut steps = vec![make_step(
             "sub-1",
-            "2026-03-25T10:00:00.000Z",
-            Some("2026-03-25T10:00:05.000Z"),
+            start,
+            Some(end),
             5000,
             SemanticStepType::Subagent,
         )];
-
-        let chunk_end = parse_ts_ms("2026-03-25T10:00:10.000Z").unwrap();
 
         fill_timeline_gaps(GapFillingInput {
             steps: &mut steps,
@@ -303,25 +242,24 @@ mod tests {
             chunk_end_time_ms: chunk_end,
         });
 
-        // 持续时间 > 100ms 的子 Agent 保留原始 5000ms
+        // Subagent with duration > 100ms keeps original 5000ms
         assert_eq!(steps[0].effective_duration_ms, Some(5000));
-        assert_eq!(
-            steps[0].effective_end_time.as_deref(),
-            Some("2026-03-25T10:00:05+00:00")
-        );
+        assert_eq!(steps[0].effective_end_time, Some(end));
     }
 
     #[test]
     fn fill_gaps_short_subagent_gets_gap_filled() {
+        let start = ts("2026-03-25T10:00:00.000Z");
+        let end = ts("2026-03-25T10:00:00.050Z");
+        let chunk_end = ts("2026-03-25T10:00:05.000Z");
+
         let mut steps = vec![make_step(
             "sub-short",
-            "2026-03-25T10:00:00.000Z",
-            Some("2026-03-25T10:00:00.050Z"),
+            start,
+            Some(end),
             50,
             SemanticStepType::Subagent,
         )];
-
-        let chunk_end = parse_ts_ms("2026-03-25T10:00:05.000Z").unwrap();
 
         fill_timeline_gaps(GapFillingInput {
             steps: &mut steps,
@@ -329,15 +267,17 @@ mod tests {
             chunk_end_time_ms: chunk_end,
         });
 
-        // 持续时间 <= 100ms 的子 Agent 进行间隙填充到块结束
+        // Subagent with duration <= 100ms gets gap-filled to chunk end
         assert_eq!(steps[0].effective_duration_ms, Some(5000));
     }
 
     #[test]
     fn fill_gaps_all_flags_set() {
+        let start = ts("2026-03-25T10:00:00.000Z");
+
         let mut steps = vec![make_step(
             "s1",
-            "2026-03-25T10:00:00.000Z",
+            start,
             None,
             50,
             SemanticStepType::Output,

@@ -17,6 +17,13 @@ const logger = createLogger('Store:session');
  */
 const projectRefreshGeneration = new Map<string, number>();
 
+/**
+ * Cleanup coordination entries for a project when switching away.
+ */
+export function cleanupProjectRefreshCoordination(projectId: string): void {
+  projectRefreshGeneration.delete(projectId);
+}
+
 // =============================================================================
 // Slice Interface
 // =============================================================================
