@@ -25,7 +25,7 @@ use infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConn
 use infrastructure::fs_provider::LocalFsProvider;
 use infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
 use commands::tray::TrayIconManager;
-use utils::{get_projects_base_path, get_todos_base_path, set_claude_root_override};
+use utils::{get_default_claude_base_path, get_projects_base_path, get_todos_base_path, set_claude_root_override};
 
 /// 运行 Tauri 应用。
 ///
@@ -53,6 +53,13 @@ pub fn run() {
       fs_provider.clone(),
   ));
 
+  let session_repo: Arc<dyn infrastructure::session_repository::SessionRepository> =
+      Arc::new(infrastructure::local_session_repository::LocalSessionRepository::new(
+          fs_provider.clone(),
+          get_projects_base_path(),
+          get_default_claude_base_path(),
+      ));
+
   let session_service = Arc::new(services::SessionService::new(
       fs_provider,
       shared_cache.clone(),
@@ -60,6 +67,7 @@ pub fn run() {
       get_todos_base_path(),
       config_manager.clone(),
       project_service.clone(),
+      session_repo,
   ));
 
   // Zoom factor state: track zoom since Tauri v2 has set_zoom() but no zoom() getter.

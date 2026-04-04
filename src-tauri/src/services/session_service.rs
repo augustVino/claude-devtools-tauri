@@ -11,7 +11,7 @@ use crate::analysis::ChunkBuilder;
 use crate::discovery::subagent_resolver::SubagentResolver;
 use crate::infrastructure::{
     ConfigManager, DataCache,
-    fs_provider::{FsProvider, LocalFsProvider},
+    fs_provider::FsProvider,
 };
 use crate::parsing::{parse_session_file, ParsedSession};
 use crate::types::chunks::{ConversationGroup, Process, SessionDetail};
@@ -38,6 +38,7 @@ pub struct SessionService {
     todos_dir: PathBuf,
     config_manager: Arc<ConfigManager>,
     project_service: Arc<ProjectService>,
+    repo: Arc<dyn crate::infrastructure::session_repository::SessionRepository>,
 }
 
 impl SessionService {
@@ -49,6 +50,7 @@ impl SessionService {
         todos_dir: PathBuf,
         config_manager: Arc<ConfigManager>,
         project_service: Arc<ProjectService>,
+        repo: Arc<dyn crate::infrastructure::session_repository::SessionRepository>,
     ) -> Self {
         Self {
             fs_provider,
@@ -57,6 +59,7 @@ impl SessionService {
             todos_dir,
             config_manager,
             project_service,
+            repo,
         }
     }
 
@@ -98,7 +101,7 @@ impl SessionService {
     ) -> Vec<Process> {
         let resolver = SubagentResolver::new(
             self.projects_dir.clone(),
-            Arc::new(LocalFsProvider::new()),
+            self.fs_provider.clone(),
         );
         resolver
             .resolve_subagents(project_id, session_id, Some(&parsed.task_calls), Some(&parsed.messages))
