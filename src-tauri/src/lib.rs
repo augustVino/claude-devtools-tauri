@@ -24,6 +24,7 @@ use commands::AppState;
 use infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConnectionManager};
 use infrastructure::fs_provider::LocalFsProvider;
 use infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
+use infrastructure::app_bootstrap::AppBootstrap;
 use commands::tray::TrayIconManager;
 use utils::{get_default_claude_base_path, get_projects_base_path, get_todos_base_path, set_claude_root_override};
 
@@ -105,73 +106,37 @@ pub fn run() {
       }
     })
     .setup(move |app| {
-      // Synchronously initialize config manager before any config-dependent decisions
-      // (e.g., macOS Dock icon visibility). This ensures the saved config is loaded
-      // from disk, not just the default values.
-      tauri::async_runtime::block_on(config_manager.initialize())
-        .map_err(|e| format!("Failed to initialize config: {e}"))?;
+      // 1. 初始化配置（必须在最前面执行）
+      AppBootstrap::init_config(&config_manager)?;
 
-      // Set global claude root path override from config
-      set_claude_root_override(config_manager.get_config().general.claude_root_path.clone());
+      // 2. 设置 claude root 路径覆盖
+      AppBootstrap::set_claude_root(&config_manager);
 
-      // 注册 ConfigManager 为 managed state（供 http_server::start 等命令直接访问）
+      // 3. 注册核心 managed state
       app.manage(config_manager.clone());
-
-      // ========== 注册 Domain Services ==========
       app.manage(session_service.clone());
       app.manage(project_service.clone());
       app.manage(search_service.clone());
 
-      let state = app_state.clone();
+      // 4. 显示窗口（非 --minimized 模式）
+      AppBootstrap::show_window_if_needed(app.handle())?;
 
-      // 非自动启动（无 --minimized 参数）时显示窗口
-      let args: Vec<String> = std::env::args().collect();
-      if !args.contains(&"--minimized".to_string()) {
-        if let Some(window) = app.get_webview_window("main") {
-          window.show().map_err(|e| e.to_string())?;
-        }
-      }
-
-// Create and register TrayIconManager (needed for macOS dock hiding and window close interception)
+      // 5. Tray 图标
       let tray_manager = std::sync::Mutex::new(TrayIconManager::new(app.handle().clone()));
       app.manage(tray_manager);
 
-      // macOS: Create tray and hide Dock icon if config says so
-      // Config must be initialized BEFORE reading show_dock_icon to get saved value
+      // 6. macOS Dock 隐藏
       #[cfg(target_os = "macos")]
-      {
-        let hide_dock = {
-          let state_guard = state.blocking_read();
-          !state_guard.config_manager.get_config().general.show_dock_icon
-        };
-        if hide_dock {
-          // Create tray FIRST, then hide dock
-          let tray = app.state::<std::sync::Mutex<TrayIconManager>>();
-          let _ = tray.lock().map(|mut t| t.create());
-          use cocoa::appkit::{NSApplication, NSApplicationActivationPolicy};
-          use cocoa::base::nil;
-          unsafe {
-            let ns_app = NSApplication::sharedApplication(nil);
-            ns_app.setActivationPolicy_(
-              NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory,
-            );
-            // Re-activate the app after switching to Accessory policy
-            // macOS deactivates the app when switching to Accessory mode
-            NSApplication::activateIgnoringOtherApps_(ns_app, true);
-          }
-        }
-      }
+      AppBootstrap::hide_dock_if_needed(app.handle(), &app_state);
 
-      // 创建并注册 SSEBroadcaster
+      // 7. SSE + HttpServerHandle
       let broadcaster = crate::http::sse::SSEBroadcaster::new();
       app.manage(broadcaster);
-
-      // 创建并注册 HttpServerHandle（初始为 None，由 start 命令填充）
       app.manage(std::sync::Mutex::new(
         None::<crate::http::server::HttpServerHandle>,
       ));
 
-      // 创建并注册 NotificationManager
+      // 8. NotificationManager
       let last_shown_error = std::sync::Arc::new(std::sync::Mutex::new(None::<crate::types::config::DetectedError>));
       let notification_manager = NotificationManager::new(
         app.handle().clone(),
@@ -189,49 +154,16 @@ pub fn run() {
         log::info!("NotificationManager initialized");
       });
 
-      // ========== 创建 ContextManager 并注册本地上下文 ==========
-      // claude_root_override has been set above, so get_projects_base_path() uses it
-      let context_manager = {
-        let mut mgr = ContextManager::new();
-        let local_context = ServiceContext::new(ServiceContextConfig {
-          id: "local".to_string(),
-          context_type: ContextType::Local,
-          projects_dir: get_projects_base_path(),
-          todos_dir: get_todos_base_path(),
-          fs_provider: Arc::new(LocalFsProvider::new()),
-          cache: Some(shared_cache.clone()),
-        });
-        mgr.register_context(local_context)
-          .expect("Failed to register local context");
-
-        // 启动本地上下文的 watcher 任务（在同步 setup 闭包中使用 block_on）
-        let local_ctx = mgr.get("local").unwrap();
-        let local = local_ctx.blocking_read();
-        tauri::async_runtime::block_on(
-          local.spawn_watcher_tasks(
-            app.handle().clone(),
-            config_manager.clone(),
-            notification_manager.clone(),
-          )
-        );
-
-        mgr
-      };
-      let context_manager = Arc::new(RwLock::new(context_manager));
+      // 9. ContextManager + 本地上下文 + Watcher
+      let context_manager = AppBootstrap::setup_local_context(
+        app.handle(),
+        &config_manager,
+        &shared_cache,
+        &notification_manager,
+      );
       app.manage(context_manager.clone());
 
-      // ========== 注册 SessionSearcher（供 Tauri IPC search 命令使用）==========
-      // REMOVED: SearchService now owns the SessionSearcher internally.
-      // {
-      //   let local_fs: Arc<dyn infrastructure::fs_provider::FsProvider> = Arc::new(LocalFsProvider::new());
-      //   app.manage(commands::search::create_searcher_state(
-      //     get_projects_base_path(),
-      //     get_todos_base_path(),
-      //     local_fs,
-      //   ));
-      // }
-
-      // ========== 创建并注册 SshConnectionManager ==========
+      // 10. SshConnectionManager + SSH 状态转发
       let ssh_manager_inner = SshConnectionManager::new();
 
       // 在包装为 Arc<RwLock<>> 之前获取 broadcast receiver（避免在 async 任务中持有读锁）
@@ -258,66 +190,15 @@ pub fn run() {
         }
       });
 
-      // ========== Auto-start HTTP server if enabled in config ==========
-      {
-        let http_config = config_manager.get_config().http_server.clone();
-        if let Some(ref cfg) = http_config {
-          if cfg.enabled {
-            let port = cfg.port;
-            let handle_guard = app.state::<std::sync::Mutex<Option<crate::http::server::HttpServerHandle>>>();
-            let mut handle = match handle_guard.lock() {
-              Ok(g) => g,
-              Err(e) => {
-                log::error!("Failed to acquire HTTP server handle lock: {e}");
-                return Err(format!("Failed to acquire HTTP server handle lock: {e}").into());
-              }
-            };
-
-            if handle.is_none() {
-              let broadcaster = app.state::<crate::http::sse::SSEBroadcaster>().inner().clone();
-              let notification_manager = app
-                .state::<Arc<RwLock<NotificationManager>>>()
-                .inner()
-                .clone();
-              let context_manager = app
-                .state::<Arc<RwLock<ContextManager>>>()
-                .inner()
-                .clone();
-              let http_state = crate::http::state::HttpState {
-                app_handle: app.handle().clone(),
-                app_state: app_state.clone(),
-                broadcaster,
-                config_manager: config_manager.clone(),
-                notification_manager,
-                context_manager,
-                ssh_manager: app
-                  .state::<Arc<RwLock<SshConnectionManager>>>()
-                  .inner()
-                  .clone(),
-                session_service: session_service.clone(),
-                project_service: project_service.clone(),
-                search_service: search_service.clone(),
-              };
-
-              let dist_dir = std::env::var("RENDERER_PATH")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| {
-                  std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("..")
-                    .join("dist")
-                });
-
-              match crate::http::server::spawn_http_server(http_state, port, dist_dir) {
-                Ok(new_handle) => {
-                  log::info!("HTTP server auto-started on port {} (enabled in config)", new_handle.port);
-                  *handle = Some(new_handle);
-                }
-                Err(e) => log::error!("Failed to auto-start HTTP server: {e}"),
-              }
-            }
-          }
-        }
-      }
+      // Auto-start HTTP server if enabled in config
+      infrastructure::app_bootstrap::AppBootstrap::auto_start_http_server(
+        app.handle(),
+        &config_manager,
+        &app_state,
+        &session_service,
+        &project_service,
+        &search_service,
+      );
 
       // Debug 模式下启用日志插件
       if cfg!(debug_assertions) {

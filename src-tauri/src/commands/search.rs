@@ -46,15 +46,3 @@ pub async fn find_sessions_by_partial_id(
     service.find_sessions_by_partial_id(&fragment, max).await
 }
 
-/// Deprecated — kept for backward compatibility during transition.
-/// SearchService now owns the SessionSearcher internally.
-#[allow(dead_code)]
-pub fn create_searcher_state(
-    projects_dir: std::path::PathBuf,
-    todos_dir: std::path::PathBuf,
-    fs_provider: std::sync::Arc<dyn crate::infrastructure::fs_provider::FsProvider>,
-) -> std::sync::Arc<std::sync::Mutex<crate::discovery::SessionSearcher>> {
-    std::sync::Arc::new(std::sync::Mutex::new(
-        crate::discovery::SessionSearcher::new(projects_dir, todos_dir, fs_provider, None)
-    ))
-}
