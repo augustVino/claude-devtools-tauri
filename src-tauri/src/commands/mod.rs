@@ -5,6 +5,10 @@
 //! 各子模块通过 `pub use` 统一导出，便于在 `lib.rs` 的
 //! `generate_handler!` 宏中注册。
 
+use std::sync::Arc;
+
+use crate::infrastructure::{ConfigManager, DataCache};
+
 pub mod window;
 pub mod version;
 pub mod sessions;
@@ -31,5 +35,27 @@ pub use utility::*;
 pub use projects::*;
 pub use subagents::*;
 pub use notifications::*;
-pub use sessions::AppState;
 pub use ssh::*;
+
+/// 跨命令共享的应用状态。
+///
+/// 包含数据缓存和配置管理器，通过 `Arc<RwLock<AppState>>` 注入到各 Tauri command 中。
+pub struct AppState {
+    pub cache: DataCache,
+    pub config_manager: Arc<ConfigManager>,
+}
+
+impl AppState {
+    /// 创建应用状态。
+    ///
+    /// 必须传入外部共享的 `cache`，确保 AppState（IPC 命令层）与
+    /// ServiceContext（文件监听器层）使用同一个缓存实例。
+    pub fn new(config_manager: Arc<ConfigManager>, cache: DataCache) -> Self {
+        Self { cache, config_manager }
+    }
+
+    /// 初始化应用状态，包括异步加载配置文件。
+    pub async fn initialize(&self) -> Result<(), String> {
+        self.config_manager.initialize().await
+    }
+}
