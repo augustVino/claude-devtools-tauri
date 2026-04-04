@@ -8,8 +8,6 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
-
 use russh_sftp::client::SftpSession;
 use russh_sftp::client::error::Error as SftpError;
 use russh_sftp::protocol::{Status as SftpStatus, StatusCode};
@@ -67,19 +65,6 @@ fn format_sftp_error(path: &Path, err: &SftpError) -> String {
         SftpError::UnexpectedBehavior(msg) => {
             format!("SFTP unexpected behavior for {}: {}", path.display(), msg)
         }
-    }
-}
-
-// ── 辅助：时间转换 ─────────────────────────────────────────────────
-
-/// 将 `std::time::SystemTime` 转换为毫秒时间戳。
-fn time_to_ms(time: std::io::Result<std::time::SystemTime>) -> u64 {
-    match time {
-        Ok(t) => t
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64,
-        Err(_) => 0,
     }
 }
 
@@ -253,7 +238,7 @@ impl FsProvider for SshFsProvider {
                 Ok(metadata) => {
                     return Ok(FsStatResult {
                         size: metadata.len(),
-                        mtime_ms: time_to_ms(metadata.modified()),
+                        mtime_ms: crate::utils::time::time_to_ms(metadata.modified().ok()),
                         birthtime_ms: 0, // SFTP FileAttributes 不提供 birthtime
                         is_file: metadata.is_regular(),
                         is_directory: metadata.is_dir(),
@@ -306,7 +291,7 @@ impl FsProvider for SshFsProvider {
                                 is_file: entry.file_type().is_file(),
                                 is_directory: entry.file_type().is_dir(),
                                 size: Some(meta.len()),
-                                mtime_ms: Some(time_to_ms(meta.modified())),
+                                mtime_ms: Some(crate::utils::time::time_to_ms(meta.modified().ok())),
                                 birthtime_ms: None, // SFTP 不提供 birthtime
                             }
                         })
@@ -482,11 +467,10 @@ mod tests {
     #[test]
     fn test_time_to_ms() {
         let now = std::time::SystemTime::now();
-        let ms = time_to_ms(Ok(now));
+        let ms = crate::utils::time::time_to_ms(Some(now));
         assert!(ms > 1_700_000_000_000); // sanity: after 2023
 
-        let err_time = Err(std::io::Error::new(std::io::ErrorKind::Other, "no time"));
-        assert_eq!(time_to_ms(err_time), 0);
+        assert_eq!(crate::utils::time::time_to_ms(None), 0);
     }
 
 }

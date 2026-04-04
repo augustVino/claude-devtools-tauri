@@ -70,18 +70,6 @@ pub trait FsProvider: Send + Sync + std::fmt::Debug {
     fn dispose(&self) {}
 }
 
-/// 将 `std::time::SystemTime` 转换为毫秒时间戳。
-/// 如果时间不可用（如 Linux 上 birthtime），返回 0。
-fn time_to_ms(time: Option<std::time::SystemTime>) -> u64 {
-    match time {
-        Some(t) => t
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0),
-        None => 0,
-    }
-}
-
 /// 本地文件系统提供者 — 基于 `std::fs` 实现。
 #[derive(Debug)]
 pub struct LocalFsProvider;
@@ -130,8 +118,8 @@ impl FsProvider for LocalFsProvider {
             .map_err(|e| format!("Failed to stat {}: {}", path.display(), e))?;
         Ok(FsStatResult {
             size: metadata.len(),
-            mtime_ms: time_to_ms(metadata.modified().ok()),
-            birthtime_ms: time_to_ms(metadata.created().ok()),
+            mtime_ms: crate::utils::time::time_to_ms(metadata.modified().ok()),
+            birthtime_ms: crate::utils::time::time_to_ms(metadata.created().ok()),
             is_file: metadata.is_file(),
             is_directory: metadata.is_dir(),
         })
@@ -155,11 +143,11 @@ impl FsProvider for LocalFsProvider {
             let mtime_ms = metadata
                 .as_ref()
                 .and_then(|m| m.modified().ok())
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64);
+                .map(|t| crate::utils::time::time_to_ms(Some(t)));
             let birthtime_ms = metadata
                 .as_ref()
                 .and_then(|m| m.created().ok())
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64);
+                .map(|t| crate::utils::time::time_to_ms(Some(t)));
             result.push(FsDirent {
                 name,
                 is_file,
