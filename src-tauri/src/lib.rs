@@ -198,7 +198,7 @@ pub fn run() {
         &session_service,
         &project_service,
         &search_service,
-      );
+      )?;
 
       // Debug 模式下启用日志插件
       if cfg!(debug_assertions) {

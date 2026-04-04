@@ -72,7 +72,7 @@ impl AppBootstrap {
         session_service: &Arc<crate::services::SessionService>,
         project_service: &Arc<crate::services::ProjectService>,
         search_service: &Arc<crate::services::SearchService>,
-    ) {
+    ) -> Result<(), String> {
         let http_config = config_manager.get_config().http_server.clone();
         if let Some(ref cfg) = http_config {
             if cfg.enabled {
@@ -82,7 +82,7 @@ impl AppBootstrap {
                     Ok(g) => g,
                     Err(e) => {
                         log::error!("Failed to acquire HTTP server handle lock: {e}");
-                        return;
+                        return Err(format!("Failed to acquire HTTP server handle lock: {e}"));
                     }
                 };
 
@@ -130,6 +130,7 @@ impl AppBootstrap {
                 }
             }
         }
+        Ok(())
     }
 
     /// 创建并注册本地 ContextManager（含 watcher 任务启动）。
