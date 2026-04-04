@@ -13,6 +13,7 @@ pub mod ssh_config_parser;
 pub mod ssh_connection_manager;
 pub mod ssh_exec;
 pub mod ssh_fs_provider;
+pub mod session_repository;
 pub mod trigger_manager;
 
 pub use config_manager::ConfigManager;
@@ -23,6 +24,7 @@ pub use fs_provider::{FsDirent, FsProvider, FsStatResult, LocalFsProvider};
 pub use notification_manager::NotificationManager;
 pub use ssh_config_parser::SshConfigParser;
 pub use ssh_connection_manager::SshConnectionManager;
+pub use session_repository::{DeleteFilesResult, SessionFileItem, SessionRepository};
 #[allow(unused_imports)]
 pub use service_context::{ContextType, ServiceContext, ServiceContextConfig};
 #[allow(unused_imports)]
