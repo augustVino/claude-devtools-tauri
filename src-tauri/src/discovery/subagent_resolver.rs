@@ -5,14 +5,28 @@
 //! - Parse each subagent file
 //! - Calculate start/end times and metrics
 //! - Detect parallel execution (100ms overlap threshold)
+//!
+//! This module contains the core structs and orchestration logic.
+//! Identity/linking functions are in sibling modules:
+//! - `subagent_identity` - file listing, parsing, timing, metrics, parallel detection
+//! - `subagent_linking` - task call matching, team metadata propagation, color enrichment
+
+// Import sibling modules (declared in discovery/mod.rs)
+use crate::discovery::subagent_identity::{
+    calculate_metrics, calculate_timing, check_is_ongoing, detect_parallel_execution,
+    has_subagent_files, is_warmup_subagent, list_subagent_files,
+    parse_subagent_file, subagent_belongs_to_session,
+};
+use crate::discovery::subagent_linking::{
+    enrich_subagent_from_task, enrich_team_colors, extract_team_message_summary,
+    link_to_task_calls, propagate_team_metadata,
+};
 
 use crate::infrastructure::fs_provider::FsProvider;
-use crate::parsing::jsonl_parser::parse_jsonl_content;
 use crate::types::chunks::TeamInfo;
 use crate::types::domain::{MessageType, SessionMetrics};
 use crate::types::messages::{ParsedMessage, ToolCall};
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Process represents a subagent execution.
@@ -39,276 +53,6 @@ pub struct SubagentResolver {
     fs_provider: Arc<dyn FsProvider>,
 }
 
-/// Parallel detection window in milliseconds
-const PARALLEL_WINDOW_MS: u64 = 100;
-
-/// Maximum depth for parentUuid chain traversal when propagating team metadata.
-const MAX_PARENT_DEPTH: usize = 10;
-
-/// Enrich a subagent Process with metadata from its parent Task call.
-fn enrich_subagent_from_task(subagent: &mut Process, task_call: &ToolCall) {
-    subagent.task_id = Some(task_call.id.clone());
-    subagent.description = task_call.task_description.clone();
-    subagent.subagent_type = task_call.task_subagent_type.clone();
-
-    let team_name = task_call.input.get("team_name").and_then(|v| v.as_str());
-    let member_name = task_call.input.get("name").and_then(|v| v.as_str());
-    if let (Some(tn), Some(mn)) = (team_name, member_name) {
-        subagent.team = Some(TeamInfo {
-            team_name: tn.to_string(),
-            member_name: mn.to_string(),
-            member_color: String::new(),
-        });
-    }
-}
-
-/// Extract the summary attribute from a teammate-message tag in the first user message.
-fn extract_team_message_summary(messages: &[ParsedMessage]) -> Option<String> {
-    let first_user = messages.iter().find(|m| m.message_type == MessageType::User)?;
-    let content_str = first_user.content.as_str().unwrap_or("");
-    let re = regex::Regex::new(r#"<teammate-message[^>]*\bsummary="([^"]+)""#).ok()?;
-    re.captures(content_str)
-        .map(|cap| cap[1].to_string())
-}
-
-/// Link subagents to their parent Task calls using a 3-phase matching algorithm.
-fn link_to_task_calls(
-    subagents: &mut [Process],
-    task_calls: &[ToolCall],
-    messages: &[ParsedMessage],
-) {
-    // Phase 0: Preprocessing
-    let task_calls_only: Vec<&ToolCall> = task_calls.iter().filter(|tc| tc.is_task).collect();
-    if task_calls_only.is_empty() || subagents.is_empty() {
-        return;
-    }
-
-    // Build agentId -> taskCallId mapping from tool results
-    let mut agent_id_to_task_id: HashMap<String, String> = HashMap::new();
-    for msg in messages {
-        if let Some(result) = &msg.tool_use_result {
-            let agent_id = result
-                .get("agentId")
-                .or_else(|| result.get("agent_id"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let task_call_id = msg.source_tool_use_id.clone()
-                .or_else(|| msg.tool_results.first().map(|tr| tr.tool_use_id.clone()));
-            if let (Some(aid), Some(tcid)) = (agent_id, task_call_id) {
-                agent_id_to_task_id.insert(aid, tcid);
-            }
-        }
-    }
-
-    let task_call_by_id: HashMap<&str, &ToolCall> = task_calls_only
-        .iter()
-        .map(|tc| (tc.id.as_str(), *tc))
-        .collect();
-
-    let mut matched_subagent_ids: HashSet<String> = HashSet::new();
-    let mut matched_task_ids: HashSet<String> = HashSet::new();
-
-    // Phase 1: Result matching (agentId exact match)
-    for subagent in subagents.iter_mut() {
-        if let Some(task_call_id) = agent_id_to_task_id.get(&subagent.id) {
-            if let Some(&task_call) = task_call_by_id.get(task_call_id.as_str()) {
-                enrich_subagent_from_task(subagent, task_call);
-                matched_subagent_ids.insert(subagent.id.clone());
-                matched_task_ids.insert(task_call_id.clone());
-            }
-        }
-    }
-
-    // Phase 2: Description matching (team members)
-    let team_task_calls: Vec<&&ToolCall> = task_calls_only
-        .iter()
-        .filter(|tc| {
-            !matched_task_ids.contains(&tc.id)
-                && tc.input.get("team_name").is_some()
-                && tc.input.get("name").is_some()
-        })
-        .collect();
-
-    if !team_task_calls.is_empty() {
-        let mut subagent_summaries: HashMap<String, String> = HashMap::new();
-        for subagent in subagents.iter() {
-            if matched_subagent_ids.contains(&subagent.id) {
-                continue;
-            }
-            if let Some(summary) = extract_team_message_summary(&subagent.messages) {
-                subagent_summaries.insert(subagent.id.clone(), summary);
-            }
-        }
-
-        for team_tc in &team_task_calls {
-            let desc = match &team_tc.task_description {
-                Some(d) if !d.is_empty() => d.clone(),
-                _ => continue,
-            };
-            let mut best_match_idx: Option<usize> = None;
-            let mut best_match_time: u64 = u64::MAX;
-            for (i, subagent) in subagents.iter().enumerate() {
-                if matched_subagent_ids.contains(&subagent.id) {
-                    continue;
-                }
-                if subagent_summaries.get(&subagent.id).map(|s| s == &desc).unwrap_or(false) {
-                    if subagent.start_time_ms < best_match_time {
-                        best_match_time = subagent.start_time_ms;
-                        best_match_idx = Some(i);
-                    }
-                }
-            }
-            if let Some(idx) = best_match_idx {
-                enrich_subagent_from_task(&mut subagents[idx], team_tc);
-                matched_subagent_ids.insert(subagents[idx].id.clone());
-                matched_task_ids.insert(team_tc.id.clone());
-            }
-        }
-    }
-
-    // Phase 3: Positional fallback (no wrap-around)
-    let mut unmatched_indices: Vec<usize> = subagents
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| !matched_subagent_ids.contains(&s.id))
-        .map(|(i, _)| i)
-        .collect();
-    unmatched_indices.sort_by_key(|&i| subagents[i].start_time_ms);
-
-    let unmatched_tasks: Vec<&&ToolCall> = task_calls_only
-        .iter()
-        .filter(|tc| !matched_task_ids.contains(&tc.id) && tc.input.get("team_name").is_none())
-        .collect();
-
-    let pair_count = unmatched_indices.len().min(unmatched_tasks.len());
-    for i in 0..pair_count {
-        enrich_subagent_from_task(&mut subagents[unmatched_indices[i]], unmatched_tasks[i]);
-    }
-}
-
-/// Propagate team metadata to continuation files via parentUuid chain.
-fn propagate_team_metadata(subagents: &mut [Process]) {
-    // Build last message uuid -> subagent index mapping
-    let mut last_uuid_to_idx: HashMap<String, usize> = HashMap::new();
-    for (i, subagent) in subagents.iter().enumerate() {
-        if let Some(last) = subagent.messages.last() {
-            if !last.uuid.is_empty() {
-                last_uuid_to_idx.insert(last.uuid.clone(), i);
-            }
-        }
-    }
-
-    // Phase 1: Collect which subagent each continuation should inherit from
-    let mut inherit_from: Vec<Option<usize>> = vec![None; subagents.len()];
-    for (i, subagent) in subagents.iter().enumerate() {
-        if subagent.team.is_some() {
-            continue;
-        }
-        if subagent.messages.is_empty() {
-            continue;
-        }
-
-        let first_parent_uuid = match subagent.messages.first().and_then(|m| m.parent_uuid.as_ref()) {
-            Some(uuid) if !uuid.is_empty() => uuid.clone(),
-            _ => continue,
-        };
-
-        // Walk parentUuid chain
-        let mut current_uuid = first_parent_uuid;
-        let mut depth = 0;
-        let mut ancestor_idx: Option<usize> = None;
-
-        while depth < MAX_PARENT_DEPTH {
-            if let Some(&idx) = last_uuid_to_idx.get(&current_uuid) {
-                if subagents[idx].team.is_some() {
-                    ancestor_idx = Some(idx);
-                    break;
-                }
-                if let Some(prev_last) = subagents[idx].messages.last() {
-                    if let Some(prev_parent) = &prev_last.parent_uuid {
-                        current_uuid = prev_parent.clone();
-                        depth += 1;
-                        continue;
-                    }
-                }
-            }
-            break;
-        }
-
-        inherit_from[i] = ancestor_idx;
-    }
-
-    // Phase 2: Apply inheritance
-    // Collect cloned data to avoid simultaneous borrow of different indices in the slice
-    let inherited: Vec<(usize, Option<TeamInfo>, Option<String>, Option<String>, Option<String>)> = inherit_from
-        .iter()
-        .enumerate()
-        .filter_map(|(i, anc)| {
-            let anc = (*anc)?;
-            let ancestor = &subagents[anc];
-            Some((
-                i,
-                ancestor.team.clone(),
-                ancestor.task_id.clone(),
-                ancestor.description.clone(),
-                ancestor.subagent_type.clone(),
-            ))
-        })
-        .collect();
-
-    for (i, team, task_id, description, subagent_type) in inherited {
-        subagents[i].team = team;
-        subagents[i].task_id = subagents[i].task_id.take().or(task_id);
-        subagents[i].description = subagents[i].description.take().or(description);
-        subagents[i].subagent_type = subagents[i].subagent_type.take().or(subagent_type);
-    }
-}
-
-/// Inject team member colors from teammate_spawned tool results.
-fn enrich_team_colors(subagents: &mut [Process], messages: &[ParsedMessage]) {
-    for msg in messages {
-        let source_id = match &msg.source_tool_use_id {
-            Some(id) if !id.is_empty() => id.as_str(),
-            _ => continue,
-        };
-        let result = match &msg.tool_use_result {
-            Some(r) => r,
-            None => continue,
-        };
-        let status = match result.get("status").and_then(|v| v.as_str()) {
-            Some(s) => s,
-            None => continue,
-        };
-        let color = match result.get("color").and_then(|v| v.as_str()) {
-            Some(c) if !c.is_empty() => c.to_string(),
-            _ => continue,
-        };
-        if status != "teammate_spawned" {
-            continue;
-        }
-        for subagent in subagents.iter_mut() {
-            if subagent.task_id.as_deref() == Some(source_id) {
-                if let Some(team) = &mut subagent.team {
-                    team.member_color = color.clone();
-                }
-            }
-        }
-    }
-}
-
-/// Check if a JSONL file belongs to a specific session (for OLD directory structure).
-fn subagent_belongs_to_session(file_content: &str, target_session_id: &str) -> bool {
-    let first_line = file_content.lines().next().unwrap_or("");
-    let json: serde_json::Value = match serde_json::from_str(first_line) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    json.get("sessionId")
-        .and_then(|v| v.as_str())
-        .map(|s| s == target_session_id)
-        .unwrap_or(false)
-}
-
 impl SubagentResolver {
     /// Create a new SubagentResolver.
     pub fn new(projects_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Self {
@@ -327,7 +71,7 @@ impl SubagentResolver {
         messages: Option<&[ParsedMessage]>,
     ) -> Vec<Process> {
         // Get subagent files
-        let subagent_files = self.list_subagent_files(project_id, session_id);
+        let subagent_files = list_subagent_files(&self.projects_dir, self.fs_provider.as_ref(), project_id, session_id);
 
         if subagent_files.is_empty() {
             return Vec::new();
@@ -336,7 +80,7 @@ impl SubagentResolver {
         // Parse subagent files
         let mut subagents: Vec<Process> = subagent_files
             .into_iter()
-            .filter_map(|file_path| self.parse_subagent_file(&file_path))
+            .filter_map(|file_path| parse_subagent_file(self.fs_provider.as_ref(), &file_path))
             .collect();
 
         if let (Some(tc), Some(msgs)) = (task_calls, messages) {
@@ -346,7 +90,7 @@ impl SubagentResolver {
         propagate_team_metadata(&mut subagents);
 
         // Detect parallel execution
-        self.detect_parallel_execution(&mut subagents);
+        detect_parallel_execution(&mut subagents);
 
         if let Some(msgs) = messages {
             enrich_team_colors(&mut subagents, msgs);
@@ -358,205 +102,9 @@ impl SubagentResolver {
         subagents
     }
 
-    /// List subagent files for a session.
-    ///
-    /// Scans two directory structures:
-    /// - **Phase 1 (NEW)**: `{projectId}/{sessionId}/subagents/agent-{id}.jsonl`
-    /// - **Phase 2 (OLD)**: `{projectId}/agent-{id}.jsonl` (matched by sessionId in first line)
-    pub fn list_subagent_files(&self, project_id: &str, session_id: &str) -> Vec<PathBuf> {
-        let mut files = Vec::new();
-        let base_dir = crate::utils::path_decoder::extract_base_dir(project_id);
-
-        // Phase 1: NEW structure scan
-        let subagents_dir = self.projects_dir
-            .join(&base_dir)
-            .join(session_id)
-            .join("subagents");
-
-        if let Ok(entries) = self.fs_provider.read_dir(&subagents_dir) {
-            files.extend(entries.into_iter().filter_map(|dirent| {
-                if dirent.is_file
-                    && dirent.name.ends_with(".jsonl")
-                    && dirent.name.starts_with("agent-")
-                    && !dirent.name.contains("acompact")
-                {
-                    Some(subagents_dir.join(&dirent.name))
-                } else {
-                    None
-                }
-            }));
-        }
-
-        // Phase 2: OLD structure scan (fallback)
-        let project_root = self.projects_dir.join(&base_dir);
-        if let Ok(entries) = self.fs_provider.read_dir(&project_root) {
-            for dirent in entries {
-                if dirent.is_file
-                    && dirent.name.starts_with("agent-")
-                    && dirent.name.ends_with(".jsonl")
-                    && !dirent.name.contains("acompact")
-                {
-                    // Skip if already found in NEW structure
-                    if files.iter().any(|f| {
-                        f.file_name()
-                            .map(|n| n == dirent.name.as_str())
-                            .unwrap_or(false)
-                    }) {
-                        continue;
-                    }
-
-                    let file_path = project_root.join(&dirent.name);
-                    if let Ok(content) = self.fs_provider.read_file_head(&file_path, 1) {
-                        if subagent_belongs_to_session(&content, session_id) {
-                            files.push(file_path);
-                        }
-                    }
-                }
-            }
-        }
-
-        files
-    }
-
     /// Check if a session has subagents.
     pub fn has_subagents(&self, project_id: &str, session_id: &str) -> bool {
-        !self.list_subagent_files(project_id, session_id).is_empty()
-    }
-
-    /// Parse a single subagent file.
-    fn parse_subagent_file(&self, file_path: &Path) -> Option<Process> {
-        let content = self.fs_provider.read_file(file_path).ok()?;
-        let messages = parse_jsonl_content(&content);
-
-        if messages.is_empty() {
-            return None;
-        }
-
-        // Extract agent ID from filename
-        let filename = file_path.file_name()?.to_str()?;
-        let agent_id = filename
-            .strip_prefix("agent-")?
-            .strip_suffix(".jsonl")?
-            .to_string();
-
-        // Filter out compact files
-        if agent_id.starts_with("acompact") {
-            return None;
-        }
-
-        // Filter out warmup subagents
-        if self.is_warmup_subagent(&messages) {
-            return None;
-        }
-
-        // Calculate timing
-        let (start_time_ms, end_time_ms, duration_ms) = self.calculate_timing(&messages);
-
-        // Calculate metrics
-        let metrics = self.calculate_metrics(&messages);
-
-        // Check if ongoing
-        let is_ongoing = self.check_is_ongoing(&messages);
-
-        Some(Process {
-            id: agent_id,
-            file_path: file_path.to_string_lossy().to_string(),
-            start_time_ms,
-            end_time_ms,
-            duration_ms,
-            metrics,
-            is_parallel: false,
-            is_ongoing,
-            task_id: None,
-            messages,
-            description: None,
-            subagent_type: None,
-            team: None,
-        })
-    }
-
-    /// Check if this is a warmup subagent.
-    fn is_warmup_subagent(&self, messages: &[ParsedMessage]) -> bool {
-        messages
-            .iter()
-            .find(|m| m.message_type == MessageType::User)
-            .map(|m| m.content.as_str().unwrap_or("") == "Warmup")
-            .unwrap_or(false)
-    }
-
-    /// Calculate timing from messages.
-    fn calculate_timing(&self, messages: &[ParsedMessage]) -> (u64, u64, u64) {
-        let timestamps: Vec<u64> = messages
-            .iter()
-            .filter_map(|m| {
-                chrono::DateTime::parse_from_rfc3339(&m.timestamp)
-                    .ok()
-                    .map(|dt| dt.timestamp_millis() as u64)
-            })
-            .collect();
-
-        if timestamps.is_empty() {
-            return (0, 0, 0);
-        }
-
-        let min_time = timestamps.iter().copied().min().unwrap_or(0);
-        let max_time = timestamps.iter().copied().max().unwrap_or(0);
-
-        (min_time, max_time, max_time.saturating_sub(min_time))
-    }
-
-    /// Calculate metrics from messages.
-    fn calculate_metrics(&self, messages: &[ParsedMessage]) -> SessionMetrics {
-        let mut total_input = 0u64;
-        let mut total_output = 0u64;
-        let mut cache_read = 0u64;
-        let mut cache_creation = 0u64;
-        let mut message_count = 0u32;
-
-        for msg in messages {
-            message_count += 1;
-            if let Some(ref usage) = msg.usage {
-                total_input += usage.input_tokens;
-                total_output += usage.output_tokens;
-                cache_read += usage.cache_read_input_tokens.unwrap_or(0);
-                cache_creation += usage.cache_creation_input_tokens.unwrap_or(0);
-            }
-        }
-
-        SessionMetrics {
-            duration_ms: 0,
-            total_tokens: total_input + total_output,
-            input_tokens: total_input,
-            output_tokens: total_output,
-            cache_read_tokens: if cache_read > 0 { Some(cache_read) } else { None },
-            cache_creation_tokens: if cache_creation > 0 { Some(cache_creation) } else { None },
-            message_count,
-            cost_usd: None,
-        }
-    }
-
-    /// Check if messages indicate ongoing session.
-    fn check_is_ongoing(&self, messages: &[ParsedMessage]) -> bool {
-        crate::utils::session_state_detection::check_messages_ongoing(messages)
-    }
-
-    /// Detect parallel execution among subagents.
-    fn detect_parallel_execution(&self, subagents: &mut [Process]) {
-        for i in 0..subagents.len() {
-            for j in (i + 1)..subagents.len() {
-                let a = &subagents[i];
-                let b = &subagents[j];
-
-                // Check if time windows overlap by more than PARALLEL_WINDOW_MS
-                let overlap_start = a.start_time_ms.max(b.start_time_ms);
-                let overlap_end = a.end_time_ms.min(b.end_time_ms);
-
-                if overlap_end > overlap_start + PARALLEL_WINDOW_MS {
-                    subagents[i].is_parallel = true;
-                    subagents[j].is_parallel = true;
-                }
-            }
-        }
+        has_subagent_files(&self.projects_dir, self.fs_provider.as_ref(), project_id, session_id)
     }
 
     /// Find a subagent by ID.
@@ -600,6 +148,7 @@ impl SubagentResolver {
 }
 
 /// Helper to create a minimal ParsedMessage for tests.
+#[cfg(test)]
 fn make_test_message(msg_type: MessageType, content: &str, uuid: &str, parent_uuid: Option<&str>, timestamp: &str) -> ParsedMessage {
     ParsedMessage {
         message_type: msg_type,
@@ -631,7 +180,7 @@ mod tests {
     #[test]
     fn test_list_subagent_files_empty() {
         let (_temp_dir, resolver) = setup_test_env();
-        let files = resolver.list_subagent_files("-Users-test-project", "session-123");
+        let files = list_subagent_files(&resolver.projects_dir, resolver.fs_provider.as_ref(), "-Users-test-project", "session-123");
         assert!(files.is_empty());
     }
 
@@ -660,7 +209,7 @@ mod tests {
         )
         .unwrap();
 
-        let files = resolver.list_subagent_files("-Users-test-project", "session-123");
+        let files = list_subagent_files(&resolver.projects_dir, resolver.fs_provider.as_ref(), "-Users-test-project", "session-123");
         assert_eq!(files.len(), 1);
     }
 
@@ -692,7 +241,7 @@ mod tests {
     #[test]
     fn test_parse_jsonl_content_extracts_uuid_and_parent_uuid() {
         let content = r#"{"type":"user","message":{"role":"user","content":"Hello"},"uuid":"abc-123","parentUuid":"parent-456","timestamp":"2024-01-01T00:00:00Z"}"#;
-        let messages = parse_jsonl_content(content);
+        let messages = crate::parsing::jsonl_parser::parse_jsonl_content(content);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].uuid, "abc-123");
         assert_eq!(messages[0].parent_uuid, Some("parent-456".to_string()));
@@ -702,7 +251,7 @@ mod tests {
     fn test_parse_jsonl_content_missing_uuid() {
         // parse_jsonl_line skips messages with empty uuid, so this returns empty
         let content = r#"{"type":"user","message":{"role":"user","content":"Hello"},"timestamp":"2024-01-01T00:00:00Z"}"#;
-        let messages = parse_jsonl_content(content);
+        let messages = crate::parsing::jsonl_parser::parse_jsonl_content(content);
         assert!(messages.is_empty());
     }
 
@@ -1018,7 +567,7 @@ mod tests {
         )
         .unwrap();
 
-        let files = resolver.list_subagent_files("-Users-test-project", "session-456");
+        let files = list_subagent_files(&resolver.projects_dir, resolver.fs_provider.as_ref(), "-Users-test-project", "session-456");
         assert_eq!(files.len(), 1);
         assert!(files[0].to_string_lossy().contains("agent-old123.jsonl"));
     }
@@ -1052,7 +601,7 @@ mod tests {
         )
         .unwrap();
 
-        let files = resolver.list_subagent_files("-Users-test-project", "session-456");
+        let files = list_subagent_files(&resolver.projects_dir, resolver.fs_provider.as_ref(), "-Users-test-project", "session-456");
         assert_eq!(files.len(), 2);
     }
 
@@ -1099,7 +648,7 @@ mod tests {
         )
         .unwrap();
 
-        let files = resolver.list_subagent_files("-Users-test-project", "session-456");
+        let files = list_subagent_files(&resolver.projects_dir, resolver.fs_provider.as_ref(), "-Users-test-project", "session-456");
         assert!(files.is_empty());
     }
 
