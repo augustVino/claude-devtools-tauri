@@ -13,6 +13,7 @@ mod http;
 mod infrastructure;
 mod parsing;
 mod types;
+mod services;
 mod utils;
 
 use std::sync::atomic::AtomicU64;
