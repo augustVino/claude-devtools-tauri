@@ -68,7 +68,7 @@ pub async fn update_config(
             &config_mgr,
             cache,
             &state.app_handle,
-            &state.searcher,
+            &state.search_service,
         ).await {
             log::error!("Failed to rebuild local context after claude root path change: {e}");
         }

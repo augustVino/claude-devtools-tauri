@@ -8,18 +8,19 @@ use std::sync::Arc;
 
 use super::service_context::{ContextType, ServiceContext, ServiceContextConfig};
 use super::{ConfigManager, ContextManager, DataCache, FsProvider, LocalFsProvider, NotificationManager};
+use crate::services::SearchService;
 
 /// Rebuild the local ServiceContext when claude root path changes.
 ///
 /// Creates a new ServiceContext with updated paths, replaces the old one in
-/// ContextManager, spawns watcher tasks, and updates the SessionSearcher.
+/// ContextManager, spawns watcher tasks, and updates the SearchService.
 pub async fn rebuild_local_context(
     context_manager: &Arc<tokio::sync::RwLock<ContextManager>>,
     notification_manager: &Arc<tokio::sync::RwLock<NotificationManager>>,
     config_manager: &Arc<ConfigManager>,
     cache: DataCache,
     app_handle: &tauri::AppHandle,
-    searcher: &Arc<std::sync::Mutex<crate::discovery::SessionSearcher>>,
+    search_service: &Arc<SearchService>,
 ) -> Result<(), String> {
     let projects_dir = crate::utils::get_projects_base_path();
     let todos_dir = crate::utils::get_todos_base_path();
@@ -55,16 +56,8 @@ pub async fn rebuild_local_context(
         }
     }
 
-    // Update managed SessionSearcher with new paths
-    {
-        let mut guard = searcher.lock().map_err(|e| format!("Failed to lock searcher: {e}"))?;
-        *guard = crate::discovery::SessionSearcher::new(
-            projects_dir,
-            todos_dir,
-            fs_provider,
-            None,
-        );
-    }
+    // Update SearchService internal searcher with new paths
+    search_service.rebuild(projects_dir, todos_dir, fs_provider)?;
 
     Ok(())
 }

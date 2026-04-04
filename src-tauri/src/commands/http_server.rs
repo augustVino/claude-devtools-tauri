@@ -4,15 +4,12 @@ use std::sync::{Arc, Mutex};
 use tauri::{command, AppHandle, Manager, State};
 use tokio::sync::RwLock;
 
-use crate::commands::search::create_searcher_state;
 use crate::commands::AppState;
 use crate::http::server::{self, HttpServerHandle, HttpServerStatus};
 use crate::http::sse::SSEBroadcaster;
 use crate::http::state::HttpState;
-use crate::infrastructure::fs_provider::LocalFsProvider;
 use crate::infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConnectionManager};
 use crate::services::{ProjectService, SearchService, SessionService};
-use crate::utils::{get_projects_base_path, get_todos_base_path};
 
 /// IPC 响应包装 — 与 Electron 格式对齐
 #[derive(Debug, Clone, serde::Serialize)]
@@ -91,10 +88,6 @@ pub async fn start(
             .inner()
             .clone();
 
-        let projects_dir = get_projects_base_path();
-        let todos_dir = get_todos_base_path();
-        let searcher = create_searcher_state(projects_dir, todos_dir, Arc::new(LocalFsProvider::new()));
-
         let http_state = HttpState {
             app_handle: app.clone(),
             app_state: state.inner().clone(),
@@ -104,7 +97,6 @@ pub async fn start(
                 .inner()
                 .clone(),
             notification_manager,
-            searcher,
             context_manager,
             ssh_manager: app
                 .state::<Arc<RwLock<SshConnectionManager>>>()

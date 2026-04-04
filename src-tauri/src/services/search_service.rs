@@ -142,4 +142,11 @@ impl SearchService {
         .await
         .map_err(|e| format!("find_sessions_by_partial_id task panicked: {}", e))?
     }
+
+    /// Rebuild the internal SessionSearcher with new paths (e.g., after claude root change).
+    pub fn rebuild(&self, projects_dir: PathBuf, todos_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Result<(), String> {
+        let mut guard = self.searcher.lock().map_err(|e| format!("Failed to lock searcher: {e}"))?;
+        *guard = SessionSearcher::new(projects_dir, todos_dir, fs_provider, None);
+        Ok(())
+    }
 }

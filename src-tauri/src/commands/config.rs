@@ -46,8 +46,8 @@ pub async fn update_config(
             .state::<Arc<RwLock<crate::infrastructure::NotificationManager>>>()
             .inner()
             .clone();
-        let searcher = app
-            .state::<Arc<std::sync::Mutex<crate::discovery::SessionSearcher>>>()
+        let search_service = app
+            .state::<Arc<crate::services::SearchService>>()
             .inner()
             .clone();
 
@@ -57,7 +57,7 @@ pub async fn update_config(
             &config_mgr,
             cache,
             &app,
-            &searcher,
+            &search_service,
         ).await?;
     }
 

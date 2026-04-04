@@ -2,11 +2,10 @@
 //!
 //! Axum Router 只支持单一 State 类型，因此将所有共享资源合并到一个结构体中。
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::commands::AppState;
-use crate::discovery::SessionSearcher;
 use crate::http::sse::SSEBroadcaster;
 use crate::infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConnectionManager};
 use crate::services::{ProjectService, SearchService, SessionService};
@@ -22,7 +21,6 @@ pub struct HttpState {
     pub broadcaster: SSEBroadcaster,
     pub config_manager: Arc<ConfigManager>,
     pub notification_manager: Arc<RwLock<NotificationManager>>,
-    pub searcher: Arc<Mutex<SessionSearcher>>,
     pub context_manager: Arc<RwLock<ContextManager>>,
     pub ssh_manager: Arc<RwLock<SshConnectionManager>>,
 

@@ -275,19 +275,12 @@ pub fn run() {
                 .state::<Arc<RwLock<ContextManager>>>()
                 .inner()
                 .clone();
-              let projects_dir = get_projects_base_path();
-              let todos_dir = get_todos_base_path();
-              let searcher = commands::search::create_searcher_state(
-                projects_dir, todos_dir, Arc::new(LocalFsProvider::new()),
-              );
-
               let http_state = crate::http::state::HttpState {
                 app_handle: app.handle().clone(),
                 app_state: app_state.clone(),
                 broadcaster,
                 config_manager: config_manager.clone(),
                 notification_manager,
-                searcher,
                 context_manager,
                 ssh_manager: app
                   .state::<Arc<RwLock<SshConnectionManager>>>()
