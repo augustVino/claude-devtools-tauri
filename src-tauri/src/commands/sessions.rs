@@ -7,7 +7,7 @@ use tauri::{command, State};
 use std::sync::Arc;
 
 use crate::services::SessionService;
-use crate::types::domain::{DeleteSessionResult, PaginatedSessionsResult, SessionsPaginationOptions, Project, Session};
+use crate::types::domain::{DeleteSessionResult, PaginatedSessionsResult, SessionsPaginationOptions, Project, Session, SessionMetrics};
 use crate::types::chunks::{ConversationGroup, SessionDetail};
 use crate::infrastructure::ContextManager;
 
