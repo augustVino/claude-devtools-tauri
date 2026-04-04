@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use crate::analysis::tool_extraction::{build_tool_result_map, build_tool_use_map};
-use crate::error::error_trigger_checker::{
+use crate::error::trigger::{
     check_token_threshold_trigger, check_tool_result_trigger, check_tool_use_trigger,
     matches_repository_scope, pre_resolve_repository_ids, RepositoryScopeTarget,
 };
