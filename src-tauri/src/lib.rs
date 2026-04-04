@@ -38,6 +38,30 @@ pub fn run() {
   let shared_cache = infrastructure::DataCache::new();
   let app_state = Arc::new(RwLock::new(AppState::new(config_manager.clone(), shared_cache.clone())));
 
+  // ========== Pre-create Domain Services (registered inside setup) ==========
+  let fs_provider: Arc<dyn infrastructure::fs_provider::FsProvider> = Arc::new(infrastructure::fs_provider::LocalFsProvider::new());
+
+  let project_service = Arc::new(services::ProjectService::new(
+      fs_provider.clone(),
+      get_projects_base_path(),
+      get_todos_base_path(),
+  ));
+
+  let search_service = Arc::new(services::SearchService::new(
+      get_projects_base_path(),
+      get_todos_base_path(),
+      fs_provider.clone(),
+  ));
+
+  let session_service = Arc::new(services::SessionService::new(
+      fs_provider,
+      shared_cache.clone(),
+      get_projects_base_path(),
+      get_todos_base_path(),
+      config_manager.clone(),
+      project_service.clone(),
+  ));
+
   // Zoom factor state: track zoom since Tauri v2 has set_zoom() but no zoom() getter.
   // Store f64 as bits in AtomicU64 for lock-free concurrent access.
   let zoom_factor: Arc<AtomicU64> = Arc::new(AtomicU64::new(1.0f64.to_bits()));
@@ -84,6 +108,11 @@ pub fn run() {
 
       // 注册 ConfigManager 为 managed state（供 http_server::start 等命令直接访问）
       app.manage(config_manager.clone());
+
+      // ========== 注册 Domain Services ==========
+      app.manage(session_service.clone());
+      app.manage(project_service.clone());
+      app.manage(search_service.clone());
 
       let state = app_state.clone();
 
@@ -184,14 +213,15 @@ pub fn run() {
       app.manage(context_manager.clone());
 
       // ========== 注册 SessionSearcher（供 Tauri IPC search 命令使用）==========
-      {
-        let local_fs: Arc<dyn infrastructure::fs_provider::FsProvider> = Arc::new(LocalFsProvider::new());
-        app.manage(commands::search::create_searcher_state(
-          get_projects_base_path(),
-          get_todos_base_path(),
-          local_fs,
-        ));
-      }
+      // REMOVED: SearchService now owns the SessionSearcher internally.
+      // {
+      //   let local_fs: Arc<dyn infrastructure::fs_provider::FsProvider> = Arc::new(LocalFsProvider::new());
+      //   app.manage(commands::search::create_searcher_state(
+      //     get_projects_base_path(),
+      //     get_todos_base_path(),
+      //     local_fs,
+      //   ));
+      // }
 
       // ========== 创建并注册 SshConnectionManager ==========
       let ssh_manager_inner = SshConnectionManager::new();
@@ -263,6 +293,9 @@ pub fn run() {
                   .state::<Arc<RwLock<SshConnectionManager>>>()
                   .inner()
                   .clone(),
+                session_service: session_service.clone(),
+                project_service: project_service.clone(),
+                search_service: search_service.clone(),
               };
 
               let dist_dir = std::env::var("RENDERER_PATH")

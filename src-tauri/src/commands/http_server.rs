@@ -11,6 +11,7 @@ use crate::http::sse::SSEBroadcaster;
 use crate::http::state::HttpState;
 use crate::infrastructure::fs_provider::LocalFsProvider;
 use crate::infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConnectionManager};
+use crate::services::{ProjectService, SearchService, SessionService};
 use crate::utils::{get_projects_base_path, get_todos_base_path};
 
 /// IPC 响应包装 — 与 Electron 格式对齐
@@ -109,6 +110,9 @@ pub async fn start(
                 .state::<Arc<RwLock<SshConnectionManager>>>()
                 .inner()
                 .clone(),
+            session_service: app.state::<Arc<SessionService>>().inner().clone(),
+            project_service: app.state::<Arc<ProjectService>>().inner().clone(),
+            search_service: app.state::<Arc<SearchService>>().inner().clone(),
         };
 
         // 前端构建产物目录：RENDERER_PATH 环境变量优先，fallback 到 CARGO_MANIFEST_DIR/../dist
