@@ -6,11 +6,10 @@
 use tauri::{command, State};
 use std::sync::Arc;
 
-use crate::services::{ProjectService, SessionService};
-use crate::types::domain::{DeleteSessionResult, PaginatedSessionsResult, SessionsPaginationOptions, Project, RepositoryGroup, Session, SessionMetrics};
+use crate::services::SessionService;
+use crate::types::domain::{DeleteSessionResult, PaginatedSessionsResult, SessionsPaginationOptions, Project, Session};
 use crate::types::chunks::{ConversationGroup, SessionDetail};
 use crate::infrastructure::ContextManager;
-use crate::analysis::waterfall_builder::WaterfallData;
 
 // AppState is defined in commands/mod.rs — re-exported here for backward compat
 pub use super::AppState;
