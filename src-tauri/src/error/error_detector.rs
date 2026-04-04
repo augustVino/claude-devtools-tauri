@@ -64,7 +64,7 @@ impl ErrorDetector {
         let mut errors: Vec<DetectedError> = Vec::new();
 
         // 从配置中获取已启用的触发器（ConfigManager 内部有 RwLock 保护）
-        let triggers = self.config_manager.get_enabled_triggers();
+        let triggers = self.config_manager.get_enabled_triggers().await;
 
         if triggers.is_empty() {
             return errors;
@@ -338,11 +338,11 @@ mod tests {
     }
 
     /// 创建一个包含给定触发器的 `ErrorDetector`（使用真实的 `ConfigManager`）。
-    fn make_detector_with_triggers(triggers: Vec<NotificationTrigger>) -> ErrorDetector {
+    async fn make_detector_with_triggers(triggers: Vec<NotificationTrigger>) -> ErrorDetector {
         let config_manager = Arc::new(ConfigManager::new());
         // 将每个触发器添加到配置中
         for trigger in triggers {
-            let _ = config_manager.add_trigger(trigger);
+            let _ = config_manager.add_trigger(trigger).await;
         }
         ErrorDetector::new(config_manager)
     }
@@ -353,7 +353,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_errors_no_triggers_returns_empty() {
-        let detector = make_detector_with_triggers(vec![]);
+        let detector = make_detector_with_triggers(vec![]).await;
         let messages = vec![make_assistant_message(
             json!("test"),
             vec![make_tool_call(
@@ -373,7 +373,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_errors_matching_trigger_returns_errors() {
-        let detector = make_detector_with_triggers(vec![make_error_trigger()]);
+        let detector = make_detector_with_triggers(vec![make_error_trigger()]).await;
 
         let messages = vec![make_assistant_message(
             json!("test"),
@@ -398,7 +398,7 @@ mod tests {
     #[tokio::test]
     async fn test_detect_errors_mismatched_content_type_skips_trigger() {
         // Thinking 内容类型应被跳过（尚未实现）
-        let detector = make_detector_with_triggers(vec![make_thinking_trigger()]);
+        let detector = make_detector_with_triggers(vec![make_thinking_trigger()]).await;
 
         let messages = vec![make_assistant_message(
             json!("test"),
@@ -419,7 +419,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_errors_no_error_in_result_no_match() {
-        let detector = make_detector_with_triggers(vec![make_error_trigger()]);
+        let detector = make_detector_with_triggers(vec![make_error_trigger()]).await;
 
         let messages = vec![make_assistant_message(
             json!("test"),
@@ -441,7 +441,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_errors_tool_use_trigger() {
-        let detector = make_detector_with_triggers(vec![make_tool_use_trigger("Bash", "rm")]);
+        let detector = make_detector_with_triggers(vec![make_tool_use_trigger("Bash", "rm")]).await;
 
         let content = json!([{
             "type": "tool_use",
@@ -475,7 +475,7 @@ mod tests {
             ..make_error_trigger()
         };
 
-        let detector = make_detector_with_triggers(vec![trigger1, trigger2]);
+        let detector = make_detector_with_triggers(vec![trigger1, trigger2]).await;
 
         let messages = vec![make_assistant_message(
             json!("test"),
@@ -497,7 +497,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detect_errors_empty_messages() {
-        let detector = make_detector_with_triggers(vec![make_error_trigger()]);
+        let detector = make_detector_with_triggers(vec![make_error_trigger()]).await;
 
         let errors = detector
             .detect_errors(&[], "session-1", "-Users-test", "/path.jsonl")
@@ -512,7 +512,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_test_trigger_delegates_to_tester() {
-        let detector = make_detector_with_triggers(vec![make_error_trigger()]);
+        let detector = make_detector_with_triggers(vec![make_error_trigger()]).await;
 
         // 委托给 ErrorTriggerTester，使用默认 ProjectScanner（扫描真实路径）
         // 只验证返回值结构正确，不验证具体数量（取决于本地环境）
@@ -547,12 +547,12 @@ mod tests {
         assert!(errors.is_empty(), "no triggers → no errors");
 
         // 运行时添加触发器 → 下次检测应生效
-        config_manager.add_trigger(make_error_trigger()).unwrap();
+        config_manager.add_trigger(make_error_trigger()).await.unwrap();
         let errors = detector.detect_errors(&messages, "s1", "-test", "/f.jsonl").await;
         assert_eq!(errors.len(), 1, "trigger added at runtime → should detect error");
 
         // 运行时禁用触发器 → 下次检测不应产生错误
-        let _ = config_manager.update_trigger("error-trigger", serde_json::json!({"enabled": false}));
+        let _ = config_manager.update_trigger("error-trigger", serde_json::json!({"enabled": false})).await;
         let errors = detector.detect_errors(&messages, "s1", "-test", "/f.jsonl").await;
         assert!(errors.is_empty(), "trigger disabled at runtime → no errors");
     }

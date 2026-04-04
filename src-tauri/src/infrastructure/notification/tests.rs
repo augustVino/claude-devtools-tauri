@@ -513,7 +513,7 @@ mod tests {
                 uuid::Uuid::new_v4()
             )),
         ));
-        cm.add_ignore_regex("permission denied".to_string()).unwrap();
+        cm.add_ignore_regex("permission denied".to_string()).await.unwrap();
 
         let mut mgr = NotificationManager::new_for_test(cm);
         mgr.initialize().await;

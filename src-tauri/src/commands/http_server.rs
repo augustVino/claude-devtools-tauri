@@ -57,6 +57,7 @@ pub async fn start(
         state_read
             .config_manager
             .get_config()
+            .await
             .http_server
             .as_ref()
             .map(|c| c.port)
@@ -127,7 +128,7 @@ pub async fn start(
 
     // Persist enabled state to config
     let config_mgr = app.state::<Arc<ConfigManager>>().inner().clone();
-    if let Err(e) = config_mgr.update_config("httpServer", serde_json::json!({"enabled": true, "port": port})) {
+    if let Err(e) = config_mgr.update_config("httpServer", serde_json::json!({"enabled": true, "port": port})).await {
         log::error!("Failed to persist httpServer.enabled=true: {e}");
     }
 
@@ -156,7 +157,7 @@ pub async fn stop(app: AppHandle) -> Result<IpcResponse<HttpServerStatus>, Strin
     // Persist disabled state to config
     if stopped {
         let config_mgr = app.state::<Arc<ConfigManager>>().inner().clone();
-        if let Err(e) = config_mgr.update_config("httpServer", serde_json::json!({"enabled": false})) {
+        if let Err(e) = config_mgr.update_config("httpServer", serde_json::json!({"enabled": false})).await {
             log::error!("Failed to persist httpServer.enabled=false: {e}");
         }
     }

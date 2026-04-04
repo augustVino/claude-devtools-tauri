@@ -13,7 +13,7 @@ impl NotificationManager {
     // =========================================================================
 
     /// 为错误显示原生操作系统通知。
-    pub(crate) fn show_native_notification(&self, error: &DetectedError) {
+    pub(crate) async fn show_native_notification(&self, error: &DetectedError) {
         let Some(ref app_handle) = self.app_handle else {
             return;
         };
@@ -41,7 +41,7 @@ impl NotificationManager {
             });
         }
 
-        let sound_enabled = self.config_manager.get_config().notifications.sound_enabled;
+        let sound_enabled = self.config_manager.get_config().await.notifications.sound_enabled;
         let body = truncate_str(&error.message, 200);
         let subtitle = &error.context.project_name;
 

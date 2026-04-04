@@ -23,7 +23,7 @@ impl AppBootstrap {
 
     /// 设置全局 claude root 路径覆盖。
     pub fn set_claude_root(config_manager: &Arc<ConfigManager>) {
-        set_claude_root_override(config_manager.get_config().general.claude_root_path.clone());
+        set_claude_root_override(tauri::async_runtime::block_on(config_manager.get_config()).general.claude_root_path.clone());
     }
 
     /// 非 debug 模式时显示窗口。
@@ -45,7 +45,7 @@ impl AppBootstrap {
     ) {
         let hide_dock = {
             let state_guard = state.blocking_read();
-            !state_guard.config_manager.get_config().general.show_dock_icon
+            !tauri::async_runtime::block_on(state_guard.config_manager.get_config()).general.show_dock_icon
         };
         if hide_dock {
             let tray = app.state::<std::sync::Mutex<TrayIconManager>>();
@@ -73,7 +73,7 @@ impl AppBootstrap {
         project_service: &Arc<crate::services::ProjectService>,
         search_service: &Arc<crate::services::SearchService>,
     ) -> Result<(), String> {
-        let http_config = config_manager.get_config().http_server.clone();
+        let http_config = tauri::async_runtime::block_on(config_manager.get_config()).http_server.clone();
         if let Some(ref cfg) = http_config {
             if cfg.enabled {
                 let port = cfg.port;

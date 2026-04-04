@@ -301,7 +301,7 @@ pub async fn ssh_save_last_connection(
             "privateKeyPath": connection.private_key_path,
         }
     });
-    config_manager.update_config("ssh", connection_value)?;
+    config_manager.update_config("ssh", connection_value).await?;
     Ok(())
 }
 
@@ -310,7 +310,7 @@ pub async fn ssh_save_last_connection(
 pub async fn ssh_get_last_connection(
     config_manager: State<'_, Arc<crate::infrastructure::ConfigManager>>,
 ) -> Result<Option<SshLastConnection>, String> {
-    let config = config_manager.get_config();
+    let config = config_manager.get_config().await;
     let last = config.ssh.as_ref().and_then(|s| s.last_connection.as_ref());
     Ok(last.map(|c| SshLastConnection {
         host: c.host.clone(),

@@ -696,9 +696,9 @@ impl SessionService {
 
         // 11. Clean up pin/hide from ConfigManager
         self.config_manager
-            .unpin_session(project_id.to_string(), session_id.to_string());
+            .unpin_session(project_id.to_string(), session_id.to_string()).await;
         self.config_manager
-            .unhide_session(project_id.to_string(), session_id.to_string());
+            .unhide_session(project_id.to_string(), session_id.to_string()).await;
 
         // Invalidate cache
         self.cache.invalidate_session(project_id, session_id).await;

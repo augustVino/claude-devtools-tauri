@@ -22,15 +22,15 @@ impl NotificationManagerExt for NotificationManager {
     ///
     /// 此方法仅控制操作系统通知；存储不受条件限制。
     async fn should_notify(&self, error: &DetectedError) -> bool {
-        if !self.are_notifications_enabled() {
+        if !self.are_notifications_enabled().await {
             return false;
         }
 
-        if self.is_from_ignored_repository(error) {
+        if self.is_from_ignored_repository(error).await {
             return false;
         }
 
-        if self.matches_ignored_regex(error) {
+        if self.matches_ignored_regex(error).await {
             return false;
         }
 
@@ -85,8 +85,8 @@ impl NotificationManager {
     }
 
     /// 检查错误消息是否匹配任何已配置的忽略正则模式。
-    fn matches_ignored_regex(&self, error: &DetectedError) -> bool {
-        let config = self.config_manager.get_config();
+    async fn matches_ignored_regex(&self, error: &DetectedError) -> bool {
+        let config = self.config_manager.get_config().await;
 
         if config.notifications.ignored_regex.is_empty() {
             return false;
@@ -132,8 +132,8 @@ impl NotificationManager {
     ///
     /// Resolves the error's projectId to a repository identity via GitIdentityResolver,
     /// then checks against config.notifications.ignored_repositories.
-    fn is_from_ignored_repository(&self, error: &DetectedError) -> bool {
-        let config = self.config_manager.get_config();
+    async fn is_from_ignored_repository(&self, error: &DetectedError) -> bool {
+        let config = self.config_manager.get_config().await;
         let ignored = &config.notifications.ignored_repositories;
         if ignored.is_empty() {
             return false;
@@ -150,8 +150,8 @@ impl NotificationManager {
     }
 
     /// 检查通知当前是否启用（未暂停、未禁用）。
-    fn are_notifications_enabled(&self) -> bool {
-        let config = self.config_manager.get_config();
+    async fn are_notifications_enabled(&self) -> bool {
+        let config = self.config_manager.get_config().await;
 
         if !config.notifications.enabled {
             return false;
@@ -163,7 +163,7 @@ impl NotificationManager {
                 return false;
             }
             // 暂停已过期 — 清除暂停状态
-            self.config_manager.clear_snooze();
+            self.config_manager.clear_snooze().await;
             return true;
         }
 

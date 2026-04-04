@@ -83,7 +83,7 @@ impl NotificationManager {
 
         // --- 原生通知（仅当未被过滤/节流时） ---
         if super::filtering::NotificationManagerExt::should_notify(self, &stored.error).await {
-            self.show_native_notification(&stored.error);
+            self.show_native_notification(&stored.error).await;
         }
 
         Some(stored)

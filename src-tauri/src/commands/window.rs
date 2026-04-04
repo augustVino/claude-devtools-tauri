@@ -93,6 +93,7 @@ pub async fn set_dock_visible(
             "general",
             serde_json::json!({ "showDockIcon": visible }),
         )
+        .await
         .map_err(|e| e.to_string())?;
     Ok(())
 }

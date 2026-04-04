@@ -14,7 +14,7 @@ mod trigger_proxy;
 use defaults::{CONFIG_FILENAME, DEFAULT_IGNORED_REGEX, default_app_config, default_config_json, now_millis};
 
 use std::path::PathBuf;
-use std::sync::RwLock;
+use tokio::sync::RwLock;
 
 use crate::types::*;
 use crate::error::AppError;
@@ -60,12 +60,11 @@ impl ConfigManager {
             &crate::infrastructure::trigger_manager::default_triggers(),
         );
         {
-            let mut config = self.config.write()
-                .map_err(|e| format!("failed to acquire write lock: {e}"))?;
+            let mut config = self.config.write().await;
             *config = loaded;
         }
         if !file_existed {
-            self.persist()?;
+            self.persist().await?;
             info!("Created default config file at {:?}", self.config_path);
         }
         Ok(())
@@ -74,21 +73,15 @@ impl ConfigManager {
     /// 返回配置文件的路径
     pub fn get_config_path(&self) -> std::path::PathBuf { self.config_path.clone() }
 
-    /// 获取当前配置的完整副本。
-    pub fn get_config(&self) -> AppConfig {
-        self.config.read()
-            .map(|c| c.clone())
-            .unwrap_or_else(|e| {
-                error!("Failed to read config lock, returning defaults: {e}");
-                default_app_config()
-            })
+    /// 获取当前配置的完整副本。（现为 async）
+    pub async fn get_config(&self) -> AppConfig {
+        self.config.read().await.clone()
     }
 
-    /// 分区更新配置。支持六个分区，含字段级校验和 claudeRootPath 规范化。
-    pub fn update_config(&self, section: &str, mut data: serde_json::Value) -> Result<AppConfig, String> {
+    /// 分区更新配置。支持六个分区，含字段级校验和 claudeRootPath 规范化。（现为 async）
+    pub async fn update_config(&self, section: &str, mut data: serde_json::Value) -> Result<AppConfig, String> {
         let merged: AppConfig = {
-            let mut config = self.config.write()
-                .map_err(|e| format!("failed to acquire write lock: {e}"))?;
+            let mut config = self.config.write().await;
             let current_json = serde_json::to_value(&*config)
                 .map_err(|e| format!("failed to serialize current config: {e}"))?;
             let valid_sections = ["notifications", "general", "display", "sessions", "ssh", "httpServer"];
@@ -111,7 +104,7 @@ impl ConfigManager {
             *config = merged.clone();
             merged
         };
-        self.persist()?;
+        self.persist().await?;
         if section == "general" { crate::utils::set_claude_root_override(merged.general.claude_root_path.clone()); }
         Ok(merged)
     }
@@ -130,18 +123,18 @@ impl ConfigManager {
         merge_with_defaults(&parsed)
     }
 
-    fn persist_inner(&self) -> Result<(), AppError> {
-        let config = self.config.read()
-            .map_err(|e| AppError::Internal(format!("failed to acquire read lock: {e}")))?;
-        if let Some(parent) = self.config_path.parent() { std::fs::create_dir_all(parent)?; }
+    async fn persist_inner(&self) -> Result<(), AppError> {
+        let config = self.config.read().await;
+        if let Some(parent) = self.config_path.parent() { tokio::fs::create_dir_all(parent).await.map_err(|e| AppError::Io(e))?; }
         let content = serde_json::to_string_pretty(&*config)
             .map_err(|e| AppError::Config(format!("failed to serialize config: {e}")))?;
-        std::fs::write(&self.config_path, content).map_err(|e| AppError::Io(e))?;
+        tokio::fs::write(&self.config_path, content).await
+            .map_err(|e| AppError::Io(e))?;
         info!("Config saved to {:?}", self.config_path);
         Ok(())
     }
 
-    fn persist(&self) -> Result<(), String> { self.persist_inner().map_err(|e| e.to_string()) }
+    async fn persist(&self) -> Result<(), String> { self.persist_inner().await.map_err(|e| e.to_string()) }
 }
 
 #[cfg(test)]

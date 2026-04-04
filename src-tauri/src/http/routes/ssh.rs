@@ -305,7 +305,7 @@ pub async fn ssh_save_last_connection(
             "privateKeyPath": body.private_key_path,
         }
     });
-    match state.config_manager.update_config("ssh", connection_value) {
+    match state.config_manager.update_config("ssh", connection_value).await {
         Ok(_) => success_json(serde_json::Value::Null),
         Err(e) => (StatusCode::OK, Json(serde_json::json!({"success": false, "error": e.to_string()}))),
     }
@@ -315,7 +315,7 @@ pub async fn ssh_save_last_connection(
 pub async fn ssh_get_last_connection(
     State(state): State<HttpState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let config = state.config_manager.get_config();
+    let config = state.config_manager.get_config().await;
     let last = config.ssh.as_ref().and_then(|s| s.last_connection.as_ref());
     let result = last.map(|c| SshLastConnection {
         host: c.host.clone(),

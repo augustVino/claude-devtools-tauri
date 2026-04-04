@@ -30,7 +30,7 @@ pub async fn get_config(
     let app_state = state.app_state.read().await;
     Ok(Json(ConfigResponse {
         success: true,
-        data: app_state.config_manager.get_config(),
+        data: app_state.config_manager.get_config().await,
     }))
 }
 
@@ -56,6 +56,7 @@ pub async fn update_config(
         let result = app_state
             .config_manager
             .update_config(&body.section, body.data)
+            .await
             .map_err(|e| error_json(e))?;
         (result, app_state.cache.clone(), app_state.config_manager.clone())
     }; // AppState read lock dropped
@@ -98,6 +99,7 @@ pub async fn add_ignore_regex(
     app_state
         .config_manager
         .add_ignore_regex(body.pattern)
+        .await
         .map(Json)
         .map_err(|e| error_json(e))
 }
@@ -110,7 +112,7 @@ pub async fn remove_ignore_regex(
     Json(body): Json<PatternRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let app_state = state.app_state.read().await;
-    Ok(Json(app_state.config_manager.remove_ignore_regex(body.pattern)))
+    Ok(Json(app_state.config_manager.remove_ignore_regex(body.pattern).await))
 }
 
 // =============================================================================
@@ -133,7 +135,7 @@ pub async fn add_ignore_repository(
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let app_state = state.app_state.read().await;
     Ok(Json(
-        app_state.config_manager.add_ignore_repository(body.repository_id),
+        app_state.config_manager.add_ignore_repository(body.repository_id).await,
     ))
 }
 
@@ -148,7 +150,7 @@ pub async fn remove_ignore_repository(
     Ok(Json(
         app_state
             .config_manager
-            .remove_ignore_repository(body.repository_id),
+            .remove_ignore_repository(body.repository_id).await,
     ))
 }
 
@@ -171,13 +173,13 @@ pub async fn snooze(
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let app_state = state.app_state.read().await;
     if body.minutes == -1 {
-        Ok(Json(app_state.config_manager.snooze_until_tomorrow()))
+        Ok(Json(app_state.config_manager.snooze_until_tomorrow().await))
     } else if body.minutes <= 0 {
         Err(error_json("Minutes must be a positive number"))
     } else if body.minutes > 24 * 60 {
         Err(error_json("Minutes must be 1440 or less (24 hours)"))
     } else {
-        Ok(Json(app_state.config_manager.snooze(body.minutes as u32)))
+        Ok(Json(app_state.config_manager.snooze(body.minutes as u32).await))
     }
 }
 
@@ -188,7 +190,7 @@ pub async fn clear_snooze(
     State(state): State<HttpState>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let app_state = state.app_state.read().await;
-    Ok(Json(app_state.config_manager.clear_snooze()))
+    Ok(Json(app_state.config_manager.clear_snooze().await))
 }
 
 // =============================================================================
@@ -211,7 +213,7 @@ pub async fn get_triggers(
     let app_state = state.app_state.read().await;
     Ok(Json(TriggersResponse {
         success: true,
-        data: app_state.config_manager.get_triggers(),
+        data: app_state.config_manager.get_triggers().await,
     }))
 }
 
@@ -226,6 +228,7 @@ pub async fn add_trigger(
     app_state
         .config_manager
         .add_trigger(trigger)
+        .await
         .map(Json)
         .map_err(|e| error_json(e))
 }
@@ -245,6 +248,7 @@ pub async fn update_trigger(
     app_state
         .config_manager
         .update_trigger(&safe_trigger_id, updates)
+        .await
         .map(Json)
         .map_err(|e| error_json(e))
 }
@@ -263,6 +267,7 @@ pub async fn remove_trigger(
     app_state
         .config_manager
         .remove_trigger(&safe_trigger_id)
+        .await
         .map(Json)
         .map_err(|e| error_json(e))
 }
@@ -331,7 +336,7 @@ pub async fn pin_session(
     Ok(Json(
         app_state
             .config_manager
-            .pin_session(body.project_id, body.session_id),
+            .pin_session(body.project_id, body.session_id).await,
     ))
 }
 
@@ -351,7 +356,7 @@ pub async fn unpin_session(
     Ok(Json(
         app_state
             .config_manager
-            .unpin_session(body.project_id, body.session_id),
+            .unpin_session(body.project_id, body.session_id).await,
     ))
 }
 
@@ -371,7 +376,7 @@ pub async fn hide_session(
     Ok(Json(
         app_state
             .config_manager
-            .hide_session(body.project_id, body.session_id),
+            .hide_session(body.project_id, body.session_id).await,
     ))
 }
 
@@ -391,7 +396,7 @@ pub async fn unhide_session(
     Ok(Json(
         app_state
             .config_manager
-            .unhide_session(body.project_id, body.session_id),
+            .unhide_session(body.project_id, body.session_id).await,
     ))
 }
 
@@ -421,7 +426,7 @@ pub async fn hide_sessions(
     Ok(Json(
         app_state
             .config_manager
-            .hide_sessions(body.project_id, body.session_ids),
+            .hide_sessions(body.project_id, body.session_ids).await,
     ))
 }
 
@@ -439,7 +444,7 @@ pub async fn unhide_sessions(
     Ok(Json(
         app_state
             .config_manager
-            .unhide_sessions(body.project_id, body.session_ids),
+            .unhide_sessions(body.project_id, body.session_ids).await,
     ))
 }
 

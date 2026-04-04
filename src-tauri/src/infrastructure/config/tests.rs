@@ -30,33 +30,33 @@ mod tests {
     async fn test_save_and_load_round_trip() {
         let p = temp_path(); cleanup(&p);
         let m1 = ConfigManager::with_path(p.clone()); m1.initialize().await.unwrap();
-        m1.pin_session("proj".into(), "sess".into());
+        m1.pin_session("proj".into(), "sess".into()).await;
         let m2 = ConfigManager::with_path(p.clone()); m2.initialize().await.unwrap();
-        assert_eq!(m2.get_config().sessions.pinned_sessions["proj"][0].session_id, "sess");
+        assert_eq!(m2.get_config().await.sessions.pinned_sessions["proj"][0].session_id, "sess");
         cleanup(&p);
     }
 
-    #[test]
-    fn test_add_remove_ignore_regex() {
+    #[tokio::test]
+    async fn test_add_remove_ignore_regex() {
         let p = temp_path(); let m = ConfigManager::with_path(p.clone());
-        assert!(m.add_ignore_regex("test-pat".into()).unwrap().notifications.ignored_regex.iter().any(|x| x == "test-pat"));
-        assert!(m.add_ignore_regex("test-pat".into()).is_err());
-        assert!(m.add_ignore_regex("(?P<bad".into()).is_err());
-        assert!(m.add_ignore_regex("   ".into()).is_err());
-        assert!(!m.remove_ignore_regex("test-pat".into()).notifications.ignored_regex.iter().any(|x| x == "test-pat"));
+        assert!(m.add_ignore_regex("test-pat".into()).await.unwrap().notifications.ignored_regex.iter().any(|x| x == "test-pat"));
+        assert!(m.add_ignore_regex("test-pat".into()).await.is_err());
+        assert!(m.add_ignore_regex("(?P<bad".into()).await.is_err());
+        assert!(m.add_ignore_regex("   ".into()).await.is_err());
+        assert!(!m.remove_ignore_regex("test-pat".into()).await.notifications.ignored_regex.iter().any(|x| x == "test-pat"));
         cleanup(&p);
     }
 
-    #[test]
-    fn test_pin_unpin_session() {
+    #[tokio::test]
+    async fn test_pin_unpin_session() {
         let p = temp_path(); let m = ConfigManager::with_path(p.clone());
-        let c = m.pin_session("p".into(), "s1".into());
+        let c = m.pin_session("p".into(), "s1".into()).await;
         assert_eq!(c.sessions.pinned_sessions["p"][0].session_id, "s1");
-        let c = m.pin_session("p".into(), "s2".into());
+        let c = m.pin_session("p".into(), "s2".into()).await;
         assert_eq!(c.sessions.pinned_sessions["p"][0].session_id, "s2");
-        let c = m.pin_session("p".into(), "s1".into());
+        let c = m.pin_session("p".into(), "s1".into()).await;
         assert_eq!(c.sessions.pinned_sessions["p"].len(), 2);
-        let c = m.unpin_session("p".into(), "s2".into());
+        let c = m.unpin_session("p".into(), "s2".into()).await;
         assert_eq!(c.sessions.pinned_sessions["p"].len(), 1);
         cleanup(&p);
     }
@@ -72,7 +72,7 @@ mod tests {
         let p = temp_path(); cleanup(&p);
         fs::write(&p, r#"{"general":{"theme":"light"}}"#).unwrap();
         let m = ConfigManager::with_path(p.clone()); m.initialize().await.unwrap();
-        let c = m.get_config();
+        let c = m.get_config().await;
         assert_eq!(c.general.theme, "light"); assert!(c.general.show_dock_icon && c.notifications.enabled);
         cleanup(&p);
     }
@@ -81,7 +81,7 @@ mod tests {
     async fn test_initialize_seeds_builtin_triggers() {
         let p = temp_path(); cleanup(&p);
         let m = ConfigManager::with_path(p.clone()); m.initialize().await.unwrap();
-        let triggers = m.get_triggers();
+        let triggers = m.get_triggers().await;
         assert_eq!(triggers.len(), 3);
         let ids: Vec<&str> = triggers.iter().map(|t| t.id.as_str()).collect();
         assert!(ids.contains(&"builtin-bash-command")); assert!(ids.contains(&"builtin-tool-result-error")); assert!(ids.contains(&"builtin-high-token-usage"));
@@ -100,7 +100,7 @@ mod tests {
         });
         fs::write(&p, serde_json::to_string(&config_json).unwrap()).unwrap();
         let m = ConfigManager::with_path(p.clone()); m.initialize().await.unwrap();
-        let triggers = m.get_triggers();
+        let triggers = m.get_triggers().await;
         assert_eq!(triggers.len(), 4);
         cleanup(&p);
     }
@@ -282,10 +282,10 @@ mod tests {
             match_pattern: None, token_threshold: None, token_type: None,
             ignore_patterns: None, is_builtin: None, color: None, repository_ids: None,
         };
-        m.add_trigger(trigger).unwrap();
+        m.add_trigger(trigger).await.unwrap();
 
         // Update without mode field — should infer ErrorStatus from require_error=true
-        let result = m.update_trigger("infer-test", serde_json::json!({"name": "Updated"})).unwrap();
+        let result = m.update_trigger("infer-test", serde_json::json!({"name": "Updated"})).await.unwrap();
         let updated = result.notifications.triggers.iter().find(|t| t.id == "infer-test").unwrap();
         assert_eq!(updated.name, "Updated");
         // Mode should remain ErrorStatus (inferred from require_error)
@@ -305,14 +305,14 @@ mod tests {
             match_pattern: Some(".*".to_string()), token_threshold: None, token_type: None,
             ignore_patterns: None, is_builtin: None, color: None, repository_ids: None,
         };
-        m.add_trigger(trigger).unwrap();
+        m.add_trigger(trigger).await.unwrap();
 
         // Update WITH explicit mode — should NOT be overridden by infer_mode
         let result = m.update_trigger("preserve-mode", serde_json::json!({
             "mode": "token_threshold",
             "tokenThreshold": 5000,
             "tokenType": "total"
-        })).unwrap();
+        })).await.unwrap();
         let updated = result.notifications.triggers.iter().find(|t| t.id == "preserve-mode").unwrap();
         assert_eq!(updated.mode, crate::types::config::TriggerMode::TokenThreshold);
         assert_eq!(updated.token_threshold, Some(5000));
@@ -331,10 +331,10 @@ mod tests {
             match_pattern: None, token_threshold: None, token_type: None,
             ignore_patterns: None, is_builtin: None, color: None, repository_ids: None,
         };
-        m.add_trigger(trigger).unwrap();
+        m.add_trigger(trigger).await.unwrap();
 
         // Invalid mode value — should be silently ignored (original value preserved)
-        let result = m.update_trigger("enum-test", serde_json::json!({"mode": "invalid_mode"})).unwrap();
+        let result = m.update_trigger("enum-test", serde_json::json!({"mode": "invalid_mode"})).await.unwrap();
         let updated = result.notifications.triggers.iter().find(|t| t.id == "enum-test").unwrap();
         assert_eq!(updated.mode, crate::types::config::TriggerMode::ErrorStatus, "invalid mode should be silently ignored");
         cleanup(&p);

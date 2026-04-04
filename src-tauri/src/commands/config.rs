@@ -16,7 +16,7 @@ pub async fn get_config(
     state: State<'_, Arc<RwLock<AppState>>>,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.get_config())
+    Ok(app_state.config_manager.get_config().await)
 }
 
 /// 更新配置的指定分区。
@@ -35,7 +35,7 @@ pub async fn update_config(
 
     let (result, cache, config_mgr) = {
         let app_state = state.read().await;
-        let result = app_state.config_manager.update_config(&section, data)?;
+        let result = app_state.config_manager.update_config(&section, data).await?;
         (result, app_state.cache.clone(), app_state.config_manager.clone())
     }; // AppState read lock dropped
 
@@ -77,7 +77,7 @@ pub async fn add_ignore_regex(
     pattern: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.add_ignore_regex(pattern)
+    app_state.config_manager.add_ignore_regex(pattern).await
 }
 
 /// 移除指定的通知忽略正则表达式。
@@ -87,7 +87,7 @@ pub async fn remove_ignore_regex(
     pattern: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.remove_ignore_regex(pattern))
+    Ok(app_state.config_manager.remove_ignore_regex(pattern).await)
 }
 
 // =============================================================================
@@ -102,7 +102,7 @@ pub async fn pin_session(
     session_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.pin_session(project_id, session_id))
+    Ok(app_state.config_manager.pin_session(project_id, session_id).await)
 }
 
 /// 取消置顶指定会话。
@@ -113,7 +113,7 @@ pub async fn unpin_session(
     session_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.unpin_session(project_id, session_id))
+    Ok(app_state.config_manager.unpin_session(project_id, session_id).await)
 }
 
 /// 隐藏指定会话。
@@ -124,7 +124,7 @@ pub async fn hide_session(
     session_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.hide_session(project_id, session_id))
+    Ok(app_state.config_manager.hide_session(project_id, session_id).await)
 }
 
 /// 取消隐藏指定会话。
@@ -135,7 +135,7 @@ pub async fn unhide_session(
     session_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.unhide_session(project_id, session_id))
+    Ok(app_state.config_manager.unhide_session(project_id, session_id).await)
 }
 
 // =============================================================================
@@ -152,13 +152,13 @@ pub async fn snooze(
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
     if minutes == -1 {
-        Ok(app_state.config_manager.snooze_until_tomorrow())
+        Ok(app_state.config_manager.snooze_until_tomorrow().await)
     } else if minutes <= 0 {
         Err("Minutes must be a positive number".to_string())
     } else if minutes > 24 * 60 {
         Err("Minutes must be 1440 or less (24 hours)".to_string())
     } else {
-        Ok(app_state.config_manager.snooze(minutes as u32))
+        Ok(app_state.config_manager.snooze(minutes as u32).await)
     }
 }
 
@@ -168,7 +168,7 @@ pub async fn clear_snooze(
     state: State<'_, Arc<RwLock<AppState>>>,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.clear_snooze())
+    Ok(app_state.config_manager.clear_snooze().await)
 }
 
 // =============================================================================
@@ -182,7 +182,7 @@ pub async fn add_trigger(
     trigger: crate::types::config::NotificationTrigger,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.add_trigger(trigger)
+    app_state.config_manager.add_trigger(trigger).await
 }
 
 /// 更新指定通知触发器的配置。
@@ -193,7 +193,7 @@ pub async fn update_trigger(
     updates: serde_json::Value,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.update_trigger(&trigger_id, updates)
+    app_state.config_manager.update_trigger(&trigger_id, updates).await
 }
 
 /// 删除指定通知触发器。
@@ -203,7 +203,7 @@ pub async fn remove_trigger(
     trigger_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.remove_trigger(&trigger_id)
+    app_state.config_manager.remove_trigger(&trigger_id).await
 }
 
 /// 获取所有通知触发器列表。
@@ -212,7 +212,7 @@ pub async fn get_triggers(
     state: State<'_, Arc<RwLock<AppState>>>,
 ) -> Result<Vec<crate::types::config::NotificationTrigger>, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.get_triggers())
+    Ok(app_state.config_manager.get_triggers().await)
 }
 
 /// 测试通知触发器。
@@ -246,7 +246,7 @@ pub async fn add_ignore_repository(
     repository_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.add_ignore_repository(repository_id))
+    Ok(app_state.config_manager.add_ignore_repository(repository_id).await)
 }
 
 /// 从忽略列表中移除指定仓库。
@@ -256,7 +256,7 @@ pub async fn remove_ignore_repository(
     repository_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.remove_ignore_repository(repository_id))
+    Ok(app_state.config_manager.remove_ignore_repository(repository_id).await)
 }
 
 // =============================================================================
@@ -271,7 +271,7 @@ pub async fn hide_sessions(
     session_ids: Vec<String>,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.hide_sessions(project_id, session_ids))
+    Ok(app_state.config_manager.hide_sessions(project_id, session_ids).await)
 }
 
 /// 批量取消隐藏指定会话。
@@ -282,7 +282,7 @@ pub async fn unhide_sessions(
     session_ids: Vec<String>,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.unhide_sessions(project_id, session_ids))
+    Ok(app_state.config_manager.unhide_sessions(project_id, session_ids).await)
 }
 
 // =============================================================================
@@ -339,7 +339,7 @@ pub async fn get_claude_root_info(
     state: State<'_, Arc<RwLock<AppState>>>,
 ) -> Result<crate::types::config::ClaudeRootInfo, String> {
     let app_state = state.read().await;
-    let config = app_state.config_manager.get_config();
+    let config = app_state.config_manager.get_config().await;
     drop(app_state);
 
     let custom_path = config.general.claude_root_path.clone();
