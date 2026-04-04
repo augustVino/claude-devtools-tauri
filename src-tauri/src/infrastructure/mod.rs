@@ -13,7 +13,7 @@ pub mod service_context;
 pub mod watcher_orchestrator;
 pub mod ssh_auth;
 pub mod ssh_config_parser;
-pub mod ssh_connection_manager;
+pub mod ssh_connection;
 pub mod ssh_exec;
 pub mod ssh_fs_provider;
 pub mod session_repository;
@@ -27,7 +27,7 @@ pub use file_watcher::FileWatcher;
 pub use fs_provider::{FsDirent, FsProvider, FsStatResult, LocalFsProvider};
 pub use notification::NotificationManager;
 pub use ssh_config_parser::SshConfigParser;
-pub use ssh_connection_manager::SshConnectionManager;
+pub use ssh_connection::SshConnectionManager;
 pub use session_repository::{DeleteFilesResult, SessionFileItem, SessionRepository};
 pub use local_session_repository::LocalSessionRepository;
 #[allow(unused_imports)]

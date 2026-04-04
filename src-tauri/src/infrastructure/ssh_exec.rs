@@ -98,7 +98,7 @@ pub async fn exec_remote_command<H: client::Handler>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::ssh_connection_manager::SshClientHandler;
+    use crate::infrastructure::ssh_connection::SshClientHandler;
 
     #[test]
     fn test_module_exists() {
