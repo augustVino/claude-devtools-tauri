@@ -182,45 +182,20 @@ impl FsProvider for SshFsProvider {
 
     fn read_file(&self, path: &Path) -> Result<String, String> {
         let path_str = path.to_string_lossy().to_string();
-        let mut last_err = None;
-
-        for attempt in 0..=MAX_RETRIES {
-            match self.blocking_sftp(self.sftp.read(&path_str)) {
-                Ok(bytes) => {
-                    return String::from_utf8(bytes).map_err(|e| {
-                        format!("Failed to decode UTF-8 for {}: {}", path.display(), e)
-                    });
-                }
-                Err(err) => {
-                    let kind = classify_sftp_error(&err);
-                    if kind == SftpErrorKind::NotFound {
-                        return Err(format_sftp_error(path, &err));
-                    }
-                    if attempt < MAX_RETRIES && kind == SftpErrorKind::Transient {
-                        let delay = RETRY_BASE_DELAY_MS * (attempt as u64 + 1);
-                        log::warn!(
-                            "SFTP read_file transient error (attempt {}/{}) for {}: {:?}, retrying in {}ms",
-                            attempt + 1,
-                            MAX_RETRIES + 1,
-                            path.display(),
-                            err,
-                            delay
-                        );
-                        std::thread::sleep(std::time::Duration::from_millis(delay));
-                        last_err = Some(err);
-                        continue;
-                    }
-                    return Err(format_sftp_error(path, &err));
-                }
-            }
-        }
-
-        Err(format_sftp_error(
+        let path_for_log = path.to_path_buf();
+        let sftp = self.sftp.clone();
+        crate::utils::retry::retry_transient(
+            "SFTP read_file",
             path,
-            last_err.as_ref().unwrap_or(&SftpError::UnexpectedBehavior(
-                "unexpected loop exit".into(),
-            )),
-        ))
+            || {
+                let bytes = self.blocking_sftp(sftp.read(&path_str))?;
+                String::from_utf8(bytes)
+                    .map_err(|e| SftpError::IO(format!("UTF-8 decode error for {}: {}", path_for_log.display(), e)))
+            },
+            MAX_RETRIES,
+            RETRY_BASE_DELAY_MS,
+            &|err| classify_sftp_error(err) == SftpErrorKind::Transient,
+        ).map_err(|e| format_sftp_error(path, &e))
     }
 
     fn read_file_head(&self, path: &Path, max_lines: usize) -> Result<String, String> {
@@ -231,103 +206,50 @@ impl FsProvider for SshFsProvider {
 
     fn stat(&self, path: &Path) -> Result<FsStatResult, String> {
         let path_str = path.to_string_lossy().to_string();
-        let mut last_err = None;
-
-        for attempt in 0..=MAX_RETRIES {
-            match self.blocking_sftp(self.sftp.metadata(&path_str)) {
-                Ok(metadata) => {
-                    return Ok(FsStatResult {
+        let sftp = self.sftp.clone();
+        crate::utils::retry::retry_transient(
+            "SFTP stat",
+            path,
+            || {
+                self.blocking_sftp(sftp.metadata(&path_str))
+                    .map(|metadata| FsStatResult {
                         size: metadata.len(),
                         mtime_ms: crate::utils::time::time_to_ms(metadata.modified().ok()),
-                        birthtime_ms: 0, // SFTP FileAttributes 不提供 birthtime
+                        birthtime_ms: 0,
                         is_file: metadata.is_regular(),
                         is_directory: metadata.is_dir(),
-                    });
-                }
-                Err(err) => {
-                    let kind = classify_sftp_error(&err);
-                    if kind == SftpErrorKind::NotFound {
-                        return Err(format_sftp_error(path, &err));
-                    }
-                    if attempt < MAX_RETRIES && kind == SftpErrorKind::Transient {
-                        let delay = RETRY_BASE_DELAY_MS * (attempt as u64 + 1);
-                        log::warn!(
-                            "SFTP stat transient error (attempt {}/{}) for {}: {:?}, retrying in {}ms",
-                            attempt + 1,
-                            MAX_RETRIES + 1,
-                            path.display(),
-                            err,
-                            delay
-                        );
-                        std::thread::sleep(std::time::Duration::from_millis(delay));
-                        last_err = Some(err);
-                        continue;
-                    }
-                    return Err(format_sftp_error(path, &err));
-                }
-            }
-        }
-
-        Err(format_sftp_error(
-            path,
-            last_err.as_ref().unwrap_or(&SftpError::UnexpectedBehavior(
-                "unexpected loop exit".into(),
-            )),
-        ))
+                    })
+            },
+            MAX_RETRIES,
+            RETRY_BASE_DELAY_MS,
+            &|err| classify_sftp_error(err) == SftpErrorKind::Transient,
+        ).map_err(|e| format_sftp_error(path, &e))
     }
 
     fn read_dir(&self, path: &Path) -> Result<Vec<FsDirent>, String> {
         let path_str = path.to_string_lossy().to_string();
-        let mut last_err = None;
-
-        for attempt in 0..=MAX_RETRIES {
-            match self.blocking_sftp(self.sftp.read_dir(&path_str)) {
-                Ok(read_dir) => {
-                    let entries: Vec<FsDirent> = read_dir
-                        .map(|entry| {
-                            let meta = entry.metadata();
-                            FsDirent {
-                                name: entry.file_name(),
-                                is_file: entry.file_type().is_file(),
-                                is_directory: entry.file_type().is_dir(),
-                                size: Some(meta.len()),
-                                mtime_ms: Some(crate::utils::time::time_to_ms(meta.modified().ok())),
-                                birthtime_ms: None, // SFTP 不提供 birthtime
-                            }
-                        })
-                        .collect();
-                    return Ok(entries);
-                }
-                Err(err) => {
-                    let kind = classify_sftp_error(&err);
-                    if kind == SftpErrorKind::NotFound {
-                        return Err(format_sftp_error(path, &err));
-                    }
-                    if attempt < MAX_RETRIES && kind == SftpErrorKind::Transient {
-                        let delay = RETRY_BASE_DELAY_MS * (attempt as u64 + 1);
-                        log::warn!(
-                            "SFTP read_dir transient error (attempt {}/{}) for {}: {:?}, retrying in {}ms",
-                            attempt + 1,
-                            MAX_RETRIES + 1,
-                            path.display(),
-                            err,
-                            delay
-                        );
-                        std::thread::sleep(std::time::Duration::from_millis(delay));
-                        last_err = Some(err);
-                        continue;
-                    }
-                    return Err(format_sftp_error(path, &err));
-                }
-            }
-        }
-
-        Err(format_sftp_error(
+        let sftp = self.sftp.clone();
+        crate::utils::retry::retry_transient(
+            "SFTP read_dir",
             path,
-            last_err.as_ref().unwrap_or(&SftpError::UnexpectedBehavior(
-                "unexpected loop exit".into(),
-            )),
-        ))
+            || {
+                self.blocking_sftp(sftp.read_dir(&path_str))
+                    .map(|read_dir| read_dir.map(|entry| {
+                        let meta = entry.metadata();
+                        FsDirent {
+                            name: entry.file_name(),
+                            is_file: entry.file_type().is_file(),
+                            is_directory: entry.file_type().is_dir(),
+                            size: Some(meta.len()),
+                            mtime_ms: Some(crate::utils::time::time_to_ms(meta.modified().ok())),
+                            birthtime_ms: None,
+                        }
+                    }).collect())
+            },
+            MAX_RETRIES,
+            RETRY_BASE_DELAY_MS,
+            &|err| classify_sftp_error(err) == SftpErrorKind::Transient,
+        ).map_err(|e| format_sftp_error(path, &e))
     }
 }
 
