@@ -330,52 +330,69 @@ impl ConfigManager {
 
     /// 置顶指定会话（插入到列表头部，已存在则跳过）
     pub fn pin_session(&self, project_id: String, session_id: String) -> AppConfig {
-        if let Ok(mut config) = self.config.write() {
+        self.with_config_mut(|config| {
             let pins = config.sessions.pinned_sessions.entry(project_id.clone()).or_default();
             if !pins.iter().any(|p| p.session_id == session_id) {
                 pins.insert(0, PinnedSession { session_id: session_id.clone(), pinned_at: now_millis() });
+                true
+            } else {
+                false
             }
-            drop(config);
-            let _ = self.persist();
-        }
-        self.get_config()
+        })
     }
 
     /// 取消置顶指定会话，并清理空的项目条目
     pub fn unpin_session(&self, project_id: String, session_id: String) -> AppConfig {
-        if let Ok(mut config) = self.config.write() {
+        self.with_config_mut(|config| {
             if let Some(pins) = config.sessions.pinned_sessions.get_mut(&project_id) {
                 pins.retain(|p| p.session_id != session_id);
             }
             cleanup_empty_project(&mut config.sessions.pinned_sessions, &project_id);
-            drop(config);
-            let _ = self.persist();
-        }
-        self.get_config()
+            true
+        })
     }
 
     /// 隐藏指定会话（插入到列表头部，已存在则跳过）
     pub fn hide_session(&self, project_id: String, session_id: String) -> AppConfig {
-        if let Ok(mut config) = self.config.write() {
+        self.with_config_mut(|config| {
             let hidden = config.sessions.hidden_sessions.entry(project_id.clone()).or_default();
             if !hidden.iter().any(|h| h.session_id == session_id) {
                 hidden.insert(0, HiddenSession { session_id: session_id.clone(), hidden_at: now_millis() });
+                true
+            } else {
+                false
             }
-            drop(config);
-            let _ = self.persist();
-        }
-        self.get_config()
+        })
     }
 
     /// 取消隐藏指定会话，并清理空的项目条目
     pub fn unhide_session(&self, project_id: String, session_id: String) -> AppConfig {
-        if let Ok(mut config) = self.config.write() {
+        self.with_config_mut(|config| {
             if let Some(hidden) = config.sessions.hidden_sessions.get_mut(&project_id) {
                 hidden.retain(|h| h.session_id != session_id);
             }
             cleanup_empty_project(&mut config.sessions.hidden_sessions, &project_id);
+            true
+        })
+    }
+
+    /// 通用的"获取写锁→修改→释放锁→条件持久化→返回最新配置"骨架。
+    ///
+    /// 封装了 pin/unpin/hide/unhide 等方法的共同模式：
+    /// 1. 获取 config 写锁
+    /// 2. 执行用户提供的修改闭包（返回 bool 表示是否实际修改）
+    /// 3. 仅在修改时才执行 persist（避免不必要的磁盘写入）
+    /// 4. 返回最新配置快照
+    fn with_config_mut<F>(&self, mutator: F) -> AppConfig
+    where
+        F: FnOnce(&mut AppConfig) -> bool,
+    {
+        if let Ok(mut config) = self.config.write() {
+            let changed = mutator(&mut config);
             drop(config);
-            let _ = self.persist();
+            if changed {
+                let _ = self.persist();
+            }
         }
         self.get_config()
     }
