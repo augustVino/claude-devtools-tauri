@@ -22,7 +22,7 @@ use crate::error::trigger::{
     check_token_threshold_trigger, check_tool_result_trigger, check_tool_use_trigger,
     matches_repository_scope, pre_resolve_repository_ids, RepositoryScopeTarget,
 };
-use crate::infrastructure::config_manager::ConfigManager;
+use crate::infrastructure::ConfigManager;
 use crate::types::config::{DetectedError, NotificationTrigger, TriggerContentType, TriggerTestResult};
 use crate::types::messages::ParsedMessage;
 
