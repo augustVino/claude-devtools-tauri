@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 
 use crate::types::*;
+use crate::error::AppError;
 use log::{error, info};
 use serde_json;
 use tokio::fs;
@@ -391,7 +392,7 @@ impl ConfigManager {
             let changed = mutator(&mut config);
             drop(config);
             if changed {
-                let _ = self.persist();
+                let _ = self.persist_inner();
             }
         }
         self.get_config()
@@ -610,16 +611,24 @@ impl ConfigManager {
         merge_with_defaults(&parsed)
     }
 
-    /// 将当前配置持久化到磁盘（格式化 JSON）
-    fn persist(&self) -> Result<(), String> {
-        let config = self.config.read().map_err(|e| format!("failed to acquire read lock: {e}"))?;
+    /// 将当前配置持久化到磁盘（格式化 JSON）— 内部版本，返回类型化错误。
+    fn persist_inner(&self) -> Result<(), AppError> {
+        let config = self.config.read()
+            .map_err(|e| AppError::Internal(format!("failed to acquire read lock: {e}")))?;
         if let Some(parent) = self.config_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("failed to create config directory: {e}"))?;
+            std::fs::create_dir_all(parent)?;
         }
-        let content = serde_json::to_string_pretty(&*config).map_err(|e| format!("failed to serialize config: {e}"))?;
-        std::fs::write(&self.config_path, content).map_err(|e| format!("failed to write config file: {e}"))?;
+        let content = serde_json::to_string_pretty(&*config)
+            .map_err(|e| AppError::Config(format!("failed to serialize config: {e}")))?;
+        std::fs::write(&self.config_path, content)
+            .map_err(|e| AppError::Io(e))?;
         info!("Config saved to {:?}", self.config_path);
         Ok(())
+    }
+
+    /// 将当前配置持久化到磁盘（兼容层，供现有调用方使用）。
+    fn persist(&self) -> Result<(), String> {
+        self.persist_inner().map_err(|e| e.to_string())
     }
 }
 
