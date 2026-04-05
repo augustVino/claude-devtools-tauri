@@ -40,17 +40,18 @@ pub fn run() {
   // ========== Pre-create Domain Services (registered inside setup) ==========
   let fs_provider: Arc<dyn infrastructure::fs_provider::FsProvider> = Arc::new(infrastructure::fs_provider::LocalFsProvider::new());
 
-  let project_service = Arc::new(services::ProjectService::new(
+  let project_service: Arc<dyn services::ProjectService> = Arc::new(services::ProjectServiceImpl::new(
       fs_provider.clone(),
       get_projects_base_path(),
       get_todos_base_path(),
   ));
 
-  let search_service = Arc::new(services::SearchService::new(
-      get_projects_base_path(),
-      get_todos_base_path(),
-      fs_provider.clone(),
-  ));
+  let search_service: Arc<dyn services::SearchServiceFull> =
+      Arc::new(services::SearchServiceImpl::new(
+          get_projects_base_path(),
+          get_todos_base_path(),
+          fs_provider.clone(),
+      ));
 
   let session_repo: Arc<dyn infrastructure::session_repository::SessionRepository> =
       Arc::new(infrastructure::local_session_repository::LocalSessionRepository::new(
@@ -59,7 +60,7 @@ pub fn run() {
           get_default_claude_base_path(),
       ));
 
-  let session_service = Arc::new(services::SessionService::new(
+  let session_service: Arc<dyn services::SessionService> = Arc::new(services::SessionServiceImpl::new(
       fs_provider,
       shared_cache.clone(),
       get_projects_base_path(),

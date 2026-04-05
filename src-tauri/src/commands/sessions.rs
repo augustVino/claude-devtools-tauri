@@ -6,7 +6,7 @@
 use tauri::{command, State};
 use std::sync::Arc;
 
-use crate::services::SessionService;
+use crate::services::{SessionService, ProjectService};
 use crate::types::domain::{DeleteSessionResult, PaginatedSessionsResult, SessionsPaginationOptions, Project, Session, SessionMetrics};
 use crate::types::chunks::{ConversationGroup, SessionDetail};
 use crate::infrastructure::ContextManager;
@@ -20,7 +20,7 @@ pub use super::AppState;
 
 #[command]
 pub async fn get_sessions(
-    service: State<'_, Arc<SessionService>>,
+    service: State<'_, Arc<dyn SessionService>>,
     project_id: String,
 ) -> Result<Vec<Session>, String> {
     service.get_sessions(&project_id).await
@@ -29,7 +29,7 @@ pub async fn get_sessions(
 
 #[command]
 pub async fn get_sessions_paginated(
-    service: State<'_, Arc<SessionService>>,
+    service: State<'_, Arc<dyn SessionService>>,
     project_id: String,
     cursor: Option<String>,
     limit: Option<u32>,
@@ -41,7 +41,7 @@ pub async fn get_sessions_paginated(
 
 #[command]
 pub async fn get_sessions_by_ids(
-    service: State<'_, Arc<SessionService>>,
+    service: State<'_, Arc<dyn SessionService>>,
     project_id: String,
     session_ids: Vec<String>,
 ) -> Result<Vec<Session>, String> {
@@ -55,7 +55,7 @@ pub async fn get_sessions_by_ids(
 
 #[command]
 pub async fn get_session_detail(
-    service: State<'_, Arc<SessionService>>,
+    service: State<'_, Arc<dyn SessionService>>,
     project_id: String,
     session_id: String,
 ) -> Result<Option<SessionDetail>, String> {
@@ -65,7 +65,7 @@ pub async fn get_session_detail(
 
 #[command]
 pub async fn get_session_metrics(
-    service: State<'_, Arc<SessionService>>,
+    service: State<'_, Arc<dyn SessionService>>,
     project_id: String,
     session_id: String,
 ) -> Result<Option<SessionMetrics>, String> {
@@ -79,7 +79,7 @@ pub async fn get_session_metrics(
 
 #[command]
 pub async fn get_session_groups(
-    service: State<'_, Arc<SessionService>>,
+    service: State<'_, Arc<dyn SessionService>>,
     project_id: String,
     session_id: String,
 ) -> Result<Vec<ConversationGroup>, String> {
@@ -89,7 +89,7 @@ pub async fn get_session_groups(
 
 #[command]
 pub async fn get_waterfall_data(
-    service: State<'_, Arc<SessionService>>,
+    service: State<'_, Arc<dyn SessionService>>,
     project_id: String,
     session_id: String,
 ) -> Result<Option<crate::analysis::waterfall_builder::WaterfallData>, String> {
@@ -104,7 +104,7 @@ pub async fn get_waterfall_data(
 /// 删除会话 — SSH 上下文检查保留在命令层（SSH 删除暂不支持）。
 #[command]
 pub async fn delete_session(
-    service: State<'_, Arc<SessionService>>,
+    service: State<'_, Arc<dyn SessionService>>,
     context_manager: State<'_, Arc<tokio::sync::RwLock<ContextManager>>>,
     project_id: String,
     session_id: String,
@@ -130,7 +130,7 @@ pub async fn delete_session(
 
 #[command]
 pub async fn get_projects(
-    service: State<'_, Arc<crate::services::ProjectService>>,
+    service: State<'_, Arc<dyn ProjectService>>,
 ) -> Result<Vec<Project>, String> {
     Ok(service.scan_projects())
 }

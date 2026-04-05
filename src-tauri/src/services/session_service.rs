@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use crate::analysis::ChunkBuilder;
 use crate::discovery::subagent_resolver::SubagentResolver;
 use crate::error::AppError;
@@ -29,22 +30,22 @@ use crate::utils::{
     pagination::{decode_cursor, encode_cursor},
 };
 
-use super::project_service::ProjectService;
+use super::project_service_trait::ProjectService;
 
-/// 会话服务 — 所有会话相关操作的单一入口。
-pub struct SessionService {
+/// 会话服务 — 所有会话相关操作的单一入口（具体实现）。
+pub struct SessionServiceImpl {
     fs_provider: Arc<dyn FsProvider>,
     cache: DataCache,
     projects_dir: PathBuf,
     #[allow(dead_code)]
     todos_dir: PathBuf,
     config_manager: Arc<ConfigManager>,
-    project_service: Arc<ProjectService>,
+    project_service: Arc<dyn ProjectService>,
     #[allow(dead_code)]
     repo: Arc<dyn crate::infrastructure::session_repository::SessionRepository>,
 }
 
-impl SessionService {
+impl SessionServiceImpl {
     /// 创建新的 SessionService。
     pub fn new(
         fs_provider: Arc<dyn FsProvider>,
@@ -52,7 +53,7 @@ impl SessionService {
         projects_dir: PathBuf,
         todos_dir: PathBuf,
         config_manager: Arc<ConfigManager>,
-        project_service: Arc<ProjectService>,
+        project_service: Arc<dyn ProjectService>,
         repo: Arc<dyn crate::infrastructure::session_repository::SessionRepository>,
     ) -> Self {
         Self {
@@ -720,5 +721,44 @@ impl SessionService {
             associated_deleted,
             errors,
         })
+    }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  Trait Implementation
+// ════════════════════════════════════════════════════════════════
+
+#[async_trait]
+impl super::session_service_trait::SessionService for SessionServiceImpl {
+    async fn get_sessions(&self, project_id: &str) -> Result<Vec<crate::types::domain::Session>, AppError> {
+        self.get_sessions(project_id).await
+    }
+
+    async fn get_session_detail(&self, project_id: &str, session_id: &str) -> Result<Option<crate::types::chunks::SessionDetail>, AppError> {
+        self.get_session_detail(project_id, session_id).await
+    }
+
+    async fn get_sessions_paginated(&self, project_id: &str, cursor: Option<&str>, limit: Option<u32>, options: Option<crate::types::domain::SessionsPaginationOptions>) -> Result<crate::types::domain::PaginatedSessionsResult, AppError> {
+        self.get_sessions_paginated(project_id, cursor, limit, options).await
+    }
+
+    async fn get_sessions_by_ids(&self, project_id: &str, session_ids: &[String]) -> Result<Vec<crate::types::domain::Session>, AppError> {
+        self.get_sessions_by_ids(project_id, session_ids).await
+    }
+
+    async fn get_session_metrics(&self, project_id: &str, session_id: &str) -> Result<Option<crate::types::domain::SessionMetrics>, AppError> {
+        self.get_session_metrics(project_id, session_id).await
+    }
+
+    async fn get_session_groups(&self, project_id: &str, session_id: &str) -> Result<Vec<crate::types::chunks::ConversationGroup>, AppError> {
+        self.get_session_groups(project_id, session_id).await
+    }
+
+    async fn get_waterfall_data(&self, project_id: &str, session_id: &str) -> Result<Option<crate::analysis::waterfall_builder::WaterfallData>, AppError> {
+        self.get_waterfall_data(project_id, session_id).await
+    }
+
+    async fn delete_session(&self, project_id: &str, session_id: &str) -> Result<crate::types::domain::DeleteSessionResult, AppError> {
+        self.delete_session(project_id, session_id).await
     }
 }

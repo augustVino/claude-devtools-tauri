@@ -572,8 +572,16 @@ impl SessionSearcher {
             }
 
             let absolute_pos = pos + found_pos;
-            let context_start = absolute_pos.saturating_sub(50);
-            let context_end = (absolute_pos + query.len() + 50).min(entry.text.len());
+            let mut context_start = absolute_pos.saturating_sub(50);
+            let mut context_end = (absolute_pos + query.len() + 50).min(entry.text.len());
+
+            // Adjust to char boundaries for safe UTF-8 string slicing
+            while context_start > 0 && !entry.text.is_char_boundary(context_start) {
+                context_start -= 1;
+            }
+            while context_end < entry.text.len() && !entry.text.is_char_boundary(context_end) {
+                context_end += 1;
+            }
 
             let context = &entry.text[context_start..context_end];
             let matched_text = &entry.text[absolute_pos..absolute_pos + query.len()];

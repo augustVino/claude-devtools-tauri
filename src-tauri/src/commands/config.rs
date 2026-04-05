@@ -47,7 +47,7 @@ pub async fn update_config(
             .inner()
             .clone();
         let search_service = app
-            .state::<Arc<crate::services::SearchService>>()
+            .state::<Arc<dyn crate::services::SearchServiceFull>>()
             .inner()
             .clone();
 

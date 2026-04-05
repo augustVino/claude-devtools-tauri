@@ -69,9 +69,9 @@ impl AppBootstrap {
         app: &tauri::AppHandle,
         config_manager: &Arc<ConfigManager>,
         app_state: &Arc<RwLock<AppState>>,
-        session_service: &Arc<crate::services::SessionService>,
-        project_service: &Arc<crate::services::ProjectService>,
-        search_service: &Arc<crate::services::SearchService>,
+        session_service: &Arc<dyn crate::services::SessionService>,
+        project_service: &Arc<dyn crate::services::ProjectService>,
+        search_service: &Arc<dyn crate::services::SearchServiceFull>,
     ) -> Result<(), String> {
         let http_config = tauri::async_runtime::block_on(config_manager.get_config()).http_server.clone();
         if let Some(ref cfg) = http_config {

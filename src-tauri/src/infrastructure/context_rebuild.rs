@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::service_context::{ContextType, ServiceContext, ServiceContextConfig};
 use super::{ConfigManager, ContextManager, DataCache, FsProvider, LocalFsProvider, NotificationManager};
-use crate::services::SearchService;
+use crate::services::SearchServiceFull;
 
 /// Rebuild the local ServiceContext when claude root path changes.
 ///
@@ -20,7 +20,7 @@ pub async fn rebuild_local_context(
     config_manager: &Arc<ConfigManager>,
     cache: DataCache,
     app_handle: &tauri::AppHandle,
-    search_service: &Arc<SearchService>,
+    search_service: &Arc<dyn SearchServiceFull>,
 ) -> Result<(), String> {
     let projects_dir = crate::utils::get_projects_base_path();
     let todos_dir = crate::utils::get_todos_base_path();
@@ -57,8 +57,13 @@ pub async fn rebuild_local_context(
     }
 
     // Update SearchService internal searcher with new paths
-    search_service.rebuild(projects_dir, todos_dir, fs_provider)
-        .map_err(|e| e.to_string())?;
+    let searcher = search_service.clone();
+    tokio::task::spawn_blocking(move || {
+        searcher.rebuild(projects_dir, todos_dir, fs_provider)
+    })
+    .await
+    .map_err(|e| format!("rebuild task panicked: {e}"))?     // Layer 1: JoinError → String
+    .map_err(|e| e.to_string())?;                              // Layer 2: AppError → String
 
     Ok(())
 }

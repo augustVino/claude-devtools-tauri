@@ -9,7 +9,7 @@ use crate::http::server::{self, HttpServerHandle, HttpServerStatus};
 use crate::http::sse::SSEBroadcaster;
 use crate::http::state::HttpState;
 use crate::infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConnectionManager};
-use crate::services::{ProjectService, SearchService, SessionService};
+use crate::services::{SearchServiceFull, SessionService};
 
 /// IPC 响应包装 — 与 Electron 格式对齐
 #[derive(Debug, Clone, serde::Serialize)]
@@ -104,9 +104,9 @@ pub async fn start(
                 .state::<Arc<RwLock<SshConnectionManager>>>()
                 .inner()
                 .clone(),
-            session_service: app.state::<Arc<SessionService>>().inner().clone(),
-            project_service: app.state::<Arc<ProjectService>>().inner().clone(),
-            search_service: app.state::<Arc<SearchService>>().inner().clone(),
+            session_service: app.state::<Arc<dyn SessionService>>().inner().clone(),
+            project_service: app.state::<Arc<dyn crate::services::ProjectService>>().inner().clone(),
+            search_service: app.state::<Arc<dyn SearchServiceFull>>().inner().clone(),
         };
 
         // 前端构建产物目录：RENDERER_PATH 环境变量优先，fallback 到 CARGO_MANIFEST_DIR/../dist

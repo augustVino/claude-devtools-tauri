@@ -3,12 +3,12 @@
 use tauri::State;
 use std::sync::Arc;
 
-use crate::services::SearchService;
+use crate::services::SearchServiceFull;
 use crate::types::domain::{FindSessionByIdResult, FindSessionsByPartialIdResult, SearchSessionsResult};
 
 #[tauri::command]
 pub async fn search_sessions(
-    service: State<'_, Arc<SearchService>>,
+    service: State<'_, Arc<dyn SearchServiceFull>>,
     project_id: String,
     query: String,
     max_results: Option<u32>,
@@ -20,7 +20,7 @@ pub async fn search_sessions(
 
 #[tauri::command]
 pub async fn search_all_projects(
-    service: State<'_, Arc<SearchService>>,
+    service: State<'_, Arc<dyn SearchServiceFull>>,
     query: String,
     max_results: Option<u32>,
 ) -> Result<SearchSessionsResult, String> {
@@ -31,7 +31,7 @@ pub async fn search_all_projects(
 
 #[tauri::command]
 pub async fn find_session_by_id(
-    service: State<'_, Arc<SearchService>>,
+    service: State<'_, Arc<dyn SearchServiceFull>>,
     session_id: String,
 ) -> Result<FindSessionByIdResult, String> {
     let safe_id = crate::commands::guards::validate_session_id(&session_id)?;
@@ -41,7 +41,7 @@ pub async fn find_session_by_id(
 
 #[tauri::command]
 pub async fn find_sessions_by_partial_id(
-    service: State<'_, Arc<SearchService>>,
+    service: State<'_, Arc<dyn SearchServiceFull>>,
     fragment: String,
     max_results: Option<usize>,
 ) -> Result<FindSessionsByPartialIdResult, String> {

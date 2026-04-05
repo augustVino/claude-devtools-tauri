@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use async_trait::async_trait;
 use crate::discovery::SessionSearcher;
 use crate::error::AppError;
 use crate::infrastructure::fs_provider::{FsProvider, LocalFsProvider};
@@ -13,12 +14,12 @@ use crate::types::domain::{
     FindSessionsByPartialIdResult, FindSessionByIdResult, SearchSessionsResult,
 };
 
-/// 搜索服务 — 会话搜索与 ID 定位。
-pub struct SearchService {
+/// 搜索服务 — 会话搜索与 ID 定位（具体实现）。
+pub struct SearchServiceImpl {
     searcher: Arc<Mutex<SessionSearcher>>,
 }
 
-impl SearchService {
+impl SearchServiceImpl {
     /// 创建新的 SearchService。
     pub fn new(
         projects_dir: PathBuf,
@@ -146,5 +147,34 @@ impl SearchService {
         let mut guard = self.searcher.lock()?;
         *guard = SessionSearcher::new(projects_dir, todos_dir, fs_provider, None);
         Ok(())
+    }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  Trait Implementations
+// ════════════════════════════════════════════════════════════════
+
+#[async_trait]
+impl super::search_service_trait::SearchService for SearchServiceImpl {
+    async fn search_sessions(&self, project_id: &str, query: &str, max_results: u32) -> Result<crate::types::domain::SearchSessionsResult, AppError> {
+        self.search_sessions(project_id, query, max_results).await
+    }
+
+    async fn search_all_projects(&self, query: &str, max_results: u32) -> Result<crate::types::domain::SearchSessionsResult, AppError> {
+        self.search_all_projects(query, max_results).await
+    }
+
+    async fn find_session_by_id(&self, session_id: &str) -> Result<crate::types::domain::FindSessionByIdResult, AppError> {
+        self.find_session_by_id(session_id).await
+    }
+
+    async fn find_sessions_by_partial_id(&self, fragment: &str, max_results: usize) -> Result<crate::types::domain::FindSessionsByPartialIdResult, AppError> {
+        self.find_sessions_by_partial_id(fragment, max_results).await
+    }
+}
+
+impl super::search_service_trait::SearchServiceRebuild for SearchServiceImpl {
+    fn rebuild(&self, projects_dir: std::path::PathBuf, todos_dir: std::path::PathBuf, fs_provider: Arc<dyn FsProvider>) -> Result<(), AppError> {
+        self.rebuild(projects_dir, todos_dir, fs_provider)
     }
 }
