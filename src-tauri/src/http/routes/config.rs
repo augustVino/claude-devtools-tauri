@@ -57,7 +57,7 @@ pub async fn update_config(
             .config_manager
             .update_config(&body.section, body.data)
             .await
-            .map_err(|e| error_json(e))?;
+            .map_err(|e| error_json(e.to_string()))?;
         (result, app_state.cache.clone(), app_state.config_manager.clone())
     }; // AppState read lock dropped
 
@@ -101,7 +101,7 @@ pub async fn add_ignore_regex(
         .add_ignore_regex(body.pattern)
         .await
         .map(Json)
-        .map_err(|e| error_json(e))
+        .map_err(|e| error_json(e.to_string()))
 }
 
 /// 移除通知忽略正则表达式。
@@ -112,7 +112,9 @@ pub async fn remove_ignore_regex(
     Json(body): Json<PatternRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let app_state = state.app_state.read().await;
-    Ok(Json(app_state.config_manager.remove_ignore_regex(body.pattern).await))
+    app_state.config_manager.remove_ignore_regex(body.pattern).await
+        .map(Json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 // =============================================================================
@@ -134,9 +136,9 @@ pub async fn add_ignore_repository(
     Json(body): Json<RepositoryIdRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let app_state = state.app_state.read().await;
-    Ok(Json(
-        app_state.config_manager.add_ignore_repository(body.repository_id).await,
-    ))
+    app_state.config_manager.add_ignore_repository(body.repository_id).await
+        .map(Json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 /// 从忽略列表中移除指定仓库。
@@ -147,11 +149,11 @@ pub async fn remove_ignore_repository(
     Json(body): Json<RepositoryIdRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let app_state = state.app_state.read().await;
-    Ok(Json(
-        app_state
-            .config_manager
-            .remove_ignore_repository(body.repository_id).await,
-    ))
+    app_state
+        .config_manager
+        .remove_ignore_repository(body.repository_id).await
+        .map(Json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 // =============================================================================
@@ -173,13 +175,17 @@ pub async fn snooze(
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let app_state = state.app_state.read().await;
     if body.minutes == -1 {
-        Ok(Json(app_state.config_manager.snooze_until_tomorrow().await))
+        app_state.config_manager.snooze_until_tomorrow().await
+            .map(Json)
+            .map_err(|e| error_json(e.to_string()))
     } else if body.minutes <= 0 {
         Err(error_json("Minutes must be a positive number"))
     } else if body.minutes > 24 * 60 {
         Err(error_json("Minutes must be 1440 or less (24 hours)"))
     } else {
-        Ok(Json(app_state.config_manager.snooze(body.minutes as u32).await))
+        app_state.config_manager.snooze(body.minutes as u32).await
+            .map(Json)
+            .map_err(|e| error_json(e.to_string()))
     }
 }
 
@@ -190,7 +196,9 @@ pub async fn clear_snooze(
     State(state): State<HttpState>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let app_state = state.app_state.read().await;
-    Ok(Json(app_state.config_manager.clear_snooze().await))
+    app_state.config_manager.clear_snooze().await
+        .map(Json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 // =============================================================================
@@ -230,7 +238,7 @@ pub async fn add_trigger(
         .add_trigger(trigger)
         .await
         .map(Json)
-        .map_err(|e| error_json(e))
+        .map_err(|e| error_json(e.to_string()))
 }
 
 /// 更新指定通知触发器的配置。
@@ -242,7 +250,7 @@ pub async fn update_trigger(
     Json(updates): Json<serde_json::Value>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let safe_trigger_id = guards::validate_trigger_id(&trigger_id)
-        .map_err(|e| error_json(e))?;
+        .map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
     app_state
@@ -250,7 +258,7 @@ pub async fn update_trigger(
         .update_trigger(&safe_trigger_id, updates)
         .await
         .map(Json)
-        .map_err(|e| error_json(e))
+        .map_err(|e| error_json(e.to_string()))
 }
 
 /// 删除指定通知触发器。
@@ -261,7 +269,7 @@ pub async fn remove_trigger(
     axum::extract::Path(trigger_id): axum::extract::Path<String>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let safe_trigger_id = guards::validate_trigger_id(&trigger_id)
-        .map_err(|e| error_json(e))?;
+        .map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
     app_state
@@ -269,7 +277,7 @@ pub async fn remove_trigger(
         .remove_trigger(&safe_trigger_id)
         .await
         .map(Json)
-        .map_err(|e| error_json(e))
+        .map_err(|e| error_json(e.to_string()))
 }
 
 /// 触发器测试结果响应（包装格式）。
@@ -291,7 +299,7 @@ pub async fn test_trigger(
     (StatusCode, Json<super::ErrorResponse>),
 > {
     let _safe_trigger_id = guards::validate_trigger_id(&trigger_id)
-        .map_err(|e| error_json(e))?;
+        .map_err(|e| error_json(e.to_string()))?;
 
     use crate::discovery::project_scanner::ProjectScanner;
     use crate::error::error_trigger_tester;
@@ -328,16 +336,16 @@ pub async fn pin_session(
     Json(body): Json<SessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let _safe_project_id = guards::validate_project_id(&body.project_id)
-        .map_err(|e| error_json(e))?;
+        .map_err(|e| error_json(e.to_string()))?;
     let _safe_session_id = guards::validate_session_id(&body.session_id)
-        .map_err(|e| error_json(e))?;
+        .map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
-    Ok(Json(
-        app_state
-            .config_manager
-            .pin_session(body.project_id, body.session_id).await,
-    ))
+    app_state
+        .config_manager
+        .pin_session(body.project_id, body.session_id).await
+        .map(Json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 /// 取消置顶指定会话。
@@ -348,16 +356,16 @@ pub async fn unpin_session(
     Json(body): Json<SessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let _safe_project_id = guards::validate_project_id(&body.project_id)
-        .map_err(|e| error_json(e))?;
+        .map_err(|e| error_json(e.to_string()))?;
     let _safe_session_id = guards::validate_session_id(&body.session_id)
-        .map_err(|e| error_json(e))?;
+        .map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
-    Ok(Json(
-        app_state
-            .config_manager
-            .unpin_session(body.project_id, body.session_id).await,
-    ))
+    app_state
+        .config_manager
+        .unpin_session(body.project_id, body.session_id).await
+        .map(Json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 /// 隐藏指定会话。
@@ -368,16 +376,16 @@ pub async fn hide_session(
     Json(body): Json<SessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let _safe_project_id = guards::validate_project_id(&body.project_id)
-        .map_err(|e| error_json(e))?;
+        .map_err(|e| error_json(e.to_string()))?;
     let _safe_session_id = guards::validate_session_id(&body.session_id)
-        .map_err(|e| error_json(e))?;
+        .map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
-    Ok(Json(
-        app_state
-            .config_manager
-            .hide_session(body.project_id, body.session_id).await,
-    ))
+    app_state
+        .config_manager
+        .hide_session(body.project_id, body.session_id).await
+        .map(Json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 /// 取消隐藏指定会话。
@@ -388,16 +396,16 @@ pub async fn unhide_session(
     Json(body): Json<SessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let _safe_project_id = guards::validate_project_id(&body.project_id)
-        .map_err(|e| error_json(e))?;
+        .map_err(|e| error_json(e.to_string()))?;
     let _safe_session_id = guards::validate_session_id(&body.session_id)
-        .map_err(|e| error_json(e))?;
+        .map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
-    Ok(Json(
-        app_state
-            .config_manager
-            .unhide_session(body.project_id, body.session_id).await,
-    ))
+    app_state
+        .config_manager
+        .unhide_session(body.project_id, body.session_id).await
+        .map(Json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 // =============================================================================
@@ -420,14 +428,14 @@ pub async fn hide_sessions(
     Json(body): Json<BatchSessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let _safe_project_id = guards::validate_project_id(&body.project_id)
-        .map_err(|e| error_json(e))?;
+        .map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
-    Ok(Json(
-        app_state
-            .config_manager
-            .hide_sessions(body.project_id, body.session_ids).await,
-    ))
+    app_state
+        .config_manager
+        .hide_sessions(body.project_id, body.session_ids).await
+        .map(Json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 /// 批量取消隐藏指定会话。
@@ -438,14 +446,14 @@ pub async fn unhide_sessions(
     Json(body): Json<BatchSessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let _safe_project_id = guards::validate_project_id(&body.project_id)
-        .map_err(|e| error_json(e))?;
+        .map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
-    Ok(Json(
-        app_state
-            .config_manager
-            .unhide_sessions(body.project_id, body.session_ids).await,
-    ))
+    app_state
+        .config_manager
+        .unhide_sessions(body.project_id, body.session_ids).await
+        .map(Json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 // =============================================================================
