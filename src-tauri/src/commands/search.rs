@@ -1,6 +1,6 @@
 //! IPC Handlers for Search Operations — 薄封装层。
 
-use tauri::{command, State};
+use tauri::State;
 use std::sync::Arc;
 
 use crate::services::SearchService;

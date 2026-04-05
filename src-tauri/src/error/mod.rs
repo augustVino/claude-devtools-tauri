@@ -14,8 +14,12 @@ pub mod error_trigger_tester;
 pub mod trigger;
 pub mod trigger_matcher;
 
-// 向后兼容：通过 trigger 子模块重导出所有符号
-pub use trigger::*;
+// 向后兼容：通过 trigger 子模块重导出部分符号
+#[allow(unused_imports)]
+pub use trigger::{
+    check_token_threshold_trigger, check_tool_result_trigger, check_tool_use_trigger,
+    matches_repository_scope, pre_resolve_repository_ids, RepositoryScopeTarget,
+};
 
 pub mod app_error;
 pub use app_error::AppError;

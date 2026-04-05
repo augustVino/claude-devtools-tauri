@@ -1,5 +1,5 @@
 use crate::types::domain::MessageType;
-use crate::types::jsonl::{ChatHistoryEntry, ContentBlock};
+use crate::types::jsonl::ChatHistoryEntry;
 use crate::types::messages::{ParsedMessage, ToolCall, ToolResult};
 
 // =============================================================================

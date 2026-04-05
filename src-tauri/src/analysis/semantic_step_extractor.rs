@@ -339,6 +339,7 @@ enum ContentBlockRef {
         text: String,
     },
     ToolResult {
+        #[allow(dead_code)]
         tool_use_id: String,
     },
     Image,

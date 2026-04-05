@@ -15,7 +15,6 @@ use crate::types::domain::{RepositoryIdentity, WorktreeSource};
 use sha2::{Digest, Sha256};
 use std::path::{Component, Path, PathBuf};
 use std::fs;
-use log::{info, warn, error};
 
 /// GitIdentityResolver resolves repository identity from project paths.
 pub struct GitIdentityResolver;

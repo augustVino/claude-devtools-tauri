@@ -73,6 +73,7 @@ impl DataCache {
     /// 设置缓存启用状态（与 Electron `setEnabled()` 对齐）。
     ///
     /// 由于 `enabled` 使用 `Arc<AtomicBool>`，此操作对所有克隆实例（如 watcher task）生效。
+    #[allow(dead_code)]
     pub async fn set_enabled(&self, enabled: bool) {
         self.enabled.store(enabled, Ordering::Relaxed);
         if !enabled {
@@ -151,6 +152,7 @@ impl DataCache {
     }
 
     /// 使指定项目下的所有缓存条目失效。
+    #[allow(dead_code)]
     pub async fn invalidate_project(&self, project_id: &str) {
         if !self.is_enabled() {
             return;
@@ -178,11 +180,13 @@ impl DataCache {
     }
 
     /// 清空整个缓存。
+    #[allow(dead_code)]
     pub async fn clear(&self) {
         self.cache.invalidate_all();
     }
 
     /// 返回缓存中当前条目数。
+    #[allow(dead_code)]
     pub async fn entry_count(&self) -> u64 {
         self.cache.entry_count()
     }
@@ -251,6 +255,7 @@ impl DataCache {
     }
 
     /// 判断 `key` 是否属于指定项目（会话或子代理）。
+    #[allow(dead_code)]
     fn key_belongs_to_project(key: &str, project_id: &str) -> bool {
         // 会话键格式: "{projectId}/{sessionId}"
         if let Some(rest) = key.strip_prefix(project_id) {

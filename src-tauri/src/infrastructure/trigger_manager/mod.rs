@@ -37,11 +37,13 @@ impl TriggerManager {
     }
 
     /// 仅获取已启用的通知触发器。
+    #[allow(dead_code)]
     pub fn get_enabled(&self) -> Vec<NotificationTrigger> {
         self.triggers.iter().filter(|t| t.enabled).cloned().collect()
     }
 
     /// 按 ID 获取触发器。
+    #[allow(dead_code)]
     pub fn get_by_id(&self, trigger_id: &str) -> Option<NotificationTrigger> {
         self.triggers.iter().find(|t| t.id == trigger_id).cloned()
     }
@@ -51,6 +53,7 @@ impl TriggerManager {
     // =========================================================================
 
     /// 添加新的通知触发器。若存在相同 ID 或验证失败则返回错误。
+    #[allow(dead_code)]
     pub fn add(
         &mut self,
         trigger: NotificationTrigger,
@@ -105,6 +108,7 @@ impl TriggerManager {
     }
 
     /// 删除通知触发器。内置触发器不可删除。
+    #[allow(dead_code)]
     pub fn remove(
         &mut self,
         trigger_id: &str,
@@ -143,7 +147,7 @@ impl TriggerManager {
     /// with `config/trigger_proxy.rs` (add_trigger validation). Both methods delegate to
     /// `validate_trigger_internal()` — behavior is identical.
     #[deprecated(since = "1.0", note = "Use TriggerManager::validate() instead")]
-    #[allow(deprecated)]
+    #[allow(deprecated, dead_code)]
     pub fn validate_trigger_only(trigger: &NotificationTrigger) -> TriggerValidationResult {
         let errors = validate_trigger_internal(trigger);
         TriggerValidationResult { valid: errors.is_empty(), errors }
@@ -154,6 +158,7 @@ impl TriggerManager {
     // =========================================================================
 
     /// 替换所有触发器（由 ConfigManager 在加载时使用）。
+    #[allow(dead_code)]
     pub fn set_triggers(&mut self, triggers: Vec<NotificationTrigger>) {
         self.triggers = triggers;
     }

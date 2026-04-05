@@ -17,6 +17,7 @@ pub struct GapFillingInput<'a> {
     /// 待原地修改的语义步骤切片。
     pub steps: &'a mut [SemanticStep],
     /// 块起始时间（epoch 毫秒）。
+    #[allow(dead_code)]
     pub chunk_start_time_ms: u64,
     /// 块结束时间（epoch 毫秒）。
     pub chunk_end_time_ms: u64,

@@ -19,6 +19,7 @@ pub struct ConnectRequest {
     /// 用户原始输入的 config（未 merge）。
     pub config: SshConnectionConfig,
     /// 原始 host 快照（等于 config.host，在 merge 前保存）。
+    #[allow(dead_code)]
     pub original_host: String,
 }
 
@@ -37,6 +38,7 @@ pub struct RawConnection {
     /// Merge 后的完整配置。
     pub merged_config: SshConnectionConfig,
     /// 原始 host alias（已用于 resolved_alias 计算，保留供调试）。
+    #[allow(dead_code)]
     pub original_host: String,
     /// 已认证的 russh session handle（所有权转移至此）。
     pub session: client::Handle<super::SshClientHandler>,
@@ -47,10 +49,12 @@ pub struct RawConnection {
 /// 完整连接产物 — RawConnection + 业务层包装（仅 connect() 使用）。
 pub struct ConnectedBundle {
     /// 原始请求上下文。
+    #[allow(dead_code)]
     pub request: ConnectRequest,
     /// Merge 后的完整配置。
     pub merged_config: SshConnectionConfig,
     /// 原始 host alias（已用于 resolved_alias 计算）。
+    #[allow(dead_code)]
     pub original_host: String,
     /// 已认证的 russh session handle（所有权转移至此）。
     pub session: russh::client::Handle<super::SshClientHandler>,

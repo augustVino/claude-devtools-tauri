@@ -35,9 +35,11 @@ pub struct SessionService {
     fs_provider: Arc<dyn FsProvider>,
     cache: DataCache,
     projects_dir: PathBuf,
+    #[allow(dead_code)]
     todos_dir: PathBuf,
     config_manager: Arc<ConfigManager>,
     project_service: Arc<ProjectService>,
+    #[allow(dead_code)]
     repo: Arc<dyn crate::infrastructure::session_repository::SessionRepository>,
 }
 

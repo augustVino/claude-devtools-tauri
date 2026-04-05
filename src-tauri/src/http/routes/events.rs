@@ -9,7 +9,6 @@ use axum::{
 use futures::stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::http::sse::SSEBroadcaster;
 use crate::http::state::HttpState;
 
 /// SSE 端点 — 客户端通过 GET /api/events 订阅实时事件。

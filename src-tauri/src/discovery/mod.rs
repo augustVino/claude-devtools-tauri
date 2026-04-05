@@ -16,10 +16,7 @@ pub mod subproject_registry;
 pub mod worktree_grouper;
 
 pub use project_scanner::*;
-pub use session_content_filter::*;
 pub use session_searcher::*;
-pub use subagent_identity::*;
-pub use subagent_linking::*;
 pub use subagent_resolver::*;
 pub use subproject_registry::*;
 pub use worktree_grouper::*;

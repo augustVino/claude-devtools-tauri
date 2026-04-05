@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use super::jsonl::UsageMetadata;
 use super::messages::ParsedMessage;
 
+#[allow(dead_code)]
 pub type TokenUsage = UsageMetadata;
 
 // =============================================================================
@@ -316,8 +316,10 @@ pub struct SessionsPaginationOptions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[allow(dead_code)]
 pub struct SessionsByIdsOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[allow(dead_code)]
     pub metadata_level: Option<SessionMetadataLevel>,
 }
 
@@ -352,6 +354,7 @@ pub struct FileChangeEvent {
 // =============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[allow(dead_code)]
 pub struct IpcResult<T> {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

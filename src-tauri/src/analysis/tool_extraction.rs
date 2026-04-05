@@ -12,6 +12,7 @@ use crate::types::messages::ParsedMessage;
 #[derive(Debug, Clone)]
 pub struct ToolUseInfo {
     pub name: String,
+    #[allow(dead_code)]
     pub input: serde_json::Value,
 }
 
@@ -19,6 +20,7 @@ pub struct ToolUseInfo {
 #[derive(Debug, Clone)]
 pub struct ToolResultInfo {
     pub content: serde_json::Value,
+    #[allow(dead_code)]
     pub is_error: bool,
 }
 

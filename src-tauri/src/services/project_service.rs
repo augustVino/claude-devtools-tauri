@@ -32,6 +32,7 @@ impl ProjectService {
     }
 
     /// 创建使用默认 LocalFsProvider 的 ProjectService（便捷构造）。
+    #[allow(dead_code)]
     pub fn with_local_fs(projects_dir: PathBuf, todos_dir: PathBuf) -> Self {
         Self::new(Arc::new(LocalFsProvider::new()), projects_dir, todos_dir)
     }

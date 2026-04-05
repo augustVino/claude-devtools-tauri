@@ -22,6 +22,7 @@ pub enum AppError {
 
     /// SSH/SFTP 错误
     #[error("SSH/SFTP error: {0}")]
+    #[allow(dead_code)]
     Ssh(String),
 
     /// 解析错误（JSONL 解析失败等）
@@ -34,12 +35,14 @@ pub enum AppError {
 
     /// 内部错误（不应发生的逻辑错误）
     #[error("Internal error: {0}")]
+    #[allow(dead_code)]
     Internal(String),
 }
 
 impl AppError {
     /// 将 AppError 转换为 Tauri command 兼容的 String 格式。
     /// 用于 Command 层边界：`.map_err(AppError::to_string)`
+    #[allow(dead_code)]
     pub fn into_tauri_string(self) -> String {
         self.to_string()
     }

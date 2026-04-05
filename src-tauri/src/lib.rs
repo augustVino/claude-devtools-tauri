@@ -21,12 +21,10 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 use tauri::{Emitter, Manager};
 use commands::AppState;
-use infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConnectionManager};
-use infrastructure::fs_provider::LocalFsProvider;
-use infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
+use infrastructure::{ConfigManager, NotificationManager, SshConnectionManager};
 use infrastructure::app_bootstrap::AppBootstrap;
 use commands::tray::TrayIconManager;
-use utils::{get_default_claude_base_path, get_projects_base_path, get_todos_base_path, set_claude_root_override};
+use utils::{get_default_claude_base_path, get_projects_base_path, get_todos_base_path};
 
 /// 运行 Tauri 应用。
 ///

@@ -35,6 +35,7 @@ impl SearchService {
     }
 
     /// 创建使用默认 LocalFsProvider 的 SearchService（便捷构造）。
+    #[allow(dead_code)]
     pub fn with_local_fs(projects_dir: PathBuf, todos_dir: PathBuf) -> Self {
         Self::new(projects_dir, todos_dir, Arc::new(LocalFsProvider::new()))
     }

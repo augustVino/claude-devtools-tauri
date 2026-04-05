@@ -5,7 +5,7 @@
 use axum::{
     Json,
     Router,
-    extract::{Path as AxumPath, State},
+    extract::Path as AxumPath,
     http::StatusCode,
     routing::{delete, get, post, put},
 };
@@ -35,6 +35,7 @@ pub(crate) struct ErrorResponse {
 
 /// 通用成功响应。
 #[derive(Serialize)]
+#[allow(dead_code)]
 pub(crate) struct SuccessResponse {
     pub success: bool,
 }
@@ -49,6 +50,7 @@ pub(crate) fn error_json(msg: impl Into<String>) -> (StatusCode, Json<ErrorRespo
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn success_response() -> (StatusCode, Json<SuccessResponse>) {
     (
         StatusCode::OK,

@@ -18,8 +18,10 @@ pub struct FsStatResult {
     /// 创建时间（毫秒时间戳）
     pub birthtime_ms: u64,
     /// 是否为文件
+    #[allow(dead_code)]
     pub is_file: bool,
     /// 是否为目录
+    #[allow(dead_code)]
     pub is_directory: bool,
 }
 
@@ -63,10 +65,17 @@ pub trait FsProvider: Send + Sync + std::fmt::Debug {
     /// 列出目录内容。
     fn read_dir(&self, path: &Path) -> Result<Vec<FsDirent>, String>;
 
+    /// 检查路径是否存在（兼容旧接口，优先使用 exists）。
+    #[allow(dead_code)]
+    fn has(&self, path: &Path) -> bool {
+        self.exists(path).unwrap_or(false)
+    }
+
     /// 清理资源（如关闭 SFTP 会话）。默认为空操作。
     ///
     /// 对于需要异步清理的实现者（如 SshFsProvider），使用
     /// 自有的 `dispose_async()` 方法代替。
+    #[allow(dead_code)]
     fn dispose(&self) {}
 }
 

@@ -31,6 +31,7 @@ pub fn emit_todo_change(app: &AppHandle, event: TodoChangeEvent) {
 }
 
 /// 通知前端新通知事件。
+#[allow(dead_code)]
 pub fn emit_notification_new(app: &AppHandle, notification: &StoredNotification) {
     if let Err(e) = app.emit("notification:new", notification) {
         log::error!("Failed to emit notification:new event: {}", e);
@@ -46,6 +47,7 @@ pub struct NotificationUpdatedPayload {
 }
 
 /// 通知前端通知状态变更事件（包含总数和未读数）。
+#[allow(dead_code)]
 pub fn emit_notification_updated(
     app: &AppHandle,
     total: usize,

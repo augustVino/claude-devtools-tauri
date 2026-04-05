@@ -52,6 +52,7 @@ pub fn is_internal_user_message(msg: &ParsedMessage) -> bool {
 }
 
 /// Assistant message check.
+#[allow(dead_code)]
 pub fn is_assistant_message(msg: &ParsedMessage) -> bool {
     msg.message_type == MessageType::Assistant
 }

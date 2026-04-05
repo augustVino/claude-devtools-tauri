@@ -1,10 +1,8 @@
 //! 远程项目路径解析（静态化版本）。
 
 use russh::client;
-use crate::infrastructure::fs_provider::FsProvider;
 use crate::infrastructure::ssh_exec::exec_remote_command;
 use crate::infrastructure::ssh_fs_provider::SshFsProvider;
-use crate::types::ssh::SshConnectionConfig;
 
 /// Resolve the remote projects path (free function version).
 pub(super) async fn resolve_remote_projects_path_static(

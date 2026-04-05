@@ -35,6 +35,7 @@ static DANGEROUS_PATTERNS: std::sync::LazyLock<Vec<Regex>> = std::sync::LazyLock
 
 /// 正则模式被拒绝时返回的错误信息。
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct RegexValidationError {
     pub pattern: String,
     pub reason: String,

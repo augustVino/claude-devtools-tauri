@@ -130,6 +130,7 @@ pub fn is_command_content(text: &str) -> bool {
 /// `analyzeSessionFileMetadata` 的标题提取行为。
 ///
 /// 若未找到合适的消息则返回 `None`。
+#[allow(dead_code)]
 pub fn extract_session_title<'a, I>(messages: I) -> Option<String>
 where
     I: Iterator<Item = &'a serde_json::Value>,

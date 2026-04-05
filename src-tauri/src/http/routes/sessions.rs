@@ -7,7 +7,6 @@ use axum::{Json, extract::{Path, State}, http::StatusCode};
 
 use crate::commands::guards;
 use crate::http::state::HttpState;
-use crate::services::SessionService;
 use crate::types::domain::{PaginatedSessionsResult, Session, SessionMetrics};
 use crate::types::chunks::{ConversationGroup, SessionDetail};
 

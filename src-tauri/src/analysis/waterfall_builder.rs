@@ -8,9 +8,9 @@
 
 use std::collections::HashSet;
 
-use crate::utils::timestamp::parse_ts_ms_opt;
-
 use crate::types::chunks::{Chunk, Process};
+#[allow(unused_imports)]
+use crate::utils::timestamp::parse_ts_ms_opt;
 
 // =============================================================================
 // Waterfall Types

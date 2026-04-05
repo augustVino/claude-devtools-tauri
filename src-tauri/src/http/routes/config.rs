@@ -290,6 +290,7 @@ pub(crate) struct TriggerTestResponse {
 /// 测试通知触发器。
 ///
 /// POST /api/config/triggers/{trigger_id}/test
+#[allow(dead_code)]
 pub async fn test_trigger(
     State(_state): State<HttpState>,
     axum::extract::Path(trigger_id): axum::extract::Path<String>,

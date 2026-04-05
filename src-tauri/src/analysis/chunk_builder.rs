@@ -63,6 +63,7 @@ impl ChunkBuilder {
     }
 
     /// Get total metrics for all chunks.
+    #[allow(dead_code)]
     pub fn get_total_chunk_metrics(chunks: &[Chunk]) -> SessionMetrics {
         if chunks.is_empty() { return SessionMetrics::default(); }
 
@@ -230,6 +231,7 @@ impl ChunkBuilder {
         content.to_string()
     }
 
+    #[allow(dead_code)]
     fn chunk_metrics(chunk: &Chunk) -> &SessionMetrics {
         match chunk { Chunk::User(c) => &c.metrics, Chunk::Ai(c) => &c.metrics,
             Chunk::System(c) => &c.metrics, Chunk::Compact(c) => &c.metrics }
@@ -240,6 +242,7 @@ impl ChunkBuilder {
             cache_read_tokens: None, cache_creation_tokens: None, message_count: 1, cost_usd: None }
     }
 
+    #[allow(dead_code)]
     fn merge_opt(a: Option<u64>, b: Option<u64>) -> Option<u64> {
         match (a, b) { (None, None) => None, (Some(x), None) | (None, Some(x)) => Some(x),
             (Some(x), Some(y)) => Some(x + y) }

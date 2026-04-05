@@ -1,9 +1,8 @@
 //! test() 方法 — 复用 establish_raw_connection 验证连接可用性。
 
-use crate::types::ssh::{SshConfigHostEntry, SshConnectionConfig, SshTestResult};
-use crate::infrastructure::ssh_config_parser::SshConfigParser;
+use crate::types::ssh::{SshConnectionConfig, SshTestResult};
 
-use super::{ConnectRequest, SshClientHandler};
+use super::ConnectRequest;
 
 impl super::SshConnectionManager {
     /// Test an SSH connection configuration.

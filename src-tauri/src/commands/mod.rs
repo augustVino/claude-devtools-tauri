@@ -25,16 +25,27 @@ pub mod http_server;
 pub mod context;
 pub mod ssh;
 
+#[allow(unused_imports)]
 pub use window::*;
+#[allow(unused_imports)]
 pub use version::*;
+#[allow(unused_imports)]
 pub use sessions::*;
+#[allow(unused_imports)]
 pub use config::*;
+#[allow(unused_imports)]
 pub use search::*;
+#[allow(unused_imports)]
 pub use validation::*;
+#[allow(unused_imports)]
 pub use utility::*;
+#[allow(unused_imports)]
 pub use projects::*;
+#[allow(unused_imports)]
 pub use subagents::*;
+#[allow(unused_imports)]
 pub use notifications::*;
+#[allow(unused_imports)]
 pub use ssh::*;
 
 /// 跨命令共享的应用状态。
@@ -55,6 +66,7 @@ impl AppState {
     }
 
     /// 初始化应用状态，包括异步加载配置文件。
+    #[allow(dead_code)]
     pub async fn initialize(&self) -> Result<(), String> {
         self.config_manager.initialize().await
             .map_err(|e| e.to_string())

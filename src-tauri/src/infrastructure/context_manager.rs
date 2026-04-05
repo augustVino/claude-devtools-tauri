@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+#[allow(unused_imports)]
 use crate::infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
 
 /// 上下文元数据。
@@ -118,6 +119,7 @@ impl ContextManager {
         self.contexts.get(context_id).cloned()
     }
 
+    #[allow(dead_code)]
     pub fn has(&self, context_id: &str) -> bool {
         self.contexts.contains_key(context_id)
     }
@@ -139,6 +141,7 @@ impl ContextManager {
         &self.active_id
     }
 
+    #[allow(dead_code)]
     pub async fn dispose(&mut self) {
         for ctx in self.contexts.values() {
             if let Ok(read_guard) = ctx.try_read() {

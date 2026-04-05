@@ -43,6 +43,7 @@ impl ClaudeMdReader {
     }
 
     /// Create with custom paths (for testing).
+    #[allow(dead_code)]
     pub fn with_paths(claude_base_path: PathBuf, home_dir: PathBuf) -> Self {
         Self { claude_base_path, home_dir }
     }

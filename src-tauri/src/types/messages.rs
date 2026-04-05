@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use super::jsonl::{ContentBlock, ToolUseResultData, UsageMetadata};
-use crate::types::domain::{MessageType, SessionMetrics};
+use super::domain::MessageType;
+use super::jsonl::{ToolUseResultData, UsageMetadata};
 
 // =============================================================================
 // Tool Call & Result

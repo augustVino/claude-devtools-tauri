@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 use russh_sftp::client::SftpSession;
 use russh_sftp::client::error::Error as SftpError;
+#[allow(unused_imports)]
 use russh_sftp::protocol::{Status as SftpStatus, StatusCode};
 
 use crate::infrastructure::fs_provider::{FsDirent, FsProvider, FsStatResult};

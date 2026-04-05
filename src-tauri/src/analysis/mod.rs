@@ -9,7 +9,6 @@ pub mod tool_summary_formatter;
 pub mod waterfall_builder;
 
 pub use chunk_builder::*;
-pub use semantic_step_extractor::*;
 
 #[cfg(test)]
 mod chunk_builder_tests;

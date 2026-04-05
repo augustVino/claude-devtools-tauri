@@ -1,6 +1,6 @@
 //! 触发器验证逻辑（含 ReDoS 防护）。
 
-use crate::types::config::{NotificationTrigger, TriggerContentType, TriggerMode, TriggerTokenType, TriggerValidationResult};
+use crate::types::config::{NotificationTrigger, TriggerContentType, TriggerMode};
 use crate::utils::regex_validation::validate_regex_pattern;
 
 /// 内部验证函数 — 合并了原先 `validate()` 和 `validate_trigger_only()` 的完全重复逻辑。

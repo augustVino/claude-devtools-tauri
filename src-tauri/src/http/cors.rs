@@ -13,7 +13,7 @@ pub fn cors_layer() -> CorsLayer {
     let cors_origin = std::env::var("CORS_ORIGIN").unwrap_or_default();
 
     let allow_origin = if cors_origin == "*" {
-        AllowOrigin::predicate(|origin, _| true)
+        AllowOrigin::predicate(|_origin, _: &_| true)
     } else if cors_origin.is_empty() {
         // Default: localhost only
         AllowOrigin::predicate(|origin, _request_parts| {

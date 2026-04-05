@@ -119,6 +119,7 @@ impl ErrorDetector {
     /// 在所有项目的历史数据上测试触发器。
     ///
     /// 委托给 [`error_trigger_tester::test_trigger`]（与 Electron 行为对齐）。
+    #[allow(dead_code)]
     pub async fn test_trigger(
         &self,
         trigger: &NotificationTrigger,

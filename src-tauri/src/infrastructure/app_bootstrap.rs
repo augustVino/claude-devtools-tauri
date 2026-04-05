@@ -3,13 +3,13 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 use crate::commands::AppState;
 use crate::commands::tray::TrayIconManager;
 use crate::infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConnectionManager};
 use crate::infrastructure::fs_provider::LocalFsProvider;
 use crate::infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
-use crate::utils::{get_default_claude_base_path, get_projects_base_path, get_todos_base_path, set_claude_root_override};
+use crate::utils::{get_projects_base_path, get_todos_base_path, set_claude_root_override};
 
 /// 应用启动编排器。
 pub struct AppBootstrap;

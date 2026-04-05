@@ -12,18 +12,17 @@
 //! - `subagent_linking` - task call matching, team metadata propagation, color enrichment
 
 // Import sibling modules (declared in discovery/mod.rs)
+#[allow(unused_imports)]
 use crate::discovery::subagent_identity::{
-    calculate_metrics, calculate_timing, check_is_ongoing, detect_parallel_execution,
-    has_subagent_files, is_warmup_subagent, list_subagent_files,
-    parse_subagent_file, subagent_belongs_to_session,
+    detect_parallel_execution, has_subagent_files, list_subagent_files, parse_subagent_file,
+    subagent_belongs_to_session,
 };
 use crate::discovery::subagent_linking::{
-    enrich_subagent_from_task, enrich_team_colors, extract_team_message_summary,
-    link_to_task_calls, propagate_team_metadata,
+    enrich_team_colors, link_to_task_calls, propagate_team_metadata,
 };
 
 use crate::infrastructure::fs_provider::FsProvider;
-use crate::types::chunks::TeamInfo;
+#[allow(unused_imports)]
 use crate::types::domain::{MessageType, SessionMetrics};
 use crate::types::messages::{ParsedMessage, ToolCall};
 use std::path::PathBuf;
@@ -103,16 +102,19 @@ impl SubagentResolver {
     }
 
     /// Check if a session has subagents.
+    #[allow(dead_code)]
     pub fn has_subagents(&self, project_id: &str, session_id: &str) -> bool {
         has_subagent_files(&self.projects_dir, self.fs_provider.as_ref(), project_id, session_id)
     }
 
     /// Find a subagent by ID.
+    #[allow(dead_code)]
     pub fn find_subagent_by_id<'a>(subagents: &'a [Process], id: &str) -> Option<&'a Process> {
         subagents.iter().find(|s| s.id == id)
     }
 
     /// Get aggregated metrics across all subagents.
+    #[allow(dead_code)]
     pub fn get_total_subagent_metrics(subagents: &[Process]) -> SessionMetrics {
         if subagents.is_empty() {
             return SessionMetrics::default();
@@ -163,6 +165,9 @@ fn make_test_message(msg_type: MessageType, content: &str, uuid: &str, parent_uu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::discovery::subagent_linking::{enrich_subagent_from_task, extract_team_message_summary};
+    use crate::types::chunks::TeamInfo;
+    use crate::types::domain::MessageType;
     use crate::infrastructure::fs_provider::LocalFsProvider;
     use std::fs;
     use std::sync::Arc;

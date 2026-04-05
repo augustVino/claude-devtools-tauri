@@ -8,6 +8,7 @@ use tokio::sync::broadcast;
 use crate::events::{NotificationUpdatedPayload, TodoChangeEvent};
 use crate::infrastructure::context_manager::ContextInfo;
 use crate::types::config::{DetectedError, StoredNotification};
+#[allow(unused_imports)]
 use crate::types::domain::{FileChangeEvent, FileChangeType};
 use crate::types::ssh::SshConnectionStatus;
 
@@ -17,7 +18,9 @@ use crate::types::ssh::SshConnectionStatus;
 pub enum BackendEvent {
     FileChange(FileChangeEvent),
     TodoChange(TodoChangeEvent),
+    #[allow(dead_code)]
     NotificationNew(StoredNotification),
+    #[allow(dead_code)]
     NotificationUpdated(NotificationUpdatedPayload),
     NotificationClicked(DetectedError),
     ContextChanged(ContextInfo),
@@ -63,6 +66,7 @@ impl SSEBroadcaster {
     }
 
     /// 返回当前活跃接收者数量。
+    #[allow(dead_code)]
     pub fn receiver_count(&self) -> usize {
         self.tx.receiver_count()
     }

@@ -29,6 +29,7 @@ impl<T: serde::Serialize> IpcResponse<T> {
 }
 
 impl IpcResponse<()> {
+    #[allow(dead_code)]
     fn err(msg: impl Into<String>) -> IpcResponse<serde_json::Value> {
         IpcResponse { success: false, data: None, error: Some(msg.into()) }
     }

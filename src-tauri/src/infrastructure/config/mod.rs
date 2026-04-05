@@ -11,14 +11,14 @@ mod session_ops;
 mod snooze;
 mod trigger_proxy;
 
-use defaults::{CONFIG_FILENAME, DEFAULT_IGNORED_REGEX, default_app_config, default_config_json, now_millis};
+use defaults::{CONFIG_FILENAME, default_app_config};
 
 use std::path::PathBuf;
 use tokio::sync::RwLock;
 
-use crate::types::*;
 use crate::error::AppError;
-use log::{error, info};
+use crate::types::config::AppConfig;
+use log::info;
 use serde_json;
 use tokio::fs;
 
@@ -47,6 +47,7 @@ impl ConfigManager {
     }
 
     /// 使用自定义路径创建配置管理器（主要用于测试）
+    #[allow(dead_code)]
     pub fn with_path(path: PathBuf) -> Self {
         Self { config: RwLock::new(default_app_config()), config_path: path }
     }

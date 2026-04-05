@@ -1,6 +1,6 @@
-use crate::parsing::jsonl_parser::{self, calculate_metrics, get_task_calls, parse_jsonl_file};
+use crate::parsing::jsonl_parser::{calculate_metrics, get_task_calls, parse_jsonl_file};
 use crate::parsing::message_classifier;
-use crate::types::domain::{MessageCategory, MessageType, SessionMetrics};
+use crate::types::domain::{MessageType, SessionMetrics};
 use crate::types::messages::{ParsedMessage, ToolCall};
 
 /// Result of parsing a session file.
@@ -8,8 +8,11 @@ pub struct ParsedSession {
     pub messages: Vec<ParsedMessage>,
     pub metrics: SessionMetrics,
     pub task_calls: Vec<ToolCall>,
+    #[allow(dead_code)]
     pub by_type: MessagesByType,
+    #[allow(dead_code)]
     pub sidechain_messages: Vec<ParsedMessage>,
+    #[allow(dead_code)]
     pub main_messages: Vec<ParsedMessage>,
     pub is_ongoing: bool,
 }
@@ -25,15 +28,8 @@ pub struct MessagesByType {
 }
 
 impl ParsedSession {
-    pub fn get_user_messages(&self) -> &[ParsedMessage] {
-        &self.by_type.user
-    }
-
-    pub fn get_assistant_messages(&self) -> &[ParsedMessage] {
-        &self.by_type.assistant
-    }
-
     /// Get assistant responses between a user message and the next user message.
+    #[allow(dead_code)]
     pub fn get_responses(&self, user_message_uuid: &str) -> Vec<&ParsedMessage> {
         let mut in_range = false;
         let mut responses = vec![];

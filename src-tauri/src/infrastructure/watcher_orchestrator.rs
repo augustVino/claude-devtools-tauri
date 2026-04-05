@@ -4,7 +4,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
@@ -17,6 +16,7 @@ use tauri::Manager;
 
 /// Watcher 编排器 — 管理文件监听任务的启动生命周期。
 pub struct WatcherOrchestrator {
+    #[allow(dead_code)]
     projects_dir: PathBuf,
     todos_dir: PathBuf,
     fs_provider: Arc<dyn FsProvider>,
@@ -118,7 +118,6 @@ impl WatcherOrchestrator {
         // 共享主 file_watcher 的 broadcast receiver，不创建独立 watcher
         {
             let cancel = cancel_token.clone();
-            let app = app_handle.clone();
             let file_watcher_for_error = self.file_watcher.clone();
 
             tauri::async_runtime::spawn(async move {

@@ -7,7 +7,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde_json::json;
 use tauri::{command, AppHandle, Manager, State};
 use tokio::sync::RwLock;
 

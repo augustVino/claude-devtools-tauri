@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::analysis::tool_extraction::{extract_tool_results, ToolResultInfo, ToolUseInfo};
+use crate::analysis::tool_extraction::{extract_tool_results, ToolUseInfo};
 use crate::error::error_message_builder::{
     create_detected_error, extract_error_message, find_tool_name_by_tool_use_id,
     CreateDetectedErrorParams,

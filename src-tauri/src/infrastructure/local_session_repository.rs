@@ -8,16 +8,17 @@ use log::{info, warn};
 
 use crate::error::AppError;
 use crate::infrastructure::fs_provider::{FsProvider, FsStatResult};
-use crate::infrastructure::session_repository::{
-    DeleteFilesResult, SessionFileItem, SessionRepository,
-};
+use crate::infrastructure::session_repository::{DeleteFilesResult, SessionFileItem, SessionRepository};
 use crate::parsing::{parse_session_file, ParsedSession};
-use crate::utils::path_decoder::{extract_base_dir, get_default_claude_base_path};
+use crate::utils::path_decoder::extract_base_dir;
 
 /// 本地会话 Repository — 基于 FsProvider 访问本地文件系统。
 pub struct LocalSessionRepository {
+    #[allow(dead_code)]
     fs_provider: Arc<dyn FsProvider>,
+    #[allow(dead_code)]
     projects_dir: PathBuf,
+    #[allow(dead_code)]
     claude_base_dir: PathBuf,
 }
 
@@ -34,6 +35,7 @@ impl LocalSessionRepository {
         }
     }
 
+    #[allow(dead_code)]
     fn project_dir(&self, project_id: &str) -> PathBuf {
         let name = extract_base_dir(project_id);
         self.projects_dir.join(&name)

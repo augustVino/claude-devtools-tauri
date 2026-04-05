@@ -181,7 +181,7 @@ impl SessionSearcher {
 
             // SSH 分阶段边界检查：若已收集足够结果且到达阶段边界则提前退出
             if fast_mode {
-                if let Some(&boundary) = stage_boundaries.iter().find(|&&b| b == idx) {
+                if let Some(&_boundary) = stage_boundaries.iter().find(|&&b| b == idx) {
                     if results.len() >= SSH_FAST_SEARCH_MIN_RESULTS {
                         is_partial = true;
                         break;

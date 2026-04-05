@@ -14,7 +14,6 @@ use russh_sftp::client::SftpSession;
 use crate::infrastructure::ssh_auth;
 use crate::infrastructure::ssh_config_parser::SshConfigParser;
 use crate::infrastructure::ssh_fs_provider::SshFsProvider;
-use crate::types::ssh::SshConnectionConfig;
 
 use super::{ConnectRequest, RawConnection, ConnectedBundle, SshClientHandler};
 

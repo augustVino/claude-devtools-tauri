@@ -22,10 +22,10 @@ use tokio::task::JoinHandle;
 
 // 从 notify_debouncer_mini 导入所有 notify 类型，以确保版本兼容性
 // (notify-debouncer-mini 使用 notify v7，而直接依赖为 v8)
-use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
-use notify_debouncer_mini::{new_debouncer, DebouncedEvent};
+use notify_debouncer_mini::notify::RecommendedWatcher;
 
 use crate::infrastructure::fs_provider::FsProvider;
+#[allow(unused_imports)]
 use crate::types::domain::{FileChangeEvent, FileChangeType};
 
 /// 防抖间隔（毫秒），与 Electron 实现保持一致
@@ -176,6 +176,7 @@ impl FileWatcher {
     /// 停止当前监听并切换到新目录。
     ///
     /// 用于上下文切换时重新配置监听路径。
+    #[allow(dead_code)]
     pub async fn rewatch(&mut self, new_path: &Path) -> Result<(), String> {
         self.stop().await;
         self.watch(new_path).await
@@ -187,6 +188,7 @@ impl FileWatcher {
     }
 
     /// 检查当前是否正在监听目录。
+    #[allow(dead_code)]
     pub async fn is_watching(&self) -> bool {
         *self.is_watching.lock().await
     }

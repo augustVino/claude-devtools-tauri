@@ -8,11 +8,11 @@ use async_trait::async_trait;
 
 use crate::error::AppError;
 use crate::parsing::ParsedSession;
-use crate::types::domain::Session;
-use crate::infrastructure::fs_provider::{FsProvider, FsStatResult};
+use crate::infrastructure::fs_provider::FsStatResult;
 
 /// 会话文件条目 — 用于批量读取的轻量级描述。
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SessionFileItem {
     pub path: PathBuf,
     pub session_id: String,
@@ -21,6 +21,7 @@ pub struct SessionFileItem {
 
 /// 会话删除结果 — 返回清理的关联文件/目录数量。
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct DeleteFilesResult {
     /// 被删除的关联条目数（不含主 JSONL 文件本身）
     pub associated_deleted: u32,
@@ -30,6 +31,7 @@ pub struct DeleteFilesResult {
 #[async_trait]
 pub trait SessionRepository: Send + Sync {
     /// 从文件系统读取并解析原始会话数据。
+    #[allow(dead_code)]
     async fn read_raw_session(
         &self,
         project_id: &str,
@@ -37,6 +39,7 @@ pub trait SessionRepository: Send + Sync {
     ) -> Result<ParsedSession, AppError>;
 
     /// 检查指定会话是否存在。
+    #[allow(dead_code)]
     async fn session_exists(
         &self,
         project_id: &str,
@@ -44,12 +47,15 @@ pub trait SessionRepository: Send + Sync {
     ) -> Result<bool, AppError>;
 
     /// 获取会话文件的元信息（不解析内容）。
+    #[allow(dead_code)]
     async fn session_stat(&self, path: &Path) -> Result<FsStatResult, AppError>;
 
     /// 批量获取项目下所有会话的元数据列表（用于分页/列表场景）。
+    #[allow(dead_code)]
     async fn list_session_files(&self, project_id: &str) -> Result<Vec<SessionFileItem>, AppError>;
 
     /// 删除指定会话及其所有关联文件。返回清理的关联条目数。
+    #[allow(dead_code)]
     async fn delete_session_files(
         &self,
         project_id: &str,

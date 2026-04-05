@@ -230,8 +230,9 @@ impl TrayIconManager {
                     let _ = app.run_on_main_thread(|| {
                         unsafe {
                             use cocoa::appkit::NSApplication;
-                            let ns_app = cocoa::appkit::NSApplication::sharedApplication(cocoa::base::nil);
-                            let _: () = cocoa::appkit::NSApplication::activateIgnoringOtherApps_(ns_app, true);
+                            use cocoa::base::nil;
+                            let _ns_app = NSApplication::sharedApplication(nil);
+                            let _: () = NSApplication::activateIgnoringOtherApps_(_ns_app, true);
                         }
                     });
                 }
@@ -241,11 +242,12 @@ impl TrayIconManager {
 
     /// Rebuild the tray icon with updated menu (call from file watcher when sessions change).
     /// Since Tauri v2 TrayIcon does not expose set_menu(), we destroy and recreate.
+    #[allow(dead_code)]
     pub fn refresh_menu(&mut self) -> Result<(), String> {
-        let was_dock_visible = self.dock_visible;
+        let _was_dock_visible = self.dock_visible;
         self.destroy();
         self.create()?;
-        self.dock_visible = was_dock_visible;
+        self.dock_visible = _was_dock_visible;
         Ok(())
     }
 }

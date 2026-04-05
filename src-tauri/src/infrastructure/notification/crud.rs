@@ -9,7 +9,7 @@ use crate::types::config::{
     StoredNotification,
 };
 
-use super::{NotificationManager, MAX_NOTIFICATIONS};
+use super::NotificationManager;
 
 impl NotificationManager {
     // =========================================================================

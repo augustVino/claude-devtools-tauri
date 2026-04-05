@@ -21,15 +21,12 @@ pub mod local_session_repository;
 pub mod trigger_manager;
 
 pub use config::ConfigManager;
-pub use context_manager::{ContextInfo, ContextManager};
+pub use context_manager::ContextManager;
 pub use data_cache::DataCache;
 pub use file_watcher::FileWatcher;
-pub use fs_provider::{FsDirent, FsProvider, FsStatResult, LocalFsProvider};
+pub use fs_provider::{FsProvider, LocalFsProvider};
 pub use notification::NotificationManager;
-pub use ssh_config_parser::SshConfigParser;
 pub use ssh_connection::SshConnectionManager;
-pub use session_repository::{DeleteFilesResult, SessionFileItem, SessionRepository};
-pub use local_session_repository::LocalSessionRepository;
 #[allow(unused_imports)]
 pub use service_context::{ContextType, ServiceContext, ServiceContextConfig};
 #[allow(unused_imports)]

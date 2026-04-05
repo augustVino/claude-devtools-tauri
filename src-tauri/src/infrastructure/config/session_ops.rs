@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 
-use crate::error::AppError;
 use crate::types::{HiddenSession, PinnedSession};
 
 impl super::ConfigManager {

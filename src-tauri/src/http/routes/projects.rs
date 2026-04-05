@@ -4,7 +4,6 @@ use axum::{Json, extract::{Path, State}, http::StatusCode};
 
 use crate::commands::guards;
 use crate::http::state::HttpState;
-use crate::services::ProjectService;
 use crate::types::domain::{Project, RepositoryGroup, Session};
 
 use super::error_json;

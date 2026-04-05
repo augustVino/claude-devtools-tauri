@@ -12,17 +12,17 @@ mod types;             // ConnectRequest / RawConnection / ConnectedBundle
 pub use client_handler::SshClientHandler;
 pub use types::{ConnectRequest, ConnectedBundle, RawConnection};
 
+use crate::infrastructure::ssh_config_parser::SshConfigParser;
+
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::{broadcast, RwLock, watch};
 
 use crate::infrastructure::fs_provider::FsProvider;
-use crate::infrastructure::ssh_auth;
-use crate::infrastructure::ssh_config_parser::SshConfigParser;
-use crate::infrastructure::ssh_fs_provider::SshFsProvider;
+#[allow(unused_imports)]
 use crate::types::ssh::{
-    SshAuthMethod, SshConfigHostEntry, SshConnectionConfig, SshConnectionStatus, SshTestResult,
+    SshAuthMethod, SshConfigHostEntry, SshConnectionConfig, SshConnectionStatus,
 };
 #[cfg(test)]
 use crate::types::ssh::SshConnectionState;
@@ -144,7 +144,6 @@ impl SshConnectionManager {
 
                 // 14.5. Start health monitor
                 {
-                    let host = bundle.merged_config.host.clone();
                     tokio::spawn(async move {
                         let mut stop_rx = monitor_stop_rx;
                         let sftp = monitor_sftp;
@@ -215,7 +214,7 @@ impl SshConnectionManager {
                             conn.take()
                         };
 
-                        if let Some(mut c) = taken {
+                        if let Some(c) = taken {
                             let _ = c.fs_provider.dispose_async().await;
                             let _ = c
                                 .session
@@ -260,7 +259,7 @@ impl SshConnectionManager {
 
         let status = SshConnectionStatus::disconnected();
 
-        if let Some(mut connection) = taken {
+        if let Some(connection) = taken {
             // Signal monitor to stop (no-op if already exited)
             let _ = connection.monitor_stop.send(true);
 
@@ -310,6 +309,7 @@ impl SshConnectionManager {
     /// Get the remote projects path from the current connection.
     ///
     /// Returns `None` if not connected.
+    #[allow(dead_code)]
     pub async fn get_remote_projects_path(&self) -> Option<String> {
         let conn = self.connection.read().await;
         conn.as_ref()
@@ -331,6 +331,7 @@ impl SshConnectionManager {
     /// Returns `None` if not connected. Unlike `get_active_state().host`,
     /// this reads from the stored config (not the status snapshot),
     /// so it's available even during teardown.
+    #[allow(dead_code)]
     pub async fn get_connected_host(&self) -> Option<String> {
         let conn = self.connection.read().await;
         conn.as_ref().map(|c| c.config.host.clone())

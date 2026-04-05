@@ -9,10 +9,9 @@
 use crate::infrastructure::fs_provider::{FsProvider, LocalFsProvider};
 use crate::types::domain::{Project, Session, SessionMetadataLevel};
 use crate::utils::content_sanitizer::{
-    extract_command_display, sanitize_display_content, is_command_output_content, is_command_content,
+    extract_command_display, is_command_output_content, sanitize_display_content,
 };
 use crate::utils::path_decoder;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -78,16 +77,19 @@ impl ProjectScanner {
     }
 
     /// Get the projects directory path.
+    #[allow(dead_code)]
     pub fn get_projects_dir(&self) -> &Path {
         &self.projects_dir
     }
 
     /// Get the todos directory path.
+    #[allow(dead_code)]
     pub fn get_todos_dir(&self) -> &Path {
         &self.todos_dir
     }
 
     /// Check if the projects directory exists.
+    #[allow(dead_code)]
     pub fn projects_dir_exists(&self) -> bool {
         self.fs_provider
             .exists(&self.projects_dir)
@@ -180,8 +182,7 @@ impl ProjectScanner {
             // Extract cwd from the first session file that has one
             if first_cwd.is_none() {
                 let entry_path = project_path.join(&session_file.name);
-                let preview = self.extract_session_preview(&entry_path, session_file.mtime_ms);
-                if let Some(cwd) = preview.cwd {
+                if let Some(cwd) = self.extract_session_preview(&entry_path, session_file.mtime_ms).cwd {
                     first_cwd = Some(cwd);
                 }
             }
@@ -202,6 +203,7 @@ impl ProjectScanner {
     }
 
     /// Get a specific project by ID.
+    #[allow(dead_code)]
     pub fn get_project(&self, project_id: &str) -> Option<Project> {
         let base_dir = path_decoder::extract_base_dir(project_id);
         self.scan_project(&base_dir).into_iter().find(|p| p.id == project_id)
@@ -566,6 +568,7 @@ impl ProjectScanner {
     }
 
     /// Get the path to a session file.
+    #[allow(dead_code)]
     pub fn get_session_path(&self, project_id: &str, session_id: &str) -> PathBuf {
         let base_dir = path_decoder::extract_base_dir(project_id);
         self.projects_dir.join(&base_dir).join(format!("{}.jsonl", session_id))

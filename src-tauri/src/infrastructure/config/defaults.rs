@@ -1,6 +1,6 @@
 //! 默认配置构造函数和常量。
 
-use crate::types::*;
+use crate::types::config::{AppConfig, DisplayConfig, GeneralConfig, NotificationConfig, SessionConfig};
 
 /// 配置文件名
 pub(crate) const CONFIG_FILENAME: &str = "claude-devtools-config.json";

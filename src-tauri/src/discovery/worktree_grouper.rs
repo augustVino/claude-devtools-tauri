@@ -6,11 +6,12 @@
 //! - Sort worktrees by main first, then by most recent activity
 
 use crate::parsing::git_identity::GitIdentityResolver;
-use crate::types::domain::{Project, RepositoryGroup, RepositoryIdentity, Worktree, WorktreeSource};
+use crate::types::domain::{Project, RepositoryGroup, RepositoryIdentity, Worktree};
 use std::path::PathBuf;
 
 /// WorktreeGrouper provides methods for grouping projects by git repository.
 pub struct WorktreeGrouper {
+    #[allow(dead_code)]
     projects_dir: PathBuf,
     git_resolver: GitIdentityResolver,
 }
@@ -157,6 +158,7 @@ impl WorktreeGrouper {
     }
 
     /// Get worktree project ID (same as worktree ID).
+    #[allow(dead_code)]
     pub fn get_worktree_project_id(&self, worktree_id: &str) -> String {
         worktree_id.to_string()
     }

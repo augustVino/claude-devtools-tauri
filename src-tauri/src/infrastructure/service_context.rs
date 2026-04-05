@@ -10,7 +10,6 @@ use crate::discovery::{ProjectScanner, SessionSearcher, SubagentResolver};
 use crate::infrastructure::DataCache;
 use crate::infrastructure::file_watcher::FileWatcher;
 use crate::infrastructure::fs_provider::FsProvider;
-use tauri::Manager;
 
 /// 服务上下文配置。
 #[derive(Clone)]
@@ -18,6 +17,7 @@ pub struct ServiceContextConfig {
     pub id: String,
     pub context_type: ContextType,
     pub projects_dir: PathBuf,
+    #[allow(dead_code)]
     pub todos_dir: PathBuf,
     pub fs_provider: Arc<dyn FsProvider>,
     /// 可选的共享缓存。若提供，与 AppState 共享同一缓存实例，
@@ -41,8 +41,11 @@ pub struct ServiceContext {
     pub todos_dir: PathBuf,
     pub fs_provider: Arc<dyn FsProvider>,
     pub cache: DataCache,
+    #[allow(dead_code)]
     pub project_scanner: ProjectScanner,
+    #[allow(dead_code)]
     pub subagent_resolver: SubagentResolver,
+    #[allow(dead_code)]
     pub session_searcher: Arc<Mutex<SessionSearcher>>,
     pub file_watcher: Arc<Mutex<FileWatcher>>,
     pub todo_watcher: Arc<Mutex<FileWatcher>>,

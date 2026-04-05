@@ -90,16 +90,19 @@ pub fn extract_session_id(filename: &str) -> String {
 }
 
 /// 构建会话文件路径：`{claude_base}/projects/{project_id}/{session_id}.jsonl`。
+#[allow(dead_code)]
 pub fn build_session_path(claude_base: &str, project_id: &str, session_id: &str) -> PathBuf {
     PathBuf::from(claude_base).join("projects").join(extract_base_dir(project_id)).join(format!("{session_id}.jsonl"))
 }
 
 /// 构建子 Agent 目录路径：`{claude_base}/projects/{project_id}/{session_id}/subagents`。
+#[allow(dead_code)]
 pub fn build_subagents_path(claude_base: &str, project_id: &str, session_id: &str) -> PathBuf {
     PathBuf::from(claude_base).join("projects").join(extract_base_dir(project_id)).join(session_id).join("subagents")
 }
 
 /// 构建待办事项文件路径：`{claude_base}/todos/{session_id}.json`。
+#[allow(dead_code)]
 pub fn build_todo_path(claude_base: &str, session_id: &str) -> PathBuf {
     PathBuf::from(claude_base).join("todos").join(format!("{session_id}.json"))
 }
@@ -136,6 +139,7 @@ pub fn get_todos_base_path() -> PathBuf {
 pub fn is_subagent_file(path: &str) -> bool { path.contains("/subagents/") }
 
 /// 从 `~/.claude/projects/` 下的相对路径中提取项目 ID。
+#[allow(dead_code)]
 pub fn extract_project_id_from_path(relative_path: &str) -> Option<String> {
     let stripped = relative_path.strip_prefix("projects/")?;
     Some(stripped[..stripped.find('/')?].to_string())

@@ -9,8 +9,10 @@ use std::thread;
 use std::time::Duration;
 
 /// 默认最大重试次数（不含首次尝试）
+#[allow(dead_code)]
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
 /// 默认首次重试延迟（毫秒），线性递增
+#[allow(dead_code)]
 pub const DEFAULT_BASE_DELAY_MS: u64 = 75;
 
 /// 执行带瞬态错误重试的操作。

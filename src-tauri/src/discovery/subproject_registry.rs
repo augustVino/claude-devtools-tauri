@@ -8,7 +8,9 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 struct SubprojectEntry {
+    #[allow(dead_code)]
     base_dir: String,
+    #[allow(dead_code)]
     cwd: String,
     session_ids: HashSet<String>,
 }
@@ -18,6 +20,7 @@ pub struct SubprojectRegistry {
 }
 
 impl SubprojectRegistry {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
@@ -25,6 +28,7 @@ impl SubprojectRegistry {
     }
 
     /// Register a subproject and return its composite ID.
+    #[allow(dead_code)]
     pub fn register(
         &mut self,
         base_dir: &str,
@@ -45,6 +49,7 @@ impl SubprojectRegistry {
     }
 
     /// Check if a project ID is a composite (sub-split) ID.
+    #[allow(dead_code)]
     pub fn is_composite(&self, project_id: &str) -> bool {
         project_id.contains("::")
     }
@@ -55,11 +60,13 @@ impl SubprojectRegistry {
     }
 
     /// Get the cwd for a composite project ID.
+    #[allow(dead_code)]
     pub fn get_cwd(&self, project_id: &str) -> Option<&str> {
         self.entries.get(project_id).map(|e| e.cwd.as_str())
     }
 
     /// Clear all entries (called on each full re-scan).
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.entries.clear();
     }

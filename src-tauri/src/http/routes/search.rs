@@ -4,7 +4,6 @@ use axum::{Json, extract::{Path, State}, http::StatusCode};
 
 use crate::commands::guards;
 use crate::http::state::HttpState;
-use crate::services::SearchService;
 use crate::types::domain::{FindSessionByIdResult, FindSessionsByPartialIdResult, SearchSessionsResult};
 
 use super::error_json;

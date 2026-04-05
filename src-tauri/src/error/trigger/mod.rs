@@ -19,6 +19,7 @@ pub mod token_threshold_checker;
 // =============================================================================
 
 // common
+#[allow(unused_imports)]
 pub use common::{parse_timestamp_to_ms, truncate_content};
 
 // repository_scope
