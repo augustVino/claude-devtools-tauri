@@ -22,7 +22,6 @@ pub enum AppError {
 
     /// SSH/SFTP 错误
     #[error("SSH/SFTP error: {0}")]
-    #[allow(dead_code)]
     Ssh(String),
 
     /// 解析错误（JSONL 解析失败等）
@@ -35,16 +34,51 @@ pub enum AppError {
 
     /// 内部错误（不应发生的逻辑错误）
     #[error("Internal error: {0}")]
-    #[allow(dead_code)]
     Internal(String),
+
+    /// 锁错误（Mutex/RwLock PoisonError）
+    #[error("Lock error: {0}")]
+    LockError(String),
+
+    /// 任务取消（tokio::task::JoinError）
+    #[error("Task cancelled: {0}")]
+    Cancelled(String),
+
+    /// 序列化/反序列化错误（serde_json）
+    #[error("Serialization error: {0}")]
+    Serialization(String),
+
+    /// 文件操作错误（FsProvider 子阶段使用）
+    #[error("File operation failed: {0}")]
+    FileOp(String),
 }
 
 impl AppError {
     /// 将 AppError 转换为 Tauri command 兼容的 String 格式。
     /// 用于 Command 层边界：`.map_err(AppError::to_string)`
-    #[allow(dead_code)]
     pub fn into_tauri_string(self) -> String {
         self.to_string()
+    }
+}
+
+// serde_json::Error → AppError::Serialization
+impl From<serde_json::Error> for AppError {
+    fn from(e: serde_json::Error) -> Self {
+        AppError::Serialization(e.to_string())
+    }
+}
+
+// tokio JoinError → AppError::Cancelled
+impl From<tokio::task::JoinError> for AppError {
+    fn from(e: tokio::task::JoinError) -> Self {
+        AppError::Cancelled(e.to_string())
+    }
+}
+
+// Mutex PoisonError → AppError::LockError
+impl<T> From<std::sync::PoisonError<T>> for AppError {
+    fn from(e: std::sync::PoisonError<T>) -> Self {
+        AppError::LockError(format!("mutex poisoned: {}", e))
     }
 }
 
@@ -72,5 +106,23 @@ mod tests {
     fn test_into_tauri_string() {
         let err = AppError::InvalidInput("bad id".into());
         assert_eq!(err.into_tauri_string(), "Invalid input: bad id");
+    }
+
+    #[test]
+    fn test_serialization_from_json_error() {
+        let err = AppError::from(serde_json::from_str::<serde_json::Value>("invalid").unwrap_err());
+        assert!(err.to_string().contains("Serialization error"));
+    }
+
+    #[test]
+    fn test_cancelled_format() {
+        let err = AppError::Cancelled("task cancelled".into());
+        assert_eq!(err.to_string(), "Task cancelled: task cancelled");
+    }
+
+    #[test]
+    fn test_lock_error_format() {
+        let err = AppError::LockError("mutex poisoned".into());
+        assert_eq!(err.to_string(), "Lock error: mutex poisoned");
     }
 }
