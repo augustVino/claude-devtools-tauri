@@ -52,19 +52,20 @@ impl ConfigManager {
     }
 
     /// 初始化：从磁盘加载配置并与默认值深度合并。
-    pub async fn initialize(&self) -> Result<(), String> {
+    pub async fn initialize(&self) -> Result<(), AppError> {
         let file_existed = self.config_path.exists();
-        let mut loaded = self.load_config().await?;
-        loaded.notifications.triggers = crate::infrastructure::trigger_manager::TriggerManager::merge_triggers(
-            loaded.notifications.triggers,
+        let loaded = self.load_config().await?;
+        let mut merged = loaded;
+        merged.notifications.triggers = crate::infrastructure::trigger_manager::TriggerManager::merge_triggers(
+            merged.notifications.triggers,
             &crate::infrastructure::trigger_manager::default_triggers(),
         );
         {
             let mut config = self.config.write().await;
-            *config = loaded;
+            *config = merged;
         }
         if !file_existed {
-            self.persist().await?;
+            self.persist_inner().await?;
             info!("Created default config file at {:?}", self.config_path);
         }
         Ok(())
@@ -79,16 +80,17 @@ impl ConfigManager {
     }
 
     /// 分区更新配置。支持六个分区，含字段级校验和 claudeRootPath 规范化。（现为 async）
-    pub async fn update_config(&self, section: &str, mut data: serde_json::Value) -> Result<AppConfig, String> {
+    pub async fn update_config(&self, section: &str, mut data: serde_json::Value) -> Result<AppConfig, AppError> {
         let merged: AppConfig = {
             let mut config = self.config.write().await;
             let current_json = serde_json::to_value(&*config)
-                .map_err(|e| format!("failed to serialize current config: {e}"))?;
+                .map_err(|e| AppError::Config(format!("failed to serialize current config: {e}")))?;
             let valid_sections = ["notifications", "general", "display", "sessions", "ssh", "httpServer"];
             if !valid_sections.contains(&section) {
-                return Err(format!("unknown config section: {section}"));
+                return Err(AppError::InvalidInput(format!("unknown config section: {section}")));
             }
-            config_validator::validate_update_payload(section, &data)?;
+            config_validator::validate_update_payload(section, &data)
+                .map_err(|e| AppError::InvalidInput(e))?;  // R7 FIX: explicit map_err for String->AppError
             if section == "general" {
                 if let Some(obj) = data.as_object_mut() {
                     if let Some(v) = obj.get_mut("claudeRootPath") {
@@ -104,22 +106,22 @@ impl ConfigManager {
             *config = merged.clone();
             merged
         };
-        self.persist().await?;
+        self.persist_inner().await?;
         if section == "general" { crate::utils::set_claude_root_override(merged.general.claude_root_path.clone()); }
         Ok(merged)
     }
 
     // ========== 持久化（内联，逻辑简单）==========
 
-    async fn load_config(&self) -> Result<AppConfig, String> {
+    async fn load_config(&self) -> Result<AppConfig, AppError> {
         if !self.config_path.exists() {
             info!("No config file found at {:?}, using defaults", self.config_path);
             return Ok(default_app_config());
         }
         let content = fs::read_to_string(&self.config_path).await
-            .map_err(|e| format!("failed to read config file: {e}"))?;
+            .map_err(|e| AppError::Io(e))?;
         let parsed: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| format!("failed to parse config JSON: {e}"))?;
+            .map_err(|e| AppError::Parse(format!("failed to parse config JSON: {e}")))?;
         merge_with_defaults(&parsed)
     }
 
@@ -134,7 +136,6 @@ impl ConfigManager {
         Ok(())
     }
 
-    async fn persist(&self) -> Result<(), String> { self.persist_inner().await.map_err(|e| e.to_string()) }
 }
 
 #[cfg(test)]
@@ -142,8 +143,8 @@ mod tests;
 
 // ========== 委托到 config_validator 的薄封装 ==========
 
-fn merge_with_defaults(loaded: &serde_json::Value) -> Result<AppConfig, String> {
+fn merge_with_defaults(loaded: &serde_json::Value) -> Result<AppConfig, AppError> {
     let defaults = defaults::default_config_json();
     let merged = config_validator::json_merge(&defaults, loaded);
-    serde_json::from_value(merged).map_err(|e| format!("failed to deserialize merged config: {e}"))
+    serde_json::from_value(merged).map_err(|e| AppError::Parse(format!("failed to deserialize merged config: {e}")))
 }

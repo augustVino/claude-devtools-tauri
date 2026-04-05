@@ -163,7 +163,7 @@ impl NotificationManager {
                 return false;
             }
             // 暂停已过期 — 清除暂停状态
-            self.config_manager.clear_snooze().await;
+            let _ = self.config_manager.clear_snooze().await;  // explicitly discard Result
             return true;
         }
 

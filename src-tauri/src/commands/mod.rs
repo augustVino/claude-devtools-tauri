@@ -57,5 +57,6 @@ impl AppState {
     /// 初始化应用状态，包括异步加载配置文件。
     pub async fn initialize(&self) -> Result<(), String> {
         self.config_manager.initialize().await
+            .map_err(|e| e.to_string())
     }
 }

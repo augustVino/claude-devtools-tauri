@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::error::AppError;
 use crate::infrastructure::trigger_manager::TriggerManager;
 use crate::types::config::NotificationTrigger;
 
@@ -17,59 +18,59 @@ impl super::ConfigManager {
         self.get_triggers().await.into_iter().filter(|t| t.enabled).collect()
     }
 
-    /// 添加新的通知触发器。若 ID 已存在则返回错误。
-    pub async fn add_trigger(&self, trigger: NotificationTrigger) -> Result<crate::types::AppConfig, String> {
+    /// 添加新的通知触发器。若 ID 已存在或校验失败则返回错误。
+    ///
+    /// **保持直接写锁模式**（与 update_trigger/remove_trigger 一致）。
+    pub async fn add_trigger(&self, trigger: NotificationTrigger) -> Result<crate::types::AppConfig, AppError> {
+        // Phase 1: 校验（无锁，快速失败）
         let validation = TriggerManager::validate_trigger_only(&trigger);
-        if !validation.valid { return Err(format!("Invalid trigger: {}", validation.errors.join(", "))); }
+        if !validation.valid {
+            return Err(AppError::InvalidInput(format!("Invalid trigger: {}", validation.errors.join(", "))));
+        }
 
+        // Phase 2: 写入（直接写锁，原子操作）
         let mut config = self.config.write().await;
 
         if config.notifications.triggers.iter().any(|t| t.id == trigger.id) {
-            return Err(format!("Trigger with ID '{}' already exists", trigger.id));
+            return Err(AppError::InvalidInput(format!("Trigger with ID '{}' already exists", trigger.id)));
         }
 
         config.notifications.triggers.push(trigger);
-        drop(config); self.persist().await?; Ok(self.get_config().await)
+        drop(config);
+        self.persist_inner().await?;
+        Ok(self.get_config().await)
     }
 
     /// 根据 ID 更新已有的通知触发器。
     ///
-    /// **委托给 TriggerManager::update()** 以复用 apply_updates + should_infer_mode/infer_mode + validate。
-    /// 消除原先 84 行逐字段手动更新的重复代码。
-    ///
-    /// 行为变更说明：委托后引入 infer_mode 行为（当 updates 中不含 mode 字段时自动推断），
-    /// 这与 Electron 端行为一致，视为功能修复。
+    /// **保持直接写锁模式**（R1 修正），避免两阶段竞态条件。
     pub async fn update_trigger(
         &self,
         trigger_id: &str,
         updates: serde_json::Value,
-    ) -> Result<crate::types::AppConfig, String> {
+    ) -> Result<crate::types::AppConfig, AppError> {
         let mut config = self.config.write().await;
 
         let current_triggers = config.notifications.triggers.clone();
         let no_op = Arc::new(|| ());
         let mut tm = TriggerManager::new(current_triggers, no_op);
 
-        // 委托：内部执行 apply_updates + should_infer_mode/infer_mode + validate
-        let updated_triggers = tm.update(trigger_id, updates).map_err(|e| e)?;
+        let updated_triggers = tm.update(trigger_id, updates)
+            .map_err(|e| AppError::Config(e))?;
 
         config.notifications.triggers = updated_triggers;
-        drop(config); self.persist().await?; Ok(self.get_config().await)
+        drop(config);
+        self.persist_inner().await?;
+        Ok(self.get_config().await)
     }
 
-    /// 根据 ID 移除通知触发器。未找到则返回错误。
-    ///
-    /// **保持手动实现**，不委托给 TriggerManager::remove()。
-    /// 原因：当前实现包含内置守卫逻辑（检查 is_builtin + 返回业务错误消息），
-    /// 与 TriggerManager::remove() 的语义不同（后者仅检查 builtin 标志返回不同错误文本）。
-    /// 手动实现仅 ~26 行，委托收益不足以抵消语义差异风险。
-    pub async fn remove_trigger(&self, trigger_id: &str) -> Result<crate::types::AppConfig, String> {
+    /// 根据 ID 移除通知触发器。内置触发器或未找到则返回错误。
+    pub async fn remove_trigger(&self, trigger_id: &str) -> Result<crate::types::AppConfig, AppError> {
         let mut config = self.config.write().await;
 
-        // Guard: builtin triggers cannot be removed, only disabled
         if let Some(trigger) = config.notifications.triggers.iter().find(|t| t.id == trigger_id) {
             if trigger.is_builtin.unwrap_or(false) {
-                return Err("Cannot remove built-in triggers. Disable them instead.".into());
+                return Err(AppError::InvalidInput("Cannot remove built-in triggers. Disable them instead.".into()));
             }
         }
 
@@ -77,9 +78,11 @@ impl super::ConfigManager {
         config.notifications.triggers.retain(|t| t.id != trigger_id);
 
         if config.notifications.triggers.len() == len_before {
-            return Err(format!("Trigger '{trigger_id}' not found"));
+            return Err(AppError::NotFound(format!("Trigger '{trigger_id}' not found")));
         }
 
-        drop(config); self.persist().await?; Ok(self.get_config().await)
+        drop(config);
+        self.persist_inner().await?;
+        Ok(self.get_config().await)
     }
 }

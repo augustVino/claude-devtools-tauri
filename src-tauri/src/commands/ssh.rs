@@ -301,7 +301,8 @@ pub async fn ssh_save_last_connection(
             "privateKeyPath": connection.private_key_path,
         }
     });
-    config_manager.update_config("ssh", connection_value).await?;
+    config_manager.update_config("ssh", connection_value).await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
