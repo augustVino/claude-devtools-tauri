@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use crate::analysis::ChunkBuilder;
 use crate::discovery::subagent_resolver::SubagentResolver;
+use crate::error::AppError;
 use crate::infrastructure::{
     ConfigManager, DataCache,
     fs_provider::FsProvider,
@@ -262,7 +263,7 @@ impl SessionService {
     /// 获取指定项目下的所有会话列表。
     ///
     /// 扫描项目目录下的 `.jsonl` 文件，构建会话元数据，并按文件修改时间降序排列。
-    pub async fn get_sessions(&self, project_id: &str) -> Result<Vec<Session>, String> {
+    pub async fn get_sessions(&self, project_id: &str) -> Result<Vec<Session>, AppError> {
         let project_dir = self.project_dir(project_id);
 
         if !project_dir.exists() {
@@ -277,8 +278,7 @@ impl SessionService {
 
         let mut file_entries = vec![];
         let mut entries = tokio::fs::read_dir(&project_dir)
-            .await
-            .map_err(|e| e.to_string())?;
+            .await?;
 
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
@@ -333,7 +333,7 @@ impl SessionService {
         cursor: Option<&str>,
         limit: Option<u32>,
         options: Option<SessionsPaginationOptions>,
-    ) -> Result<PaginatedSessionsResult, String> {
+    ) -> Result<PaginatedSessionsResult, AppError> {
         let page_limit = limit.unwrap_or(20).min(200).max(1) as usize;
         let all_sessions = self.project_service.list_sessions(project_id);
 
@@ -382,7 +382,7 @@ impl SessionService {
         &self,
         project_id: &str,
         session_ids: &[String],
-    ) -> Result<Vec<Session>, String> {
+    ) -> Result<Vec<Session>, AppError> {
         const MAX_SESSION_IDS: usize = 50;
         let id_set: HashSet<String> = session_ids
             .iter()
@@ -417,12 +417,11 @@ impl SessionService {
         &self,
         project_id: &str,
         session_id: &str,
-    ) -> Result<Option<SessionDetail>, String> {
+    ) -> Result<Option<SessionDetail>, AppError> {
         // 缓存查询
         if let Some(cached) = self.cache.get_session(project_id, session_id).await {
-            if let Ok(detail) = serde_json::from_value(cached) {
-                return Ok(Some(detail));
-            }
+            let detail: SessionDetail = serde_json::from_value(cached)?;
+            return Ok(Some(detail));
         }
 
         let session_path = self.session_path(project_id, session_id);
@@ -445,7 +444,7 @@ impl SessionService {
             .set_session(
                 project_id,
                 session_id,
-                serde_json::to_value(&detail).unwrap_or_default(),
+                serde_json::to_value(&detail)?,
             )
             .await;
 
@@ -457,7 +456,7 @@ impl SessionService {
         &self,
         project_id: &str,
         session_id: &str,
-    ) -> Result<Option<SessionMetrics>, String> {
+    ) -> Result<Option<SessionMetrics>, AppError> {
         let session_path = self.session_path(project_id, session_id);
         if !session_path.exists() {
             return Ok(None);
@@ -478,7 +477,7 @@ impl SessionService {
         &self,
         project_id: &str,
         session_id: &str,
-    ) -> Result<Vec<ConversationGroup>, String> {
+    ) -> Result<Vec<ConversationGroup>, AppError> {
         let session_path = self.session_path(project_id, session_id);
         if !session_path.exists() {
             return Ok(vec![]);
@@ -498,7 +497,7 @@ impl SessionService {
         &self,
         project_id: &str,
         session_id: &str,
-    ) -> Result<Option<crate::analysis::waterfall_builder::WaterfallData>, String>
+    ) -> Result<Option<crate::analysis::waterfall_builder::WaterfallData>, AppError>
     {
         let session_path = self.session_path(project_id, session_id);
         if !session_path.exists() {
@@ -532,10 +531,10 @@ impl SessionService {
         &self,
         project_id: &str,
         session_id: &str,
-    ) -> Result<DeleteSessionResult, String> {
+    ) -> Result<DeleteSessionResult, AppError> {
         // Validate UUID
         if uuid::Uuid::parse_str(session_id).is_err() {
-            return Err(format!("Invalid session_id: '{}'", session_id));
+            return Err(AppError::InvalidInput(format!("Invalid session_id: '{}'", session_id)));
         }
 
         let claude_base = get_default_claude_base_path();
