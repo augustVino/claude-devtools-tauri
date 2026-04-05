@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::discovery::SessionSearcher;
+use crate::error::AppError;
 use crate::infrastructure::fs_provider::{FsProvider, LocalFsProvider};
 use crate::types::domain::{
     FindSessionsByPartialIdResult, FindSessionByIdResult, SearchSessionsResult,
@@ -48,7 +49,7 @@ impl SearchService {
         project_id: &str,
         query: &str,
         max_results: u32,
-    ) -> Result<SearchSessionsResult, String> {
+    ) -> Result<SearchSessionsResult, AppError> {
         let max = max_results.min(200).max(1);
 
         if query.trim().is_empty() {
@@ -65,12 +66,11 @@ impl SearchService {
         let pid = project_id.to_string();
         let q = query.to_string();
 
-        tokio::task::spawn_blocking(move || -> Result<SearchSessionsResult, String> {
-            let mut s = searcher.lock().map_err(|e| e.to_string())?;
+        tokio::task::spawn_blocking(move || -> Result<SearchSessionsResult, AppError> {
+            let mut s = searcher.lock()?;
             Ok(s.search_sessions(&pid, &q, max))
         })
-        .await
-        .map_err(|e| format!("search task panicked: {}", e))?
+        .await?
     }
 
     /// 跨所有项目搜索会话（search_all_projects 命令）。
@@ -78,7 +78,7 @@ impl SearchService {
         &self,
         query: &str,
         max_results: u32,
-    ) -> Result<SearchSessionsResult, String> {
+    ) -> Result<SearchSessionsResult, AppError> {
         let max = max_results.min(200).max(1);
 
         if query.trim().is_empty() {
@@ -94,28 +94,26 @@ impl SearchService {
         let searcher = self.searcher.clone();
         let q = query.to_string();
 
-        tokio::task::spawn_blocking(move || -> Result<SearchSessionsResult, String> {
-            let mut s = searcher.lock().map_err(|e| e.to_string())?;
+        tokio::task::spawn_blocking(move || -> Result<SearchSessionsResult, AppError> {
+            let mut s = searcher.lock()?;
             Ok(s.search_all_projects(&q, max))
         })
-        .await
-        .map_err(|e| format!("search_all_projects task panicked: {}", e))?
+        .await?
     }
 
     /// 按 UUID 精确查找会话（find_session_by_id 命令）。
     pub async fn find_session_by_id(
         &self,
         session_id: &str,
-    ) -> Result<FindSessionByIdResult, String> {
+    ) -> Result<FindSessionByIdResult, AppError> {
         let searcher = self.searcher.clone();
         let sid = session_id.to_string();
 
-        tokio::task::spawn_blocking(move || -> Result<FindSessionByIdResult, String> {
-            let mut s = searcher.lock().map_err(|e| e.to_string())?;
+        tokio::task::spawn_blocking(move || -> Result<FindSessionByIdResult, AppError> {
+            let mut s = searcher.lock()?;
             Ok(s.find_session_by_id(&sid))
         })
-        .await
-        .map_err(|e| format!("find_session_by_id task panicked: {}", e))?
+        .await?
     }
 
     /// 按部分 ID 模糊匹配查找会话（find_sessions_by_partial_id 命令）。
@@ -123,7 +121,7 @@ impl SearchService {
         &self,
         fragment: &str,
         max_results: usize,
-    ) -> Result<FindSessionsByPartialIdResult, String> {
+    ) -> Result<FindSessionsByPartialIdResult, AppError> {
         let max = max_results.min(100).max(1);
 
         if fragment.trim().len() < 3 {
@@ -136,17 +134,16 @@ impl SearchService {
         let searcher = self.searcher.clone();
         let frag = fragment.trim().to_string();
 
-        tokio::task::spawn_blocking(move || -> Result<FindSessionsByPartialIdResult, String> {
-            let mut s = searcher.lock().map_err(|e| e.to_string())?;
+        tokio::task::spawn_blocking(move || -> Result<FindSessionsByPartialIdResult, AppError> {
+            let mut s = searcher.lock()?;
             Ok(s.find_sessions_by_partial_id(&frag, max))
         })
-        .await
-        .map_err(|e| format!("find_sessions_by_partial_id task panicked: {}", e))?
+        .await?
     }
 
     /// Rebuild the internal SessionSearcher with new paths (e.g., after claude root change).
-    pub fn rebuild(&self, projects_dir: PathBuf, todos_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Result<(), String> {
-        let mut guard = self.searcher.lock().map_err(|e| format!("Failed to lock searcher: {e}"))?;
+    pub fn rebuild(&self, projects_dir: PathBuf, todos_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Result<(), AppError> {
+        let mut guard = self.searcher.lock()?;
         *guard = SessionSearcher::new(projects_dir, todos_dir, fs_provider, None);
         Ok(())
     }
