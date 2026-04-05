@@ -695,9 +695,9 @@ impl SessionService {
         }
 
         // 11. Clean up pin/hide from ConfigManager
-        self.config_manager
+        let _ = self.config_manager
             .unpin_session(project_id.to_string(), session_id.to_string()).await;
-        self.config_manager
+        let _ = self.config_manager
             .unhide_session(project_id.to_string(), session_id.to_string()).await;
 
         // Invalidate cache
