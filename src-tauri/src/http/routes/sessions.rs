@@ -30,7 +30,7 @@ pub async fn get_sessions(
     let safe_id = guards::validate_project_id(&project_id).map_err(error_json)?;
     state.session_service.get_sessions(&safe_id).await
         .map(Json)
-        .map_err(error_json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 pub async fn get_sessions_paginated(
@@ -47,7 +47,7 @@ pub async fn get_sessions_paginated(
         &safe_id, cursor, Some(page_limit), None,
     ).await
         .map(Json)
-        .map_err(error_json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 /// 请求体：批量获取会话。
@@ -71,7 +71,7 @@ pub async fn get_sessions_by_ids(
 
     state.session_service.get_sessions_by_ids(&safe_id, &ids).await
         .map(Json)
-        .map_err(error_json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 // =============================================================================
@@ -87,7 +87,7 @@ pub async fn get_session_detail(
 
     state.session_service.get_session_detail(&safe_pid, &safe_sid).await
         .map(Json)
-        .map_err(error_json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 pub async fn get_session_metrics(
@@ -99,7 +99,7 @@ pub async fn get_session_metrics(
 
     state.session_service.get_session_metrics(&safe_pid, &safe_sid).await
         .map(Json)
-        .map_err(error_json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 // =============================================================================
@@ -115,7 +115,7 @@ pub async fn get_session_groups(
 
     state.session_service.get_session_groups(&safe_pid, &safe_sid).await
         .map(Json)
-        .map_err(error_json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 pub async fn get_waterfall_data(
@@ -130,5 +130,5 @@ pub async fn get_waterfall_data(
 
     state.session_service.get_waterfall_data(&safe_pid, &safe_sid).await
         .map(Json)
-        .map_err(error_json)
+        .map_err(|e| error_json(e.to_string()))
 }

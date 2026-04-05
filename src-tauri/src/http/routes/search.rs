@@ -30,7 +30,7 @@ pub async fn search_sessions(
 
     state.search_service.search_sessions(&safe_id, &query, max).await
         .map(Json)
-        .map_err(error_json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 /// GET /api/search?q=&maxResults=
@@ -53,7 +53,7 @@ pub async fn search_all_projects(
 
     state.search_service.search_all_projects(&query, max).await
         .map(Json)
-        .map_err(error_json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 /// GET /api/sessions/{session_id}/locate
@@ -64,7 +64,7 @@ pub async fn find_session_by_id(
     let safe_id = guards::validate_session_id(&session_id).map_err(error_json)?;
     state.search_service.find_session_by_id(&safe_id).await
         .map(Json)
-        .map_err(error_json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 /// GET /api/sessions/search-by-id/{fragment}
@@ -84,5 +84,5 @@ pub async fn find_sessions_by_partial_id(
 
     state.search_service.find_sessions_by_partial_id(&frag, max).await
         .map(Json)
-        .map_err(error_json)
+        .map_err(|e| error_json(e.to_string()))
 }

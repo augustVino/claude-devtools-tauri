@@ -135,10 +135,10 @@ pub async fn ssh_connect(
     {
         let mut mgr = state.context_manager.write().await;
 
-        mgr.register_context(ssh_context).map_err(error_json)?;
+        mgr.register_context(ssh_context).map_err(|e| error_json(e.to_string()))?;
 
         // Perform context switch
-        let result = mgr.switch(&ssh_context_id(&host)).map_err(error_json)?;
+        let result = mgr.switch(&ssh_context_id(&host)).map_err(|e| error_json(e.to_string()))?;
         log::info!(
             "SSH connect (HTTP): context switched {} -> {}",
             result.previous_id,
@@ -190,7 +190,7 @@ pub async fn ssh_disconnect(
         {
             let mut mgr = state.context_manager.write().await;
 
-            let result = mgr.switch("local").map_err(error_json)?;
+            let result = mgr.switch("local").map_err(|e| error_json(e.to_string()))?;
             log::info!(
                 "SSH disconnect (HTTP): context switched {} -> {}",
                 result.previous_id,
@@ -224,7 +224,7 @@ pub async fn ssh_disconnect(
             // Destroy SSH context
             mgr.destroy_context(&result.previous_id)
                 .await
-                .map_err(error_json)?;
+                .map_err(|e| error_json(e.to_string()))?;
 
             state.broadcaster.send(BackendEvent::ContextChanged(info));
         }

@@ -49,7 +49,7 @@ pub async fn context_switch(
 
     let mut mgr = state.context_manager.write().await;
     let result = mgr.switch(context_id)
-        .map_err(error_json)?;
+        .map_err(|e| error_json(e.to_string()))?;
 
     // 仅在确实切换了上下文时才 stop/start watcher
     if result.previous_id != result.current_id {

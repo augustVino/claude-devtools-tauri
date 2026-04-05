@@ -418,7 +418,7 @@ impl SessionService {
         project_id: &str,
         session_id: &str,
     ) -> Result<Option<SessionDetail>, AppError> {
-        // 缓存查询
+        // 缓存查询 — 损坏数据应向上传播而非静默降级（缓存来自可信本地文件源）
         if let Some(cached) = self.cache.get_session(project_id, session_id).await {
             let detail: SessionDetail = serde_json::from_value(cached)?;
             return Ok(Some(detail));
