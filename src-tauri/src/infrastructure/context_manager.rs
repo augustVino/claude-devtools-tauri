@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::error::AppError;
+
 #[allow(unused_imports)]
 use crate::infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
 
@@ -55,21 +57,21 @@ impl ContextManager {
         }
     }
 
-    pub fn register_context(&mut self, context: ServiceContext) -> Result<(), String> {
+    pub fn register_context(&mut self, context: ServiceContext) -> Result<(), AppError> {
         let id = context.id.clone();
         if self.contexts.contains_key(&id) {
-            return Err(format!("Context '{}' already registered", id));
+            return Err(AppError::Internal(format!("Context '{}' already registered", id)));
         }
         self.contexts.insert(id, Arc::new(RwLock::new(context)));
         Ok(())
     }
 
-    pub async fn replace_context(&mut self, context_id: &str, replacement: ServiceContext) -> Result<(), String> {
+    pub async fn replace_context(&mut self, context_id: &str, replacement: ServiceContext) -> Result<(), AppError> {
         if replacement.id != context_id {
-            return Err(format!("Replacement ID '{}' does not match '{}'", replacement.id, context_id));
+            return Err(AppError::Internal(format!("Replacement ID '{}' does not match '{}'", replacement.id, context_id)));
         }
         if !self.contexts.contains_key(context_id) {
-            return Err(format!("Context '{}' not found", context_id));
+            return Err(AppError::NotFound(format!("Context '{}' not found", context_id)));
         }
         if let Some(old) = self.contexts.get(context_id) {
             let read_guard = old.read().await;
@@ -83,21 +85,21 @@ impl ContextManager {
         Ok(())
     }
 
-    pub fn switch(&mut self, target_id: &str) -> Result<SwitchResult, String> {
+    pub fn switch(&mut self, target_id: &str) -> Result<SwitchResult, AppError> {
         if !self.contexts.contains_key(target_id) {
-            return Err(format!("Context '{}' not found", target_id));
+            return Err(AppError::NotFound(format!("Context '{}' not found", target_id)));
         }
         // 与 Electron 对齐：切换到已激活的 context 时 no-op 成功
         let previous_id = std::mem::replace(&mut self.active_id, target_id.to_string());
         Ok(SwitchResult { previous_id, current_id: target_id.to_string() })
     }
 
-    pub async fn destroy_context(&mut self, context_id: &str) -> Result<(), String> {
+    pub async fn destroy_context(&mut self, context_id: &str) -> Result<(), AppError> {
         if context_id == "local" {
-            return Err("Cannot destroy the local context".to_string());
+            return Err(AppError::Internal("Cannot destroy the local context".into()));
         }
         let context = self.contexts.remove(context_id)
-            .ok_or_else(|| format!("Context '{}' not found", context_id))?;
+            .ok_or_else(|| AppError::NotFound(format!("Context '{}' not found", context_id)))?;
         {
             let read_guard = context.read().await;
             let mut token_guard = read_guard.watcher_cancel_token.write().await;
@@ -193,8 +195,7 @@ mod tests {
         let mut mgr = ContextManager::new();
         mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
         let result = mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local)));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("already registered"));
+        assert!(matches!(result, Err(AppError::Internal(msg)) if msg.contains("already registered")));
     }
 
     #[tokio::test]
@@ -213,8 +214,7 @@ mod tests {
         let mut mgr = ContextManager::new();
         mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
         let result = mgr.switch("nonexistent");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not found"));
+        assert!(matches!(result, Err(AppError::NotFound(msg)) if msg.contains("not found")));
     }
 
     #[tokio::test]
@@ -246,8 +246,7 @@ mod tests {
         let mut mgr = ContextManager::new();
         mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
         let result = mgr.destroy_context("local").await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Cannot destroy"));
+        assert!(matches!(result, Err(AppError::Internal(msg)) if msg.contains("Cannot destroy")));
     }
 
     #[tokio::test]
@@ -278,6 +277,6 @@ mod tests {
         mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
         let replacement = ServiceContext::new(make_config("wrong-id", ContextType::Local));
         let result = mgr.replace_context("local", replacement).await;
-        assert!(result.is_err());
+        assert!(matches!(result, Err(AppError::Internal(_))));
     }
 }
