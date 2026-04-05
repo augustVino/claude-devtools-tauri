@@ -30,7 +30,7 @@ mod tests {
     async fn test_save_and_load_round_trip() {
         let p = temp_path(); cleanup(&p);
         let m1 = ConfigManager::with_path(p.clone()); m1.initialize().await.unwrap();
-        m1.pin_session("proj".into(), "sess".into()).await;
+        m1.pin_session("proj".into(), "sess".into()).await.unwrap();
         let m2 = ConfigManager::with_path(p.clone()); m2.initialize().await.unwrap();
         assert_eq!(m2.get_config().await.sessions.pinned_sessions["proj"][0].session_id, "sess");
         cleanup(&p);
@@ -40,23 +40,24 @@ mod tests {
     async fn test_add_remove_ignore_regex() {
         let p = temp_path(); let m = ConfigManager::with_path(p.clone());
         assert!(m.add_ignore_regex("test-pat".into()).await.unwrap().notifications.ignored_regex.iter().any(|x| x == "test-pat"));
-        assert!(m.add_ignore_regex("test-pat".into()).await.is_err());
+        // 幂等：重复添加返回 Ok（无变更）
+        assert!(m.add_ignore_regex("test-pat".into()).await.is_ok());
         assert!(m.add_ignore_regex("(?P<bad".into()).await.is_err());
         assert!(m.add_ignore_regex("   ".into()).await.is_err());
-        assert!(!m.remove_ignore_regex("test-pat".into()).await.notifications.ignored_regex.iter().any(|x| x == "test-pat"));
+        assert!(!m.remove_ignore_regex("test-pat".into()).await.unwrap().notifications.ignored_regex.iter().any(|x| x == "test-pat"));
         cleanup(&p);
     }
 
     #[tokio::test]
     async fn test_pin_unpin_session() {
         let p = temp_path(); let m = ConfigManager::with_path(p.clone());
-        let c = m.pin_session("p".into(), "s1".into()).await;
+        let c = m.pin_session("p".into(), "s1".into()).await.unwrap();
         assert_eq!(c.sessions.pinned_sessions["p"][0].session_id, "s1");
-        let c = m.pin_session("p".into(), "s2".into()).await;
+        let c = m.pin_session("p".into(), "s2".into()).await.unwrap();
         assert_eq!(c.sessions.pinned_sessions["p"][0].session_id, "s2");
-        let c = m.pin_session("p".into(), "s1".into()).await;
+        let c = m.pin_session("p".into(), "s1".into()).await.unwrap();
         assert_eq!(c.sessions.pinned_sessions["p"].len(), 2);
-        let c = m.unpin_session("p".into(), "s2".into()).await;
+        let c = m.unpin_session("p".into(), "s2".into()).await.unwrap();
         assert_eq!(c.sessions.pinned_sessions["p"].len(), 1);
         cleanup(&p);
     }
@@ -337,6 +338,83 @@ mod tests {
         let result = m.update_trigger("enum-test", serde_json::json!({"mode": "invalid_mode"})).await.unwrap();
         let updated = result.notifications.triggers.iter().find(|t| t.id == "enum-test").unwrap();
         assert_eq!(updated.mode, crate::types::config::TriggerMode::ErrorStatus, "invalid mode should be silently ignored");
+        cleanup(&p);
+    }
+
+    // ===== AppError 错误路径测试 =====
+
+    #[tokio::test]
+    async fn test_add_ignore_regex_empty_pattern_returns_error() {
+        let p = temp_path();
+        let m = ConfigManager::with_path(p.clone());
+        m.initialize().await.unwrap();
+        let result = m.add_ignore_regex("".to_string()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::AppError::InvalidInput(_)));
+        cleanup(&p);
+    }
+
+    #[tokio::test]
+    async fn test_add_ignore_regex_invalid_regex_returns_error() {
+        let p = temp_path();
+        let m = ConfigManager::with_path(p.clone());
+        m.initialize().await.unwrap();
+        let result = m.add_ignore_regex("(?P<bad".to_string()).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), crate::error::AppError::InvalidInput(_)));
+        cleanup(&p);
+    }
+
+    #[tokio::test]
+    async fn test_add_ignore_regex_whitespace_only_returns_error() {
+        let p = temp_path();
+        let m = ConfigManager::with_path(p.clone());
+        m.initialize().await.unwrap();
+        let result = m.add_ignore_regex("   ".to_string()).await;
+        assert!(result.is_err());
+        cleanup(&p);
+    }
+
+    #[tokio::test]
+    async fn test_snooze_persists_and_clears() {
+        let p = temp_path();
+        let m = ConfigManager::with_path(p.clone());
+        m.initialize().await.unwrap();
+
+        // Snooze
+        let c = m.snooze(5).await.unwrap();
+        assert!(c.notifications.snoozed_until.is_some());
+
+        // Clear
+        let c2 = m.clear_snooze().await.unwrap();
+        assert!(c2.notifications.snoozed_until.is_none());
+
+        cleanup(&p);
+    }
+
+    #[tokio::test]
+    async fn test_hide_unhide_session_round_trip() {
+        let p = temp_path();
+        let m = ConfigManager::with_path(p.clone());
+        m.initialize().await.unwrap();
+
+        let c = m.hide_session("proj".into(), "sess1".into()).await.unwrap();
+        assert_eq!(c.sessions.hidden_sessions["proj"].len(), 1);
+
+        let c2 = m.unhide_session("proj".into(), "sess1".into()).await.unwrap();
+        assert!(c2.sessions.hidden_sessions.get("proj").is_none_or(|h| h.is_empty()));
+
+        cleanup(&p);
+    }
+
+    #[tokio::test]
+    async fn test_remove_nonexistent_ignore_regex_returns_ok_unchanged() {
+        let p = temp_path();
+        let m = ConfigManager::with_path(p.clone());
+        m.initialize().await.unwrap();
+        // 移除不存在的 pattern 不应报错，应返回 Ok（无变更）
+        let result = m.remove_ignore_regex("nonexistent".to_string()).await;
+        assert!(result.is_ok());
         cleanup(&p);
     }
 }
