@@ -15,7 +15,7 @@ pnpm lint               # ESLint
 
 # Rust 测试
 cd src-tauri && cargo test                          # 全部测试 (~552)
-cd src-tauri && cargo test -- <module_name>         # 单模块过滤
+cd src-tauri && cargo test -- <module_name>         # 单模块过滤（如 config, ssh_connection）
 cd src-tauri && cargo test -p claude-devtools -- <name>  # 按名称过滤
 
 # 前端测试（vitest + happy-dom）
@@ -31,12 +31,12 @@ npx vitest run -- path/to/test.test.tsx
 - **路径别名**: `@main/*` → `src/main/*`, `@renderer/*` → `src/*`, `@shared/*` → `src/shared/*`
 - **Rust 命令**: snake_case 命名，返回 `Result<T, String>`
 - **双传输层**: 新增 API 时需同时实现 `TauriAPIClient` 和 `HttpAPIClient`（通过 `ElectronAPI` 接口统一契约）
-- **ReDoS 防护**: `trigger_manager.rs` 的正则必须通过 `regex_validation.rs` 检查
+- **ReDoS 防护**: `trigger_manager/` 下的正则必须通过 `regex_validation.rs` 检查
 - **唯一数据源**: 文件系统 (`~/.claude/projects/{hash}/*.jsonl`) 为唯一真实来源
 
 ## 详细指南
 
 | 文档 | 内容 |
 |------|------|
-| [Architecture](.claude/architecture.md) | 后端/前端模块结构、数据流、多上下文架构、FsProvider trait、三层类型系统、设计模式 |
-| [Development](.claude/development.md) | macOS 特性、Config 深度合并、文件监听器、测试模式、其他编码约定 |
+| [Architecture](.claude/architecture.md) | 后端/前端模块结构、数据流、多上下文架构、FsProvider trait、三层类型系统、设计模式、非显而易见的实现细节 |
+| [Development](.claude/development.md) | macOS 特性、Config 深度合并、文件监听器、测试模式、编码约定 |

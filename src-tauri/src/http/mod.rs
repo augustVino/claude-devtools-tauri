@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 use axum::Router;
 use tower_http::services::{ServeDir, ServeFile};
+use tower_http::ServiceExt as _;
 
 use crate::http::state::HttpState;
 
@@ -24,8 +25,11 @@ pub fn build_router(http_state: HttpState, dist_dir: PathBuf) -> Router {
     let api_routes = routes::build_routes();
 
     let index_html = dist_dir.join("index.html");
-    let static_files = ServeDir::new(&dist_dir)
-        .not_found_service(ServeFile::new(index_html));
+    let serve_dir = ServeDir::new(&dist_dir).not_found_service(ServeFile::new(index_html));
+
+    // Axum 0.8 + tower-http 0.6: ServeDir 返回 ServeFileSystemResponseBody，
+    // 与 Router 期望的 axum::body::Body 不兼容。需通过 map_response_body 映射。
+    let static_files = serve_dir.map_response_body(axum::body::Body::new);
 
     Router::new()
         .merge(api_routes)
