@@ -122,10 +122,10 @@ pub async fn ssh_connect(
     {
         let mut mgr = context_manager.write().await;
 
-        mgr.register_context(ssh_context)?;
+        mgr.register_context(ssh_context).map_err(|e| e.into_tauri_string())?;
 
         // Perform context switch
-        let result = mgr.switch(&ssh_context_id(&host))?;
+        let result = mgr.switch(&ssh_context_id(&host)).map_err(|e| e.into_tauri_string())?;
         log::info!(
             "SSH connect: context switched {} -> {}",
             result.previous_id,
@@ -200,7 +200,7 @@ pub async fn ssh_disconnect(
     {
         let mut mgr = context_manager.write().await;
 
-        let result = mgr.switch("local")?;
+        let result = mgr.switch("local").map_err(|e| e.into_tauri_string())?;
         log::info!(
             "SSH disconnect: context switched {} -> {}",
             result.previous_id,
@@ -233,7 +233,7 @@ pub async fn ssh_disconnect(
         let info = ContextInfo::from_context(&*ctx_arc.read().await);
 
         // Destroy SSH context
-        mgr.destroy_context(&result.previous_id).await?;
+        mgr.destroy_context(&result.previous_id).await.map_err(|e| e.into_tauri_string())?;
         drop(mgr);
 
         events::emit_context_changed(&app, &info);

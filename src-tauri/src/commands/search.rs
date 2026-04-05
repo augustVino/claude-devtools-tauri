@@ -15,6 +15,7 @@ pub async fn search_sessions(
 ) -> Result<SearchSessionsResult, String> {
     let max = max_results.unwrap_or(50).min(200).max(1);
     service.search_sessions(&project_id, &query, max).await
+        .map_err(|e| e.into_tauri_string())
 }
 
 #[tauri::command]
@@ -25,6 +26,7 @@ pub async fn search_all_projects(
 ) -> Result<SearchSessionsResult, String> {
     let max = max_results.unwrap_or(50).min(200).max(1);
     service.search_all_projects(&query, max).await
+        .map_err(|e| e.into_tauri_string())
 }
 
 #[tauri::command]
@@ -34,6 +36,7 @@ pub async fn find_session_by_id(
 ) -> Result<FindSessionByIdResult, String> {
     let safe_id = crate::commands::guards::validate_session_id(&session_id)?;
     service.find_session_by_id(&safe_id).await
+        .map_err(|e| e.into_tauri_string())
 }
 
 #[tauri::command]
@@ -44,5 +47,6 @@ pub async fn find_sessions_by_partial_id(
 ) -> Result<FindSessionsByPartialIdResult, String> {
     let max = max_results.unwrap_or(20).min(100).max(1);
     service.find_sessions_by_partial_id(&fragment, max).await
+        .map_err(|e| e.into_tauri_string())
 }
 

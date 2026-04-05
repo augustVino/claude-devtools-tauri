@@ -32,7 +32,8 @@ pub async fn context_switch(
     context_id: String,
 ) -> Result<SwitchResponse, String> {
     let mut mgr = manager.write().await;
-    let result = mgr.switch(&context_id)?;
+    let result = mgr.switch(&context_id)
+        .map_err(|e| e.into_tauri_string())?;
     log::info!("Context switched: {} -> {}", result.previous_id, result.current_id);
 
     // 仅在确实切换了上下文时才 stop/start watcher

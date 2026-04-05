@@ -57,7 +57,8 @@ pub async fn rebuild_local_context(
     }
 
     // Update SearchService internal searcher with new paths
-    search_service.rebuild(projects_dir, todos_dir, fs_provider)?;
+    search_service.rebuild(projects_dir, todos_dir, fs_provider)
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }

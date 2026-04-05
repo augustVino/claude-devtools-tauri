@@ -24,6 +24,7 @@ pub async fn get_sessions(
     project_id: String,
 ) -> Result<Vec<Session>, String> {
     service.get_sessions(&project_id).await
+        .map_err(|e| e.into_tauri_string())
 }
 
 #[command]
@@ -35,6 +36,7 @@ pub async fn get_sessions_paginated(
     options: Option<SessionsPaginationOptions>,
 ) -> Result<PaginatedSessionsResult, String> {
     service.get_sessions_paginated(&project_id, cursor.as_deref(), limit, options).await
+        .map_err(|e| e.into_tauri_string())
 }
 
 #[command]
@@ -44,6 +46,7 @@ pub async fn get_sessions_by_ids(
     session_ids: Vec<String>,
 ) -> Result<Vec<Session>, String> {
     service.get_sessions_by_ids(&project_id, &session_ids).await
+        .map_err(|e| e.into_tauri_string())
 }
 
 // =============================================================================
@@ -57,6 +60,7 @@ pub async fn get_session_detail(
     session_id: String,
 ) -> Result<Option<SessionDetail>, String> {
     service.get_session_detail(&project_id, &session_id).await
+        .map_err(|e| e.into_tauri_string())
 }
 
 #[command]
@@ -66,6 +70,7 @@ pub async fn get_session_metrics(
     session_id: String,
 ) -> Result<Option<SessionMetrics>, String> {
     service.get_session_metrics(&project_id, &session_id).await
+        .map_err(|e| e.into_tauri_string())
 }
 
 // =============================================================================
@@ -79,6 +84,7 @@ pub async fn get_session_groups(
     session_id: String,
 ) -> Result<Vec<ConversationGroup>, String> {
     service.get_session_groups(&project_id, &session_id).await
+        .map_err(|e| e.into_tauri_string())
 }
 
 #[command]
@@ -88,6 +94,7 @@ pub async fn get_waterfall_data(
     session_id: String,
 ) -> Result<Option<crate::analysis::waterfall_builder::WaterfallData>, String> {
     service.get_waterfall_data(&project_id, &session_id).await
+        .map_err(|e| e.into_tauri_string())
 }
 
 // =============================================================================
@@ -114,6 +121,7 @@ pub async fn delete_session(
     }
 
     service.delete_session(&project_id, &session_id).await
+        .map_err(|e| e.into_tauri_string())
 }
 
 // =============================================================================
