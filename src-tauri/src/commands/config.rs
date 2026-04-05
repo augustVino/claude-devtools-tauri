@@ -35,7 +35,7 @@ pub async fn update_config(
 
     let (result, cache, config_mgr) = {
         let app_state = state.read().await;
-        let result = app_state.config_manager.update_config(&section, data).await?;
+        let result = app_state.config_manager.update_config(&section, data).await.map_err(|e| e.to_string())?;
         (result, app_state.cache.clone(), app_state.config_manager.clone())
     }; // AppState read lock dropped
 
@@ -78,6 +78,7 @@ pub async fn add_ignore_regex(
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
     app_state.config_manager.add_ignore_regex(pattern).await
+        .map_err(|e| e.to_string())
 }
 
 /// 移除指定的通知忽略正则表达式。
@@ -87,7 +88,8 @@ pub async fn remove_ignore_regex(
     pattern: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.remove_ignore_regex(pattern).await)
+    app_state.config_manager.remove_ignore_regex(pattern).await
+        .map_err(|e| e.to_string())
 }
 
 // =============================================================================
@@ -102,7 +104,8 @@ pub async fn pin_session(
     session_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.pin_session(project_id, session_id).await)
+    app_state.config_manager.pin_session(project_id, session_id).await
+        .map_err(|e| e.to_string())
 }
 
 /// 取消置顶指定会话。
@@ -113,7 +116,8 @@ pub async fn unpin_session(
     session_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.unpin_session(project_id, session_id).await)
+    app_state.config_manager.unpin_session(project_id, session_id).await
+        .map_err(|e| e.to_string())
 }
 
 /// 隐藏指定会话。
@@ -124,7 +128,8 @@ pub async fn hide_session(
     session_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.hide_session(project_id, session_id).await)
+    app_state.config_manager.hide_session(project_id, session_id).await
+        .map_err(|e| e.to_string())
 }
 
 /// 取消隐藏指定会话。
@@ -135,7 +140,8 @@ pub async fn unhide_session(
     session_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.unhide_session(project_id, session_id).await)
+    app_state.config_manager.unhide_session(project_id, session_id).await
+        .map_err(|e| e.to_string())
 }
 
 // =============================================================================
@@ -152,13 +158,15 @@ pub async fn snooze(
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
     if minutes == -1 {
-        Ok(app_state.config_manager.snooze_until_tomorrow().await)
+        app_state.config_manager.snooze_until_tomorrow().await
+            .map_err(|e| e.to_string())
     } else if minutes <= 0 {
         Err("Minutes must be a positive number".to_string())
     } else if minutes > 24 * 60 {
         Err("Minutes must be 1440 or less (24 hours)".to_string())
     } else {
-        Ok(app_state.config_manager.snooze(minutes as u32).await)
+        app_state.config_manager.snooze(minutes as u32).await
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -168,7 +176,8 @@ pub async fn clear_snooze(
     state: State<'_, Arc<RwLock<AppState>>>,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.clear_snooze().await)
+    app_state.config_manager.clear_snooze().await
+        .map_err(|e| e.to_string())
 }
 
 // =============================================================================
@@ -183,6 +192,7 @@ pub async fn add_trigger(
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
     app_state.config_manager.add_trigger(trigger).await
+        .map_err(|e| e.to_string())
 }
 
 /// 更新指定通知触发器的配置。
@@ -194,6 +204,7 @@ pub async fn update_trigger(
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
     app_state.config_manager.update_trigger(&trigger_id, updates).await
+        .map_err(|e| e.to_string())
 }
 
 /// 删除指定通知触发器。
@@ -204,6 +215,7 @@ pub async fn remove_trigger(
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
     app_state.config_manager.remove_trigger(&trigger_id).await
+        .map_err(|e| e.to_string())
 }
 
 /// 获取所有通知触发器列表。
@@ -246,7 +258,8 @@ pub async fn add_ignore_repository(
     repository_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.add_ignore_repository(repository_id).await)
+    app_state.config_manager.add_ignore_repository(repository_id).await
+        .map_err(|e| e.to_string())
 }
 
 /// 从忽略列表中移除指定仓库。
@@ -256,7 +269,8 @@ pub async fn remove_ignore_repository(
     repository_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.remove_ignore_repository(repository_id).await)
+    app_state.config_manager.remove_ignore_repository(repository_id).await
+        .map_err(|e| e.to_string())
 }
 
 // =============================================================================
@@ -271,7 +285,8 @@ pub async fn hide_sessions(
     session_ids: Vec<String>,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.hide_sessions(project_id, session_ids).await)
+    app_state.config_manager.hide_sessions(project_id, session_ids).await
+        .map_err(|e| e.to_string())
 }
 
 /// 批量取消隐藏指定会话。
@@ -282,7 +297,8 @@ pub async fn unhide_sessions(
     session_ids: Vec<String>,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    Ok(app_state.config_manager.unhide_sessions(project_id, session_ids).await)
+    app_state.config_manager.unhide_sessions(project_id, session_ids).await
+        .map_err(|e| e.to_string())
 }
 
 // =============================================================================
