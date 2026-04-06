@@ -13,6 +13,7 @@
 //! - [`search_service_trait`] — SearchService + SearchServiceRebuild trait definitions
 //! - [`session_service_trait`] — SessionService trait definition
 //! - [`subagent_service_trait`] — SubagentService trait definition (Phase B-B2)
+//! - [`ssh_service_trait`] — SshService trait definition (Phase B-B2)
 
 pub mod project_service;
 pub mod search_service;
@@ -22,13 +23,17 @@ pub mod search_service_trait;
 pub mod session_service_trait;
 pub mod subagent_service_trait;
 pub mod subagent_service;
+pub mod ssh_service_trait;
+pub mod ssh_service;
 
 // Re-exports: traits take original name, Impl gets suffix
 pub use session_service_trait::SessionService;
 pub use search_service_trait::{SearchService, SearchServiceFull, SearchServiceRebuild};
 pub use project_service_trait::ProjectService;
 pub use subagent_service_trait::SubagentService;
+pub use ssh_service_trait::SshService;
 pub use session_service::SessionServiceImpl;
 pub use search_service::SearchServiceImpl;
 pub use project_service::ProjectServiceImpl;
 pub use subagent_service::SubagentServiceImpl;
+pub use ssh_service::SshServiceImpl;

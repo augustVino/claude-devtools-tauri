@@ -180,6 +180,19 @@ pub fn run() {
       let ssh_manager = Arc::new(RwLock::new(ssh_manager_inner));
       app.manage(ssh_manager.clone());
 
+      // SshService（AppHandle 在 setup 闭包内获取，见下方 .manage() 前的代码）
+      let ssh_service: Arc<dyn services::SshService> = Arc::new(
+          services::SshServiceImpl::new(
+              ssh_manager.clone(),
+              context_manager.clone(),
+              shared_cache.clone(),
+              config_manager.clone(),
+              notification_manager.clone(),
+              app.handle().clone(),  // H3: 构造时存储 AppHandle
+          )
+      );
+      app.manage(ssh_service.clone());
+
       // 启动 SSH 状态事件转发任务
       let app_handle_for_ssh = app.handle().clone();
       let ssh_broadcaster = app_handle_for_ssh.state::<crate::http::sse::SSEBroadcaster>().inner().clone();
