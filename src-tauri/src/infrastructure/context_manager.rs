@@ -43,6 +43,26 @@ pub struct SwitchResult {
     pub current_id: String,
 }
 
+/// Watcher 生命周期操作指令。
+///
+/// 由 `switch_with_watcher_actions` 返回，调用方在持有写锁的异步上下文中
+/// 根据指令执行 async watcher stop/start 操作。
+///
+/// 设计原因：`switch()` 是 sync 方法（只改 active_id 字符串），
+/// 而 `stop_watcher_tasks()` / `spawn_watcher_tasks()` 是 async 方法，
+/// 不能混在同一 `&mut self` 方法体内（RwLockWriteGuard 不允许跨 .await 存活）。
+#[derive(Debug)]
+pub struct WatcherLifecycleActions {
+    /// 是否需要停止旧 context 的 watcher
+    pub should_stop_old: bool,
+    /// 旧 context ID
+    pub old_context_id: String,
+    /// 是否需要启动新 context 的 watcher
+    pub should_start_new: bool,
+    /// 新 context ID
+    pub new_context_id: String,
+}
+
 /// 上下文管理器。
 pub struct ContextManager {
     contexts: HashMap<String, Arc<RwLock<ServiceContext>>>,
@@ -92,6 +112,38 @@ impl ContextManager {
         // 与 Electron 对齐：切换到已激活的 context 时 no-op 成功
         let previous_id = std::mem::replace(&mut self.active_id, target_id.to_string());
         Ok(SwitchResult { previous_id, current_id: target_id.to_string() })
+    }
+
+    /// 执行上下文切换，返回是否需要进行 watcher 生命周期管理。
+    ///
+    /// 此方法是 sync 的（与 `switch()` 一致），只负责切换 active_id 并判断
+    /// 是否需要 watcher 操作。实际的 async watcher stop/start 由调用方根据
+    /// 返回的 `WatcherLifecycleActions` 在合适的异步上下文中执行。
+    ///
+    /// # 返回值
+    ///
+    /// `(SwitchResult, WatcherLifecycleActions)` 元组：
+    /// - `SwitchResult`: 切换结果（previous_id / current_id）
+    /// - `WatcherLifecycleActions`: watcher 操作指令
+    ///
+    /// # 调用方职责
+    ///
+    /// 调用方需：
+    /// 1. 已持有 `context_manager.write()` 锁（通过 RwLockWriteGuard 获得 &mut self）
+    /// 2. 根据 `actions` 在同一写锁作用域内执行 async watcher 操作
+    /// 3. 事件发射（Tauri emit / SSE broadcast）由调用方负责
+    pub fn switch_with_watcher_actions(
+        &mut self,
+        context_id: &str,
+    ) -> Result<(SwitchResult, WatcherLifecycleActions), AppError> {
+        let result = self.switch(context_id)?;
+        let actions = WatcherLifecycleActions {
+            should_stop_old: result.previous_id != result.current_id,
+            old_context_id: result.previous_id.clone(),
+            should_start_new: result.previous_id != result.current_id,
+            new_context_id: result.current_id.clone(),
+        };
+        Ok((result, actions))
     }
 
     pub async fn destroy_context(&mut self, context_id: &str) -> Result<(), AppError> {
@@ -278,5 +330,42 @@ mod tests {
         let replacement = ServiceContext::new(make_config("wrong-id", ContextType::Local));
         let result = mgr.replace_context("local", replacement).await;
         assert!(matches!(result, Err(AppError::Internal(_))));
+    }
+
+    #[tokio::test]
+    async fn test_switch_with_watcher_actions_same_context() {
+        let mut mgr = ContextManager::new();
+        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        let (result, actions) = mgr.switch_with_watcher_actions("local").unwrap();
+        assert_eq!(result.previous_id, "local");
+        assert_eq!(result.current_id, "local");
+        // 切换到相同 context → 不需要 watcher 操作
+        assert!(!actions.should_stop_old);
+        assert!(!actions.should_start_new);
+    }
+
+    #[tokio::test]
+    async fn test_switch_with_watcher_actions_different_context() {
+        let mut mgr = ContextManager::new();
+        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config("ssh-test", ContextType::Ssh))).unwrap();
+        let (_result, actions) = mgr.switch_with_watcher_actions("ssh-test").unwrap();
+        // 切换到不同 context → 需要 stop old + start new
+        assert!(actions.should_stop_old);
+        assert!(actions.should_start_new);
+        assert_eq!(actions.old_context_id, "local");
+        assert_eq!(actions.new_context_id, "ssh-test");
+    }
+
+    #[tokio::test]
+    async fn test_switch_with_watcher_actions_nonexistent_context() {
+        // 错误路径测试 — 切换到不存在的 context 应返回 Err
+        let mut mgr = ContextManager::new();
+        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        let result = mgr.switch_with_watcher_actions("nonexistent");
+        assert!(result.is_err());
+        // Error 应包含上下文信息
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("nonexistent") || err_msg.to_lowercase().contains("not found"));
     }
 }
