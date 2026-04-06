@@ -131,7 +131,8 @@ fn truncate_message(message: &str) -> String {
     if message.len() <= MAX_ERROR_MESSAGE_LENGTH {
         return message.to_string();
     }
-    format!("{}...", &message[..MAX_ERROR_MESSAGE_LENGTH])
+    let end = message.floor_char_boundary(MAX_ERROR_MESSAGE_LENGTH);
+    format!("{}...", &message[..end])
 }
 
 // =============================================================================
