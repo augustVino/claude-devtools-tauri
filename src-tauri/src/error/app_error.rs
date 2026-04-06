@@ -82,6 +82,30 @@ impl<T> From<std::sync::PoisonError<T>> for AppError {
     }
 }
 
+// ── Axum IntoResponse（保持 HTTP 200 约定）──
+//
+// 让 HTTP route handler 可以使用 `Result<T, AppError>` 返回风格，
+// 消除每个函数中 `match { Ok => ..., Err => error_json(...) }` 的样板。
+// 所有错误仍返回 HTTP 200 + `{ success: false, error: "..." }`，
+// 与现有前端契约完全兼容。
+//
+// **注意**: 此 impl 被 `#[cfg(feature = "http")]` 守卫。纯 Tauri IPC 构建
+// 可通过 `--no-default-features` 排除 axum 及其传递依赖（hyper/tower 等）。
+// 若修改此处 JSON 结构，需同步更新 `http::routes::ErrorResponse`。
+#[cfg(feature = "http")]
+impl axum::response::IntoResponse for AppError {
+    fn into_response(self) -> axum::response::Response {
+        use axum::{Json, http::StatusCode};
+        // 为避免循环依赖（error → http → routes → error），
+        // 此处内联构造等价结构，不引用 http::routes::ErrorResponse
+        let body = serde_json::json!({
+            "success": false,
+            "error": self.to_string(),
+        });
+        (StatusCode::OK, Json(body)).into_response()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,5 +148,37 @@ mod tests {
     fn test_lock_error_format() {
         let err = AppError::LockError("mutex poisoned".into());
         assert_eq!(err.to_string(), "Lock error: mutex poisoned");
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_into_response_returns_200_with_error_body() {
+        use axum::response::IntoResponse;
+
+        let err = AppError::NotFound("resource xyz".into());
+        let response = err.into_response();
+
+        // Status must be HTTP 200（与现有前端契约对齐）
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+        // Body 必须是 JSON 且包含 success:false + error message
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["success"], false);
+        assert!(body["error"].as_str().unwrap().contains("resource xyz"));
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn test_into_response_content_type_is_json() {
+        use axum::response::IntoResponse;
+
+        let err = AppError::Internal("oops".into());
+        let response = err.into_response();
+
+        let content_type = response.headers().get("content-type").unwrap();
+        assert!(content_type.to_str().unwrap().starts_with("application/json"));
     }
 }
