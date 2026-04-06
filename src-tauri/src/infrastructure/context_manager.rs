@@ -51,7 +51,11 @@ pub struct SwitchResult {
 /// 设计原因：`switch()` 是 sync 方法（只改 active_id 字符串），
 /// 而 `stop_watcher_tasks()` / `spawn_watcher_tasks()` 是 async 方法，
 /// 不能混在同一 `&mut self` 方法体内（RwLockWriteGuard 不允许跨 .await 存活）。
-#[derive(Debug)]
+///
+/// **关于 `should_stop_old` / `should_start_new`:** 当前两者始终同值（均由
+/// `previous_id != current_id` 导出）。保留为独立字段是为未来场景预留扩展能力：
+/// 例如 context 替换（replace_context）可能需要 "stop 旧 → 不启动新" 的语义。
+#[derive(Debug, Clone)]
 pub struct WatcherLifecycleActions {
     /// 是否需要停止旧 context 的 watcher
     pub should_stop_old: bool,
@@ -367,5 +371,48 @@ mod tests {
         // Error 应包含上下文信息
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("nonexistent") || err_msg.to_lowercase().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_switch_with_watcher_actions_same_context_id_precision() {
+        // no-op 切换时，old_context_id 和 new_context_id 均应等于目标 ID
+        let mut mgr = ContextManager::new();
+        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        let (_result, actions) = mgr.switch_with_watcher_actions("local").unwrap();
+        assert_eq!(actions.old_context_id, "local");
+        assert_eq!(actions.new_context_id, "local");
+    }
+
+    #[tokio::test]
+    async fn test_switch_with_watcher_actions_consecutive_switches() {
+        // 连续切换 A→B→C：验证第二次切换的 old_context_id 为 B 而非 A
+        let mut mgr = ContextManager::new();
+        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config("ssh-a", ContextType::Ssh))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config("ssh-b", ContextType::Ssh))).unwrap();
+
+        // 第一次切换: local → ssh-a
+        let (_r1, a1) = mgr.switch_with_watcher_actions("ssh-a").unwrap();
+        assert_eq!(a1.old_context_id, "local");
+        assert_eq!(a1.new_context_id, "ssh-a");
+
+        // 第二次切换: ssh-a → ssh-b
+        let (_r2, a2) = mgr.switch_with_watcher_actions("ssh-b").unwrap();
+        assert_eq!(a2.old_context_id, "ssh-a");
+        assert_eq!(a2.new_context_id, "ssh-b");
+    }
+
+    #[tokio::test]
+    async fn test_watcher_lifecycle_actions_clone() {
+        // 验证 Clone trait 可用（调用方可能需要跨作用域传递）
+        let mut mgr = ContextManager::new();
+        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config("ssh-test", ContextType::Ssh))).unwrap();
+        let (_result, actions) = mgr.switch_with_watcher_actions("ssh-test").unwrap();
+        let cloned = actions.clone();
+        assert_eq!(cloned.should_stop_old, actions.should_stop_old);
+        assert_eq!(cloned.old_context_id, actions.old_context_id);
+        assert_eq!(cloned.should_start_new, actions.should_start_new);
+        assert_eq!(cloned.new_context_id, actions.new_context_id);
     }
 }
