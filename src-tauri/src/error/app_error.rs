@@ -82,6 +82,25 @@ impl<T> From<std::sync::PoisonError<T>> for AppError {
     }
 }
 
+// ── Axum IntoResponse（保持 HTTP 200 约定）──
+//
+// 让 HTTP route handler 可以使用 `Result<T, AppError>` 返回风格，
+// 消除每个函数中 `match { Ok => ..., Err => error_json(...) }` 的样板。
+// 所有错误仍返回 HTTP 200 + `{ success: false, error: "..." }`，
+// 与现有前端契约完全兼容。
+impl axum::response::IntoResponse for AppError {
+    fn into_response(self) -> axum::response::Response {
+        use axum::{Json, http::StatusCode};
+        // 为避免循环依赖（error → http → routes → error），
+        // 此处内联构造等价结构，不引用 http::routes::ErrorResponse
+        let body = serde_json::json!({
+            "success": false,
+            "error": self.to_string(),
+        });
+        (StatusCode::OK, Json(body)).into_response()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
