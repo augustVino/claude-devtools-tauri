@@ -61,7 +61,7 @@ pub fn run() {
       ));
 
   let session_service: Arc<dyn services::SessionService> = Arc::new(services::SessionServiceImpl::new(
-      fs_provider,
+      fs_provider.clone(),
       shared_cache.clone(),
       get_projects_base_path(),
       get_todos_base_path(),
@@ -69,6 +69,14 @@ pub fn run() {
       project_service.clone(),
       session_repo,
   ));
+
+  // SubagentService (IPC path — HTTP registration in Batch 3)
+  let subagent_service: Arc<dyn services::SubagentService> =
+      Arc::new(services::SubagentServiceImpl::new(
+          shared_cache.clone(),
+          fs_provider.clone(),
+          get_projects_base_path(),
+      ));
 
   // Zoom factor state: track zoom since Tauri v2 has set_zoom() but no zoom() getter.
   // Store f64 as bits in AtomicU64 for lock-free concurrent access.
@@ -116,6 +124,7 @@ pub fn run() {
       app.manage(session_service.clone());
       app.manage(project_service.clone());
       app.manage(search_service.clone());
+      app.manage(subagent_service.clone());
 
       // 4. 显示窗口（非 --minimized 模式）
       AppBootstrap::show_window_if_needed(app.handle())?;
