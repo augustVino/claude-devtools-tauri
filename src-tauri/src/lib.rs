@@ -193,6 +193,19 @@ pub fn run() {
       );
       app.manage(ssh_service.clone());
 
+      // ConfigService (all dependencies available here)
+      let config_service: Arc<dyn services::ConfigService> = Arc::new(
+          services::ConfigServiceImpl::new(
+              config_manager.clone(),
+              shared_cache.clone(),
+              context_manager.clone(),
+              notification_manager.clone(),
+              app.handle().clone(),
+              search_service.clone(),
+          )
+      );
+      app.manage(config_service.clone());
+
       // 启动 SSH 状态事件转发任务
       let app_handle_for_ssh = app.handle().clone();
       let ssh_broadcaster = app_handle_for_ssh.state::<crate::http::sse::SSEBroadcaster>().inner().clone();
@@ -219,6 +232,9 @@ pub fn run() {
         &session_service,
         &project_service,
         &search_service,
+        &subagent_service,    // Batch 2 Task 2.5 创建
+        &ssh_service,         // Batch 2 Task 3.5 创建
+        &config_service,      // 此处创建
       )?;
 
       // Debug 模式下启用日志插件

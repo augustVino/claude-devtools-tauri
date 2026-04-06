@@ -1,4 +1,4 @@
-use tauri::{command, AppHandle, Manager, State};
+use tauri::{command, AppHandle, State};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -20,48 +20,14 @@ pub async fn get_config(
 }
 
 /// 更新配置的指定分区。
-///
-/// `section` 为配置分区名称（如 "general"、"notification"），`data` 为该分区的 JSON 数据。
-/// 采用深度合并策略，未变更的字段保留原值。
 #[command]
 pub async fn update_config(
-    app: AppHandle,
-    state: State<'_, Arc<RwLock<AppState>>>,
+    config_svc: State<'_, Arc<dyn crate::services::ConfigService>>,
     section: String,
     data: serde_json::Value,
 ) -> Result<AppConfig, String> {
-    let has_claude_root_change = section == "general"
-        && data.as_object().map_or(false, |obj| obj.contains_key("claudeRootPath"));
-
-    let (result, cache, config_mgr) = {
-        let app_state = state.read().await;
-        let result = app_state.config_manager.update_config(&section, data).await.map_err(|e| e.to_string())?;
-        (result, app_state.cache.clone(), app_state.config_manager.clone())
-    }; // AppState read lock dropped
-
-    // Rebuild local ServiceContext if claude root path changed
-    if has_claude_root_change {
-        let context_manager = app.state::<Arc<RwLock<crate::infrastructure::ContextManager>>>().inner().clone();
-        let notification_manager = app
-            .state::<Arc<RwLock<crate::infrastructure::NotificationManager>>>()
-            .inner()
-            .clone();
-        let search_service = app
-            .state::<Arc<dyn crate::services::SearchServiceFull>>()
-            .inner()
-            .clone();
-
-        crate::infrastructure::context_rebuild::rebuild_local_context(
-            &context_manager,
-            &notification_manager,
-            &config_mgr,
-            cache,
-            &app,
-            &search_service,
-        ).await?;
-    }
-
-    Ok(result)
+    config_svc.update_config(&section, data).await
+        .map_err(|e| e.into_tauri_string())
 }
 
 // =============================================================================
@@ -149,35 +115,22 @@ pub async fn unhide_session(
 // =============================================================================
 
 /// 暂停通知推送指定分钟数。
-///
-/// `minutes = -1` 表示"暂停到明天午夜"。
 #[command]
 pub async fn snooze(
-    state: State<'_, Arc<RwLock<AppState>>>,
+    config_svc: State<'_, Arc<dyn crate::services::ConfigService>>,
     minutes: i32,
 ) -> Result<AppConfig, String> {
-    let app_state = state.read().await;
-    if minutes == -1 {
-        app_state.config_manager.snooze_until_tomorrow().await
-            .map_err(|e| e.to_string())
-    } else if minutes <= 0 {
-        Err("Minutes must be a positive number".to_string())
-    } else if minutes > 24 * 60 {
-        Err("Minutes must be 1440 or less (24 hours)".to_string())
-    } else {
-        app_state.config_manager.snooze(minutes as u32).await
-            .map_err(|e| e.to_string())
-    }
+    config_svc.snooze(minutes).await
+        .map_err(|e| e.into_tauri_string())
 }
 
 /// 清除通知暂停设置，恢复通知推送。
 #[command]
 pub async fn clear_snooze(
-    state: State<'_, Arc<RwLock<AppState>>>,
+    config_svc: State<'_, Arc<dyn crate::services::ConfigService>>,
 ) -> Result<AppConfig, String> {
-    let app_state = state.read().await;
-    app_state.config_manager.clear_snooze().await
-        .map_err(|e| e.to_string())
+    config_svc.clear_snooze().await
+        .map_err(|e| e.into_tauri_string())
 }
 
 // =============================================================================
@@ -228,21 +181,13 @@ pub async fn get_triggers(
 }
 
 /// 测试通知触发器。
-///
-/// 使用项目扫描器扫描现有会话数据，检验触发器是否能匹配到错误。
 #[command]
 pub async fn test_trigger(
+    config_svc: State<'_, Arc<dyn crate::services::ConfigService>>,
     trigger: crate::types::config::NotificationTrigger,
 ) -> Result<crate::types::config::TriggerTestResult, String> {
-    use crate::discovery::project_scanner::ProjectScanner;
-    use crate::error::error_trigger_tester;
-
-    let scanner = ProjectScanner::with_paths(
-        crate::utils::get_projects_base_path(),
-        crate::utils::get_todos_base_path(),
-        std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
-    );
-    Ok(error_trigger_tester::test_trigger(&trigger, &scanner, None).await)
+    config_svc.test_trigger(&trigger).await
+        .map_err(|e| e.into_tauri_string())
 }
 
 // =============================================================================

@@ -48,33 +48,8 @@ pub async fn update_config(
     State(state): State<HttpState>,
     Json(body): Json<UpdateConfigRequest>,
 ) -> Result<Json<ConfigResponse>, (StatusCode, Json<super::ErrorResponse>)> {
-    let has_claude_root_change = body.section == "general"
-        && body.data.as_object().map_or(false, |obj| obj.contains_key("claudeRootPath"));
-
-    let (result, cache, config_mgr) = {
-        let app_state = state.app_state.read().await;
-        let result = app_state
-            .config_manager
-            .update_config(&body.section, body.data)
-            .await
-            .map_err(|e| error_json(e.to_string()))?;
-        (result, app_state.cache.clone(), app_state.config_manager.clone())
-    }; // AppState read lock dropped
-
-    // Rebuild local ServiceContext if claude root path changed
-    if has_claude_root_change {
-        if let Err(e) = crate::infrastructure::context_rebuild::rebuild_local_context(
-            &state.context_manager,
-            &state.notification_manager,
-            &config_mgr,
-            cache,
-            &state.app_handle,
-            &state.search_service,
-        ).await {
-            log::error!("Failed to rebuild local context after claude root path change: {e}");
-        }
-    }
-
+    let result = state.config_svc.update_config(&body.section, body.data).await
+        .map_err(|e| error_json(e.to_string()))?;
     Ok(Json(ConfigResponse { success: true, data: result }))
 }
 
@@ -173,20 +148,9 @@ pub async fn snooze(
     State(state): State<HttpState>,
     Json(body): Json<SnoozeRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
-    let app_state = state.app_state.read().await;
-    if body.minutes == -1 {
-        app_state.config_manager.snooze_until_tomorrow().await
-            .map(Json)
-            .map_err(|e| error_json(e.to_string()))
-    } else if body.minutes <= 0 {
-        Err(error_json("Minutes must be a positive number"))
-    } else if body.minutes > 24 * 60 {
-        Err(error_json("Minutes must be 1440 or less (24 hours)"))
-    } else {
-        app_state.config_manager.snooze(body.minutes as u32).await
-            .map(Json)
-            .map_err(|e| error_json(e.to_string()))
-    }
+    state.config_svc.snooze(body.minutes).await
+        .map(Json)
+        .map_err(|e| error_json(e.to_string()))
 }
 
 /// 清除通知暂停设置，恢复通知推送。
@@ -195,8 +159,7 @@ pub async fn snooze(
 pub async fn clear_snooze(
     State(state): State<HttpState>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
-    let app_state = state.app_state.read().await;
-    app_state.config_manager.clear_snooze().await
+    state.config_svc.clear_snooze().await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -290,31 +253,21 @@ pub(crate) struct TriggerTestResponse {
 /// 测试通知触发器。
 ///
 /// POST /api/config/triggers/{trigger_id}/test
-#[allow(dead_code)]
+// 【审查修正】参数名从 _state 改为 state（原计划有下划线前缀导致编译失败）
 pub async fn test_trigger(
-    State(_state): State<HttpState>,
-    axum::extract::Path(trigger_id): axum::extract::Path<String>,
+    state: State<HttpState>,
+    _trigger_id: axum::extract::Path<String>,
     Json(trigger): Json<NotificationTrigger>,
 ) -> Result<
     Json<TriggerTestResponse>,
     (StatusCode, Json<super::ErrorResponse>),
 > {
-    let _safe_trigger_id = guards::validate_trigger_id(&trigger_id)
+    let _safe_trigger_id = guards::validate_trigger_id(_trigger_id.0.as_str())
         .map_err(|e| error_json(e.to_string()))?;
 
-    use crate::discovery::project_scanner::ProjectScanner;
-    use crate::error::error_trigger_tester;
-
-    let scanner = ProjectScanner::with_paths(
-        crate::utils::path_decoder::get_projects_base_path(),
-        crate::utils::path_decoder::get_todos_base_path(),
-        std::sync::Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
-    );
-    let result = error_trigger_tester::test_trigger(&trigger, &scanner, None).await;
-    Ok(Json(TriggerTestResponse {
-        success: true,
-        data: result,
-    }))
+    let result = state.config_svc.test_trigger(&trigger).await
+        .map_err(|e| error_json(e.to_string()))?;
+    Ok(Json(TriggerTestResponse { success: true, data: result }))
 }
 
 // =============================================================================

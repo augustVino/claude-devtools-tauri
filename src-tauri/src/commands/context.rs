@@ -31,35 +31,41 @@ pub async fn context_switch(
     manager: State<'_, Arc<RwLock<ContextManager>>>,
     context_id: String,
 ) -> Result<SwitchResponse, String> {
+    // Bug B4 fix: add input validation (align with HTTP version)
+    let context_id = context_id.trim();
+    if context_id.is_empty() || context_id.len() > 256 {
+        return Err("Invalid context_id".to_string());
+    }
+
     let mut mgr = manager.write().await;
-    let result = mgr.switch(&context_id)
+
+    // Use switch_with_watcher_actions (Batch 1 Task 1)
+    let (result, actions) = mgr.switch_with_watcher_actions(&context_id)
         .map_err(|e| e.into_tauri_string())?;
     log::info!("Context switched: {} -> {}", result.previous_id, result.current_id);
 
-    // 仅在确实切换了上下文时才 stop/start watcher
-    if result.previous_id != result.current_id {
-        // Stop old context's watcher tasks
-        if let Some(old_ctx) = mgr.get(&result.previous_id) {
-            old_ctx.read().await.stop_watcher_tasks().await;
+    // Execute watcher lifecycle based on actions
+    if actions.should_stop_old || actions.should_start_new {
+        let cm = app.state::<Arc<crate::infrastructure::ConfigManager>>().inner().clone();
+        let nm = app.state::<Arc<RwLock<crate::infrastructure::NotificationManager>>>().inner().clone();
+        if actions.should_stop_old {
+            if let Some(old_ctx) = mgr.get(&actions.old_context_id) {
+                old_ctx.read().await.stop_watcher_tasks().await;
+            }
         }
-
-        // Start new context's watcher tasks
-        if let Some(new_ctx) = mgr.get(&result.current_id) {
-            let new = new_ctx.read().await;
-            let config_manager = app.state::<Arc<crate::infrastructure::ConfigManager>>()
-                .inner().clone();
-            let notification_manager = app.state::<Arc<RwLock<crate::infrastructure::NotificationManager>>>()
-                .inner().clone();
-            new.spawn_watcher_tasks(app.clone(), config_manager, notification_manager).await;
+        if actions.should_start_new {
+            if let Some(new_ctx) = mgr.get(&actions.new_context_id) {
+                let new = new_ctx.read().await;
+                new.spawn_watcher_tasks(app.clone(), cm, nm).await;
+            }
         }
     }
 
-    // 仅在确实切换了上下文时才发射事件（与 Electron 对齐：no-op 时不发事件）
+    // Emit events only when actually switched (drop lock before emit)
     if result.previous_id != result.current_id {
-        // Emit context:changed event
         let ctx_arc = mgr.get(&result.current_id).unwrap();
         let info = ContextInfo::from_context(&*ctx_arc.read().await);
-        drop(mgr);
+        drop(mgr);  // Release write lock before emitting
         events::emit_context_changed(&app, &info);
 
         // Bridge to SSE

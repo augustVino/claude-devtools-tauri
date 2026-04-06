@@ -107,6 +107,10 @@ pub async fn start(
             session_service: app.state::<Arc<dyn SessionService>>().inner().clone(),
             project_service: app.state::<Arc<dyn crate::services::ProjectService>>().inner().clone(),
             search_service: app.state::<Arc<dyn SearchServiceFull>>().inner().clone(),
+            // Phase B services (Batch 3 atomic expansion)
+            subagent_svc: app.state::<Arc<dyn crate::services::SubagentService>>().inner().clone(),
+            ssh_svc: app.state::<Arc<dyn crate::services::SshService>>().inner().clone(),
+            config_svc: app.state::<Arc<dyn crate::services::ConfigService>>().inner().clone(),
         };
 
         // 前端构建产物目录：RENDERER_PATH 环境变量优先，fallback 到 CARGO_MANIFEST_DIR/../dist
