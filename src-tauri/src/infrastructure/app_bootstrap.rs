@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use tauri::Manager;
 use crate::commands::AppState;
 use crate::commands::tray::TrayIconManager;
-use crate::infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConnectionManager};
+use crate::infrastructure::{ConfigManager, ContextManager, NotificationManager};
 use crate::infrastructure::fs_provider::LocalFsProvider;
 use crate::infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
 use crate::utils::{get_projects_base_path, get_todos_base_path, set_claude_root_override};
@@ -107,10 +107,6 @@ impl AppBootstrap {
                         config_manager: config_manager.clone(),
                         notification_manager,
                         context_manager,
-                        ssh_manager: app
-                            .state::<Arc<RwLock<SshConnectionManager>>>()
-                            .inner()
-                            .clone(),
                         session_service: session_service.clone(),
                         project_service: project_service.clone(),
                         search_service: search_service.clone(),

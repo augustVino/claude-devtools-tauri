@@ -8,7 +8,7 @@ use crate::commands::AppState;
 use crate::http::server::{self, HttpServerHandle, HttpServerStatus};
 use crate::http::sse::SSEBroadcaster;
 use crate::http::state::HttpState;
-use crate::infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConnectionManager};
+use crate::infrastructure::{ConfigManager, ContextManager, NotificationManager};
 use crate::services::{SearchServiceFull, SessionService};
 
 /// IPC 响应包装 — 与 Electron 格式对齐
@@ -100,10 +100,6 @@ pub async fn start(
                 .clone(),
             notification_manager,
             context_manager,
-            ssh_manager: app
-                .state::<Arc<RwLock<SshConnectionManager>>>()
-                .inner()
-                .clone(),
             session_service: app.state::<Arc<dyn SessionService>>().inner().clone(),
             project_service: app.state::<Arc<dyn crate::services::ProjectService>>().inner().clone(),
             search_service: app.state::<Arc<dyn SearchServiceFull>>().inner().clone(),

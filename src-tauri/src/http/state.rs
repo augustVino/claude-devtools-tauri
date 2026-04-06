@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 
 use crate::commands::AppState;
 use crate::http::sse::SSEBroadcaster;
-use crate::infrastructure::{ConfigManager, ContextManager, NotificationManager, SshConnectionManager};
+use crate::infrastructure::{ConfigManager, ContextManager, NotificationManager};
 
 /// Axum 路由使用的共享状态 — 合并所有 HTTP 路由需要的资源。
 ///
@@ -21,7 +21,6 @@ pub struct HttpState {
     pub config_manager: Arc<ConfigManager>,
     pub notification_manager: Arc<RwLock<NotificationManager>>,
     pub context_manager: Arc<RwLock<ContextManager>>,
-    pub ssh_manager: Arc<RwLock<SshConnectionManager>>,
 
     // ── Domain Services ──
     pub session_service: Arc<dyn crate::services::SessionService>,

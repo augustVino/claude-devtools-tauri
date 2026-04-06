@@ -253,6 +253,9 @@ pub(crate) struct TriggerTestResponse {
 /// 测试通知触发器。
 ///
 /// POST /api/config/triggers/{trigger_id}/test
+///
+/// **注意:** `trigger_id` 路径参数仅做格式校验（guards::validate_trigger_id），
+/// 实际测试的触发器配置来自请求体 JSON（`trigger` 字段）。
 // 【审查修正】参数名从 _state 改为 state（原计划有下划线前缀导致编译失败）
 pub async fn test_trigger(
     state: State<HttpState>,

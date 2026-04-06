@@ -127,10 +127,7 @@ pub fn build_routes() -> Router<HttpState> {
             get(sessions::get_waterfall_data),
         )
         // Subagents
-        .route(
-            "/api/projects/{project_id}/sessions/{session_id}/subagents/{subagent_id}",
-            get(subagents::get_subagent_detail),
-        )
+        .merge(subagents::routes())
         // Search
         .route(
             "/api/projects/{project_id}/search",
