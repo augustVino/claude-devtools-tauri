@@ -4,10 +4,6 @@
 
 基于 [Tauri v2](https://tauri.app/) 的 Claude Code 会话可视化桌面应用 — 浏览对话记录、追踪上下文窗口使用情况、分析工具调用。
 
-## Why
-
-[claude-devtools](https://github.com/matt1398/claude-devtools) 是一个优秀的 Claude Code 会话分析工具，但它基于 Electron 构建。Electron 打包后体积较大（通常 120MB+），且运行时内存占用高。本项目的目标是在保留原项目前端设计的基础上，用 Rust 重写后端，通过 Tauri v2 实现更小的安装包和更低的资源占用。
-
 ## 功能
 
 - 可视化 Claude Code 会话时间线
