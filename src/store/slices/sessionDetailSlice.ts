@@ -9,6 +9,7 @@ import { processSessionClaudeMd } from '@renderer/utils/claudeMdTracker';
 import { processSessionContextWithPhases } from '@renderer/utils/contextTracker';
 import {
   extractFileReferences,
+  incrementalUpdateConversation,
   transformChunksToConversation
 } from '@renderer/utils/groupTransformer';
 import { createLogger } from '@shared/utils/logger';
@@ -24,6 +25,8 @@ const logger = createLogger('Store:sessionDetail');
 const sessionRefreshGeneration = new Map<string, number>();
 const sessionRefreshInFlight = new Set<string>();
 const sessionRefreshQueued = new Set<string>();
+/** Fingerprint cache for skipping unchanged session refreshes */
+const sessionChunkFingerprint = new Map<string, string>();
 let sessionDetailFetchGeneration = 0;
 let agentConfigsCachedForProject = '';
 
@@ -46,7 +49,7 @@ import type {
   ContextStats,
   MentionedFileInfo
 } from '@renderer/types/contextInjection';
-import type { ClaudeMdFileInfo, SessionDetail } from '@renderer/types/data';
+import type { ClaudeMdFileInfo, EnhancedChunk, Process, SessionDetail } from '@renderer/types/data';
 import type { AIGroup, SessionConversation } from '@renderer/types/groups';
 import type { AgentConfig } from '@shared/types/api';
 import type { StateCreator } from 'zustand';
@@ -545,11 +548,36 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
       if (!enhancedChunks) {
         return;
       }
-      const newConversation = transformChunksToConversation(
-        enhancedChunks,
-        detail.processes,
-        isOngoing
-      );
+
+      // ---------------------------------------------------------------
+      // Fingerprint check: skip expensive transformation when content is
+      // unchanged. Most file-watcher events are duplicates or metadata-only.
+      // Includes endTime for Tauri chunks where rawMessages is always [].
+      // ---------------------------------------------------------------
+      const lastChunk = enhancedChunks[enhancedChunks.length - 1];
+      const fingerprint =
+        `${enhancedChunks.length}:${lastChunk?.rawMessages?.length ?? 0}` +
+        `:${lastChunk?.endTime?.getTime() ?? 0}:${isOngoing}`;
+      const prevFingerprint = sessionChunkFingerprint.get(refreshKey);
+      if (fingerprint === prevFingerprint) {
+        return; // Nothing changed — zero-cost skip
+      }
+      sessionChunkFingerprint.set(refreshKey, fingerprint);
+
+      // ---------------------------------------------------------------
+      // Early release: null out raw data from IPC before transformation
+      // to reduce peak memory (detail + enhancedChunks + newConversation).
+      // _subagents parameter is unused by the transformer.
+      // ---------------------------------------------------------------
+      const slimDetail = { ...detail, chunks: [] as EnhancedChunk[], processes: [] as Process[] };
+
+      // Use incremental update when a previous conversation exists —
+      // reuses unchanged ChatItem objects, only re-transforms the tail.
+      const prevConversation = get().conversation;
+      const newConversation =
+        prevConversation && prevConversation.items.length > 0
+          ? incrementalUpdateConversation(prevConversation, enhancedChunks, [], isOngoing)
+          : transformChunksToConversation(enhancedChunks, [], isOngoing);
 
       if (!newConversation) {
         return;
@@ -597,7 +625,7 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
 
       // Update only the data, preserve UI states
       set((state) => ({
-        sessionDetail: detail,
+        sessionDetail: slimDetail,
         conversation: newConversation,
         // Update on latest sessions state to avoid restoring stale sidebar snapshots.
         sessions: state.sessions.map((s) =>
@@ -658,7 +686,7 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
 
           latestTabSessionData[tab.id] = {
             ...tabData,
-            sessionDetail: detail,
+            sessionDetail: slimDetail, // Use slimDetail to avoid holding full chunks/processes in per-tab memory
             conversation: newConversation,
             ...(tabGroupStillExists ? { selectedAIGroup: tabSelectedGroup } : {})
           };

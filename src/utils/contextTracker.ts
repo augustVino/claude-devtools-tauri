@@ -444,6 +444,21 @@ interface ComputeContextStatsParams {
   mentionedFileTokenData?: Map<string, MentionedFileInfo>;
   /** Token data for validated directory CLAUDE.md files (keyed by full path) */
   directoryTokenData?: Record<string, ClaudeMdFileInfo>;
+  /** Paths already seen in previous groups (threaded to avoid O(N²) rebuild per group) */
+  previousPaths?: Set<string>;
+}
+
+/**
+ * Result of computing context stats for an AI group.
+ * Includes both the stats and the updated paths set for threading to the next group.
+ *
+ * Lifecycle: `previousPaths` is valid only within a single `processSessionContextWithPhases`
+ * call. Do NOT cache or share across calls — it is mutated in-place during computation.
+ */
+interface ComputeContextStatsResult {
+  stats: ContextStats;
+  /** Updated previousPaths set — caller should thread this to the next group */
+  previousPaths: Set<string>;
 }
 
 /**
@@ -589,7 +604,7 @@ function createDirectoryInjection(path: string, aiGroupId: string): ClaudeMdInje
  * Compute context stats for an AI group.
  * Tracks CLAUDE.md injections, mentioned files, and tool outputs.
  */
-function computeContextStats(params: ComputeContextStatsParams): ContextStats {
+function computeContextStats(params: ComputeContextStatsParams): ComputeContextStatsResult {
   const {
     aiGroup,
     userGroup,
@@ -604,14 +619,21 @@ function computeContextStats(params: ComputeContextStatsParams): ContextStats {
   } = params;
 
   const newInjections: ContextInjection[] = [];
-  const previousPaths = new Set(
-    previousInjections
-      .filter(
-        (inj): inj is ClaudeMdContextInjection | MentionedFileInjection =>
-          inj.category === 'claude-md' || inj.category === CATEGORY_MENTIONED_FILE
-      )
-      .map((inj) => inj.path)
-  );
+
+  // Use externally threaded paths (O(1) reuse) or fallback to rebuild from injections (O(N))
+  let resolvedPaths: Set<string>;
+  if (params.previousPaths && params.previousPaths.size > 0) {
+    resolvedPaths = params.previousPaths;
+  } else {
+    resolvedPaths = new Set(
+      previousInjections
+        .filter(
+          (inj): inj is ClaudeMdContextInjection | MentionedFileInjection =>
+            inj.category === 'claude-md' || inj.category === CATEGORY_MENTIONED_FILE
+        )
+        .map((inj) => inj.path)
+    );
+  }
 
   // Use "ai-N" format for firstSeenInGroup to enable turn navigation
   const turnGroupId = `ai-${aiGroup.turnIndex}`;
@@ -620,9 +642,9 @@ function computeContextStats(params: ComputeContextStatsParams): ContextStats {
   if (isFirstGroup) {
     const globalInjections = createGlobalInjections(projectRoot, turnGroupId, claudeMdTokenData);
     for (const injection of globalInjections) {
-      if (!previousPaths.has(injection.path)) {
+      if (!resolvedPaths.has(injection.path)) {
         newInjections.push(wrapClaudeMdInjection(injection));
-        previousPaths.add(injection.path);
+        resolvedPaths.add(injection.path);
       }
     }
   }
@@ -654,7 +676,7 @@ function computeContextStats(params: ComputeContextStatsParams): ContextStats {
 
     for (const claudeMdPath of claudeMdPaths) {
       // Skip if already seen
-      if (previousPaths.has(claudeMdPath)) {
+      if (resolvedPaths.has(claudeMdPath)) {
         continue;
       }
 
@@ -683,12 +705,12 @@ function computeContextStats(params: ComputeContextStatsParams): ContextStats {
         const injection = createDirectoryInjection(claudeMdPath, turnGroupId);
         injection.estimatedTokens = fileInfo.estimatedTokens;
         newInjections.push(wrapClaudeMdInjection(injection));
-        previousPaths.add(claudeMdPath);
+        resolvedPaths.add(claudeMdPath);
       } else {
         // Fallback: if no directoryTokenData provided, create with default tokens (legacy behavior)
         const injection = createDirectoryInjection(claudeMdPath, turnGroupId);
         newInjections.push(wrapClaudeMdInjection(injection));
-        previousPaths.add(claudeMdPath);
+        resolvedPaths.add(claudeMdPath);
       }
     }
   }
@@ -704,7 +726,7 @@ function computeContextStats(params: ComputeContextStatsParams): ContextStats {
         : joinPaths(projectRoot, fileRef.path);
 
       // Skip if already seen
-      if (previousPaths.has(absolutePath)) {
+      if (resolvedPaths.has(absolutePath)) {
         continue;
       }
 
@@ -723,7 +745,7 @@ function computeContextStats(params: ComputeContextStatsParams): ContextStats {
         });
 
         newInjections.push(mentionedFileInjection);
-        previousPaths.add(absolutePath);
+        resolvedPaths.add(absolutePath);
       }
     }
   }
@@ -736,7 +758,7 @@ function computeContextStats(params: ComputeContextStatsParams): ContextStats {
       ? fileRef.path
       : joinPaths(projectRoot, fileRef.path);
 
-    if (previousPaths.has(absolutePath)) {
+    if (resolvedPaths.has(absolutePath)) {
       continue;
     }
 
@@ -753,7 +775,7 @@ function computeContextStats(params: ComputeContextStatsParams): ContextStats {
       });
 
       newInjections.push(mentionedFileInjection);
-      previousPaths.add(absolutePath);
+      resolvedPaths.add(absolutePath);
     }
   }
 
@@ -804,8 +826,13 @@ function computeContextStats(params: ComputeContextStatsParams): ContextStats {
     }
   }
 
-  // f) Build accumulated injections
-  const accumulatedInjections = [...previousInjections, ...newInjections];
+  // f) Build accumulated injections (mutable push to avoid O(N²) spread copy)
+  // ⚠️ WARNING: This mutates the caller's previousInjections array in-place.
+  // Consumers must NOT mutate stats.accumulatedInjections after retrieval.
+  for (const inj of newInjections) {
+    previousInjections.push(inj);
+  }
+  const accumulatedInjections = previousInjections; // alias, not a copy
 
   // g) Calculate totals and category breakdowns
   const tokensByCategory: TokensByCategory = {
@@ -882,12 +909,49 @@ function computeContextStats(params: ComputeContextStatsParams): ContextStats {
     tokensByCategory.taskCoordination +
     tokensByCategory.userMessages;
 
+  // Pre-compute accumulated counts so UI doesn't need O(N) filter per render
+  const accCounts: NewCountsByCategory = {
+    claudeMd: 0,
+    mentionedFiles: 0,
+    toolOutputs: 0,
+    thinkingText: 0,
+    taskCoordination: 0,
+    userMessages: 0,
+  };
+  for (const inj of accumulatedInjections) {
+    switch (inj.category) {
+      case 'claude-md':
+        accCounts.claudeMd++;
+        break;
+      case CATEGORY_MENTIONED_FILE:
+        accCounts.mentionedFiles++;
+        break;
+      case 'tool-output':
+        accCounts.toolOutputs += (inj as ToolOutputInjection).toolCount ?? 1;
+        break;
+      case 'thinking-text':
+        accCounts.thinkingText++;
+        break;
+      case 'task-coordination':
+        accCounts.taskCoordination +=
+          (inj as TaskCoordinationInjection).breakdown?.length ?? 1;
+        break;
+      case 'user-message':
+        accCounts.userMessages++;
+        break;
+    }
+  }
+
   return {
-    newInjections,
-    accumulatedInjections,
-    totalEstimatedTokens,
-    tokensByCategory,
-    newCounts,
+    stats: {
+      newInjections,
+      accumulatedInjections,
+      totalEstimatedTokens,
+      tokensByCategory,
+      newCounts,
+      accumulatedCounts: accCounts,
+    },
+    previousPaths: resolvedPaths,
   };
 }
 
@@ -951,6 +1015,9 @@ export function processSessionContextWithPhases(
   let isFirstAiGroup = true;
   let previousUserGroup: UserGroup | null = null;
 
+  // Threaded path set for O(N) previousPaths reuse across AI groups
+  let previousPaths = new Set<string>();
+
   // Phase tracking state
   let currentPhaseNumber = 1;
   const phases: ContextPhase[] = [];
@@ -972,6 +1039,17 @@ export function processSessionContextWithPhases(
 
     // Handle compact items: reset accumulated state and start new phase
     if (item.type === 'compact') {
+      // Backfill accumulatedInjections for the last group in the ending phase
+      if (currentPhaseLastAIGroupId) {
+        const lastStats = statsMap.get(currentPhaseLastAIGroupId);
+        if (lastStats) {
+          statsMap.set(currentPhaseLastAIGroupId, {
+            ...lastStats,
+            accumulatedInjections: [...accumulatedInjections],
+          });
+        }
+      }
+
       // Finalize the current phase before starting a new one
       if (currentPhaseFirstAIGroupId && currentPhaseLastAIGroupId) {
         phases.push({
@@ -984,6 +1062,7 @@ export function processSessionContextWithPhases(
 
       // Reset context tracking state
       accumulatedInjections = [];
+      previousPaths = new Set<string>();
       isFirstAiGroup = true;
       previousUserGroup = null;
 
@@ -1025,22 +1104,27 @@ export function processSessionContextWithPhases(
         );
       }
 
-      // Compute stats for this group
-      const stats = computeContextStats({
+      // Compute stats for this group (with threaded previousPaths)
+      const result = computeContextStats({
         aiGroup,
         userGroup: previousUserGroup,
         linkedTools,
         displayItems,
         isFirstGroup: isFirstAiGroup,
         previousInjections: accumulatedInjections,
+        previousPaths, // thread external set — O(1) reuse
         projectRoot,
         claudeMdTokenData,
         mentionedFileTokenData,
         directoryTokenData,
       });
+      const stats = result.stats;
 
       // Tag with phase number
       stats.phaseNumber = currentPhaseNumber;
+
+      // Thread updated paths to next iteration
+      previousPaths = result.previousPaths;
 
       // Build compaction token delta for this phase's first AI group
       if (isFirstAiGroup && currentPhaseCompactGroupId && lastAIGroupBeforeCompact) {
@@ -1057,8 +1141,12 @@ export function processSessionContextWithPhases(
         }
       }
 
-      // Store stats
-      statsMap.set(aiGroup.id, stats);
+      // Store stats WITHOUT the full accumulatedInjections array (saves O(N²) memory).
+      // Only the last group per phase gets the full snapshot (backfilled below).
+      statsMap.set(aiGroup.id, {
+        ...stats,
+        accumulatedInjections: [],
+      });
 
       // Track phase boundaries
       aiGroupPhaseMap.set(aiGroup.id, currentPhaseNumber);
@@ -1072,6 +1160,18 @@ export function processSessionContextWithPhases(
       accumulatedInjections = stats.accumulatedInjections;
       isFirstAiGroup = false;
       previousUserGroup = null;
+    }
+  }
+
+  // Backfill accumulatedInjections for the last group in each phase.
+  // Snapshot the current accumulatedInjections for the overall last group.
+  if (currentPhaseLastAIGroupId) {
+    const lastStats = statsMap.get(currentPhaseLastAIGroupId);
+    if (lastStats) {
+      statsMap.set(currentPhaseLastAIGroupId, {
+        ...lastStats,
+        accumulatedInjections: [...accumulatedInjections],
+      });
     }
   }
 

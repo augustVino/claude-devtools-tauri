@@ -275,6 +275,8 @@ export interface ContextStats {
   tokensByCategory: TokensByCategory;
   /** Counts of new injections in this group, by category */
   newCounts: NewCountsByCategory;
+  /** Pre-computed accumulated counts per category (avoids repeated O(N) filter in UI) */
+  accumulatedCounts: NewCountsByCategory;
   /** Which context phase this stats belongs to (1-based) */
   phaseNumber?: number;
 }
