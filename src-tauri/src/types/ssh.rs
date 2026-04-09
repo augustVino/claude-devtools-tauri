@@ -52,7 +52,10 @@ pub struct SshConfigHostEntry {
     pub host_name: Option<String>,
     pub user: Option<String>,
     pub port: Option<u16>,
-    pub has_identity_file: bool,
+    /// Identity file paths resolved from SSH config (~ expanded to absolute).
+    /// Empty if no IdentityFile directive is present.
+    #[serde(default)]
+    pub identity_files: Vec<String>,
 }
 
 /// SSH 测试结果 — { success, error? }
@@ -171,11 +174,26 @@ mod tests {
             host_name: Some("192.168.1.1".into()),
             user: Some("admin".into()),
             port: Some(2222),
-            has_identity_file: true,
+            identity_files: vec!["/home/user/.ssh/id_ed25519".into()],
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains("hostName"));
-        assert!(json.contains("hasIdentityFile"));
+        assert!(json.contains("identityFiles"));
+        assert!(json.contains("id_ed25519"));
+    }
+
+    #[test]
+    fn ssh_config_host_entry_empty_identity_files_serializes() {
+        let entry = SshConfigHostEntry {
+            alias: "nokey".into(),
+            host_name: None,
+            user: None,
+            port: None,
+            identity_files: vec![],
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        // serde(default) ensures empty vec serializes as [] not null
+        assert!(json.contains("\"identityFiles\":[]"));
     }
 
     #[test]
