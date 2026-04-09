@@ -202,9 +202,8 @@ function createViewerMarkdownComponents(searchCtx: SearchContext | null): Compon
     pre: ({ children, node }) => {
       // Detect mermaid: skip <pre> wrapper
       const codeEl = node?.children?.find(
-        (c): c is { properties?: { className?: string[] } } =>
-          'tagName' in c && c.tagName === 'code'
-      );
+        (c) => 'tagName' in c && c.tagName === 'code'
+      ) as { properties?: { className?: string[] } } | undefined;
       const isMermaid = codeEl?.properties?.className?.includes('language-mermaid');
       if (isMermaid) {
         return <>{children}</>;
