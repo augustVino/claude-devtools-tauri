@@ -1,9 +1,11 @@
 //! Watcher 任务编排器 — 从 ServiceContext 中提取的文件监听任务管理。
 //!
 //! 负责 spawn 三个并发 tokio task：主监听器、错误检测管道、Todo 监听器。
+//! Phase A: 启动时扫描最近修改的会话文件并记录（seed_active_sessions）。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
@@ -65,6 +67,74 @@ impl WatcherOrchestrator {
         F: Fn(&str) + Send + Sync + 'static,
     {
         self.on_project_cache_invalidate = Some(Arc::new(callback));
+    }
+
+    /// Phase A: 启动时扫描最近修改的会话文件并记录。
+    ///
+    /// 为未来的 Phase B (catch-up scan) 建立追踪基础。
+    ///
+    /// 注意：此函数仅做日志记录，不推送 FileChangeEvent。
+    /// Electron 的 seedActiveSessionFiles() 同样不发射事件，
+    /// 它只填充内部 activeSessionFiles Map。
+    async fn seed_active_sessions<Fs: FsProvider + ?Sized>(
+        fs_provider: &Fs,
+        projects_dir: &Path,
+    ) -> Result<u32, String> {
+        let cutoff = SystemTime::now()
+            .checked_sub(Duration::from_secs(3600))
+            .ok_or("Failed to compute 1h cutoff time")?;
+        let cutoff_ms = crate::utils::time::time_to_ms(Some(cutoff));
+
+        // 列出 projects_dir 下的一级子目录（每个是一个 project hash）
+        let project_entries = fs_provider
+            .read_dir(projects_dir)
+            .map_err(|e| format!("Failed to read projects dir: {e}"))?;
+
+        let mut total_seeded = 0u32;
+
+        for project in &project_entries {
+            if !project.is_directory {
+                continue;
+            }
+            let project_path = projects_dir.join(&project.name);
+
+            // 在每个 project 目录中查找 .jsonl 文件
+            let session_entries = match fs_provider.read_dir(&project_path) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    log::debug!("Skipping unreadable project dir {}: {e}", project.name);
+                    continue;
+                }
+            };
+
+            for entry in &session_entries {
+                if !entry.is_file {
+                    continue;
+                }
+                if !entry.name.ends_with(".jsonl") {
+                    continue;
+                }
+
+                // 只收集最近 1 小时内修改过的文件
+                if let Some(mtime_ms) = entry.mtime_ms {
+                    if mtime_ms >= cutoff_ms {
+                        total_seeded += 1;
+                        log::info!(
+                            "[seed] Active session found: {}/{} (mtime={}ms)",
+                            project.name, entry.name, mtime_ms
+                        );
+                    }
+                }
+            }
+        }
+
+        log::info!(
+            "[seed] Active session seeding complete: {} files found in {} projects",
+            total_seeded,
+            project_entries.iter().filter(|p| p.is_directory).count()
+        );
+
+        Ok(total_seeded)
     }
 
     /// 启动所有 watcher 任务（与原 ServiceContext::spawn_watcher_tasks 逻辑完全一致）。
@@ -246,6 +316,18 @@ impl WatcherOrchestrator {
                     }
                 }
                 todo_watcher.lock().await.stop().await;
+            });
+        }
+
+        // Phase A: 轻量 seed（延迟 2s 等 watcher 就绪）
+        {
+            let seed_fs = self.fs_provider.clone();
+            let seed_dir = self.projects_dir.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                if let Err(e) = Self::seed_active_sessions(&*seed_fs, &seed_dir).await {
+                    log::warn!("Failed to seed active sessions: {e}");
+                }
             });
         }
 
