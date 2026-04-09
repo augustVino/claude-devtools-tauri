@@ -23,9 +23,6 @@ const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
 /// Default SSH private key paths tried during auto auth.
 const DEFAULT_KEY_NAMES: &[&str] = &["id_ed25519", "id_rsa", "id_ecdsa"];
 
-/// SSH config identity file key paths tried first in auto auth.
-const CONFIG_KEY_NAMES: &[&str] = &["id_ed25519", "id_rsa"];
-
 /// Error type for SSH authentication failures.
 #[derive(Debug)]
 pub struct AuthError {
@@ -294,7 +291,7 @@ pub async fn try_key_auth<H: client::Handler>(
 /// Authenticate with auto fallback (mirrors Electron `resolveAutoAuth`).
 ///
 /// Tries the following in order:
-/// 1. If SSH config has `IdentityFile` -> try `id_ed25519`, `id_rsa`
+/// 1. If SSH config has `IdentityFile` -> try each resolved path in order
 /// 2. SSH agent
 /// 3. Default keys: `id_ed25519`, `id_rsa`, `id_ecdsa`
 /// 4. All failed -> Err
@@ -314,20 +311,25 @@ pub async fn auth_auto<H: client::Handler>(
         }
     };
 
-    // Step 1: If SSH config has IdentityFile, try config identity keys first
+    // Step 1: If SSH config has IdentityFile, try each configured path first
     if let (Some(parser), Some(alias)) = (config_parser, resolved_alias) {
         if let Some(entry) = parser.resolve_host(alias) {
             if !entry.identity_files.is_empty() {
-                for key_name in CONFIG_KEY_NAMES {
-                    let key_path = ssh_dir.join(key_name);
-                    if try_key_auth_with_timeout(session, username, &key_path).await.is_ok() {
-                        log::info!(
-                            "Auto auth succeeded with config identity key: {}",
-                            key_name
-                        );
-                        return Ok(());
+                for key_path_str in &entry.identity_files {
+                    let key_path = PathBuf::from(key_path_str);
+                    log::info!("Trying config IdentityFile: {}", key_path_str);
+                    match try_key_auth_with_timeout(session, username, &key_path).await {
+                        Ok(()) => {
+                            log::info!("Auto auth succeeded with IdentityFile: {}", key_path_str);
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            log::debug!("IdentityFile {} failed: {}, trying next", key_path_str, e);
+                        }
                     }
                 }
+                // All configured IdentityFiles failed — fall through to agent/default keys
+                log::info!("All configured IdentityFiles exhausted, falling back to agent");
             }
         }
     }
