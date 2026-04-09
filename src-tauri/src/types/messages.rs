@@ -192,6 +192,20 @@ pub struct TokenBreakdown {
 pub struct SemanticStepGroup {
     pub id: String,
     pub label: String,
-    #[serde(rename = "stepIds")]
-    pub step_ids: Vec<String>,
+    #[serde(rename = "steps")]
+    pub steps: Vec<SemanticStep>,
+    #[serde(rename = "isGrouped")]
+    pub is_grouped: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "sourceMessageId")]
+    pub source_message_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "startTime")]
+    pub start_time: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "endTime")]
+    pub end_time: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "totalDuration")]
+    pub total_duration: Option<f64>,
 }

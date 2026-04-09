@@ -170,7 +170,30 @@ export function asEnhancedChunkArray(chunks: Chunk[]): EnhancedChunk[] | null {
     }
     if (chunk.chunkType === "ai" && !("semanticSteps" in chunk)) {
       (base as Record<string, unknown>).semanticSteps = [];
-      (base as Record<string, unknown>).semanticStepGroups = [];
+      // Adapt semanticStepGroups: convert number timestamps to Date objects
+      const rawGroups = (chunk as Record<string, unknown>)
+        .semanticStepGroups as
+        | import("./main/types/chunks").RawSemanticStepGroup[]
+        | undefined;
+      (base as Record<string, unknown>).semanticStepGroups = (
+        rawGroups ?? []
+      ).map((g) => ({
+        ...g,
+        steps: (g.steps ?? []).map((s) => ({
+          ...s,
+          startTime:
+            typeof s.startTime === "number"
+              ? new Date(s.startTime)
+              : s.startTime,
+          endTime:
+            s.endTime != null && typeof s.endTime === "number"
+              ? new Date(s.endTime)
+              : s.endTime,
+        })),
+        startTime: g.startTime != null ? new Date(g.startTime) : undefined,
+        endTime: g.endTime != null ? new Date(g.endTime) : undefined,
+        totalDuration: g.totalDuration ?? 0,
+      }));
     }
     // Tauri backend sends millisecond timestamps as numbers — convert to Date objects
     if (typeof base.startTime === "number") {

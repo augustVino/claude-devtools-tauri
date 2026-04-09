@@ -16,11 +16,16 @@ use crate::types::messages::{
 /// (empty or `None`) are each placed in their own group.
 ///
 /// Group labels follow this priority:
-/// 1. Contains tool calls       -> `"Tools ({count})"`
+/// 1. Contains tool calls       -> `"Tools ({count})"` (or single tool name for single-step)
 /// 2. Has thinking + output     -> `"Assistant Response"`
 /// 3. Has only thinking         -> `"Thinking"`
 /// 4. Has only output           -> `"Output"`
 /// 5. Fallback                  -> `"Response ({count} steps)"`
+///
+/// Each group carries full `SemanticStep` objects plus aggregated timing:
+/// - `start_time`  = earliest step start_time
+/// - `end_time`    = latest step end_time (or start + duration)
+/// - `total_duration` = sum of all step durations (ms -> seconds)
 pub fn build_semantic_step_groups(steps: &[SemanticStep]) -> Vec<SemanticStepGroup> {
     // BTreeMap preserves insertion order of keys for deterministic output.
     let mut groups: BTreeMap<String, Vec<&SemanticStep>> = BTreeMap::new();
@@ -39,14 +44,46 @@ pub fn build_semantic_step_groups(steps: &[SemanticStep]) -> Vec<SemanticStepGro
         .into_iter()
         .map(|(key, group_steps)| {
             let label = compute_group_label(&group_steps);
-            let step_ids: Vec<String> = group_steps.iter().map(|s| s.id.clone()).collect();
+            let owned_steps: Vec<SemanticStep> =
+                group_steps.iter().map(|s| (*s).clone()).collect();
             let id = if key.is_empty() {
-                step_ids.first().cloned().unwrap_or_default()
+                owned_steps
+                    .first()
+                    .map(|s| s.id.clone())
+                    .unwrap_or_default()
             } else {
-                key
+                key.clone()
             };
 
-            SemanticStepGroup { id, label, step_ids }
+            // Compute aggregated timing fields
+            let start_time = owned_steps
+                .iter()
+                .map(|s| s.start_time)
+                .min();
+            let end_time = owned_steps
+                .iter()
+                .map(|s| {
+                    s.end_time.unwrap_or(s.start_time.saturating_add(s.duration_ms))
+                })
+                .max();
+            let total_duration: f64 = owned_steps
+                .iter()
+                .map(|s| s.duration_ms as f64 / 1000.0)
+                .sum();
+
+            let is_grouped = owned_steps.len() > 1;
+            let source_message_id = if key.is_empty() { None } else { Some(key) };
+
+            SemanticStepGroup {
+                id,
+                label,
+                steps: owned_steps,
+                is_grouped,
+                source_message_id,
+                start_time,
+                end_time,
+                total_duration: Some(total_duration),
+            }
         })
         .collect()
 }
@@ -143,7 +180,10 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].id, "msg-1");
         assert_eq!(groups[0].label, "Thinking");
-        assert_eq!(groups[0].step_ids, vec!["s1"]);
+        assert_eq!(groups[0].steps.len(), 1);
+        assert_eq!(groups[0].steps[0].id, "s1");
+        assert!(!groups[0].is_grouped);
+        assert_eq!(groups[0].source_message_id.as_deref(), Some("msg-1"));
     }
 
     #[test]
@@ -156,8 +196,9 @@ mod tests {
         let groups = build_semantic_step_groups(&steps);
 
         assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].step_ids.len(), 3);
+        assert_eq!(groups[0].steps.len(), 3);
         assert_eq!(groups[0].label, "Tools (1)");
+        assert!(groups[0].is_grouped);
     }
 
     #[test]
@@ -244,7 +285,9 @@ mod tests {
         assert_eq!(groups.len(), 2);
         // Empty source group uses first step id
         assert_eq!(groups[0].id, "s1");
-        assert_eq!(groups[0].step_ids.len(), 2);
+        assert_eq!(groups[0].steps.len(), 2);
+        // Empty key -> source_message_id is None
+        assert!(groups[0].source_message_id.is_none());
     }
 
     #[test]
@@ -256,6 +299,37 @@ mod tests {
         ];
         let groups = build_semantic_step_groups(&steps);
 
-        assert_eq!(groups[0].step_ids, vec!["s3", "s1", "s2"]);
+        let step_ids: Vec<&str> = groups[0].steps.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(step_ids, vec!["s3", "s1", "s2"]);
+    }
+
+    #[test]
+    fn group_aggregates_timing_fields() {
+        let mut s1 = make_step("s1", SemanticStepType::Thinking, Some("msg-t"));
+        s1.start_time = 1000;
+        s1.duration_ms = 500;
+        s1.end_time = Some(1500);
+
+        let mut s2 = make_step("s2", SemanticStepType::ToolCall, Some("msg-t"));
+        s2.start_time = 1600;
+        s2.duration_ms = 200;
+        s2.end_time = Some(1800);
+
+        let groups = build_semantic_step_groups(&[s1, s2]);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].start_time, Some(1000));
+        assert_eq!(groups[0].end_time, Some(1800));
+        // (500 + 200) ms = 0.7 seconds
+        assert!((groups[0].total_duration.unwrap() - 0.7).abs() < f64::EPSILON);
+        assert!(groups[0].is_grouped);
+    }
+
+    #[test]
+    fn single_step_group_is_not_marked_as_grouped() {
+        let step = make_step("s1", SemanticStepType::Thinking, Some("msg-1"));
+        let groups = build_semantic_step_groups(&[step]);
+
+        assert!(!groups[0].is_grouped);
     }
 }

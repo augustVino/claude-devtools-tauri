@@ -435,7 +435,9 @@ export interface RawSemanticStepGroup {
   id: string;
   label: string;
   steps: Record<string, unknown>[];
-  startTime: number;
+  isGrouped: boolean;
+  sourceMessageId?: string;
+  startTime: number;      // Unix ms from Rust
   endTime: number;
   totalDuration: number;
 }
