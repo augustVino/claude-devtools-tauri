@@ -166,7 +166,7 @@ function createViewerMarkdownComponents(searchCtx: SearchContext | null): Compon
 
         if (lang === 'mermaid') {
           return (
-            <React.Suspense fallback={<code className="font-mono text-xs">{text}</code>}>
+            <React.Suspense fallback={<code className="block font-mono text-xs">{text}</code>}>
               <MermaidViewer code={text} />
             </React.Suspense>
           );

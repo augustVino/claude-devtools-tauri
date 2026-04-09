@@ -171,6 +171,7 @@ export const SortableTab = ({
             border: '1px solid var(--color-border-emphasis)',
           }}
           maxLength={50}
+          aria-label={`Rename ${tab.label}`}
         />
       ) : (
         <span

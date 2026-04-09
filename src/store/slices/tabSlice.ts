@@ -439,7 +439,7 @@ export const createTabSlice: StateCreator<AppState, [], [], TabSlice> = (set, ge
     const { paneLayout } = get();
     const newLayout = updateTabInLayout(paneLayout, tabId, (tab) => ({
       ...tab,
-      label,
+      label: truncateLabel(label),
     }));
     set(syncFromLayout(newLayout));
   },
