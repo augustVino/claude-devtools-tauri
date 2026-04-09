@@ -13,8 +13,8 @@ pnpm build              # 前端 TS 编译 + Vite 打包
 pnpm build:macos        # 完整 Tauri 构建 (DMG)
 pnpm lint               # ESLint
 
-# Rust 测试
-cd src-tauri && cargo test                          # 全部测试 (~552)
+# Rust 测试 (~552)
+cd src-tauri && cargo test                          # 全部测试
 cd src-tauri && cargo test -- <module_name>         # 单模块过滤（如 config, ssh_connection）
 cd src-tauri && cargo test -p claude-devtools -- <name>  # 按名称过滤
 
@@ -25,7 +25,7 @@ npx vitest run -- path/to/test.test.tsx
 
 ## 关键覆盖规则
 
-以下规则覆盖默认行为，修改代码前必须遵守：
+修改代码前必须遵守：
 
 - **Tauri API**: `withGlobalTauri: false`，必须从 `@tauri-apps/api` 直接导入，不可使用全局变量
 - **路径别名**: `@main/*` → `src/main/*`, `@renderer/*` → `src/*`, `@shared/*` → `src/shared/*`
@@ -38,5 +38,5 @@ npx vitest run -- path/to/test.test.tsx
 
 | 文档 | 内容 |
 |------|------|
-| [Architecture](.claude/architecture.md) | 后端/前端模块结构、数据流、多上下文架构、FsProvider trait、三层类型系统、设计模式、非显而易见的实现细节 |
+| [Architecture](.claude/architecture.md) | 后端/前端模块结构、数据流、多上下文架构、FsProvider trait、三层类型系统、双传输层、非显而易见的设计模式 |
 | [Development](.claude/development.md) | macOS 特性、Config 深度合并、文件监听器、测试模式、编码约定 |
