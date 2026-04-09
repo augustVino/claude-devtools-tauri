@@ -65,10 +65,83 @@ fn extract_host_aliases(config_text: &str) -> Vec<String> {
     aliases
 }
 
+/// Extract all IdentityFile values for a specific host alias from raw SSH config text.
+///
+/// Scans the config text for the target Host block and collects all IdentityFile
+/// directive values within that block's scope. This bypasses the ssh_config crate's
+/// HashMap-based query() which only retains the last value for duplicate keys.
+///
+/// Returns owned Vec of tilde-expanded absolute paths.
+fn extract_identity_files_for_alias(config_text: &str, alias: &str) -> Vec<String> {
+    let mut results = Vec::new();
+    let mut in_target_block = false;
+
+    for line in config_text.lines() {
+        let trimmed = line.trim();
+
+        // Skip comments and empty lines
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Detect Host directives
+        if let Some(rest) = trimmed.strip_prefix("Host ") {
+            let patterns: Vec<&str> = rest.split(',').map(|s| s.trim()).collect();
+            if patterns.contains(&alias) {
+                in_target_block = true;
+            } else if in_target_block {
+                // Entered a different Host block — our target block has ended
+                break;
+            }
+            continue;
+        }
+
+        // If we're inside the target block, look for IdentityFile directives
+        if in_target_block {
+            if let Some(value) = trimmed.strip_prefix("IdentityFile ") {
+                // Each space-separated token is a separate identity file path
+                for token in value.split_whitespace() {
+                    let expanded = expand_tilde_in_identity_path(token);
+                    results.push(expanded);
+                }
+            }
+        }
+    }
+
+    results
+}
+
+/// Expand leading `~` in an IdentityFile path to the user's home directory.
+///
+/// Handles `~/path`, `~` (bare), `~\path` (Windows), and passes through
+/// absolute/relative paths unchanged. Mirrors Electron's regex:
+///   `/^~(?=$|\/|\\)/` → `os.homedir() + rest`
+fn expand_tilde_in_identity_path(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        match dirs::home_dir() {
+            Some(home) => home.join(rest).to_string_lossy().to_string(),
+            None => path.to_string(),
+        }
+    } else if let Some(rest) = path.strip_prefix("~\\") {
+        // Windows backslash separator (Electron handles `\\` in regex)
+        match dirs::home_dir() {
+            Some(home) => home.join(rest).to_string_lossy().to_string(),
+            None => path.to_string(),
+        }
+    } else if path == "~" {
+        match dirs::home_dir() {
+            Some(home) => home.to_string_lossy().to_string(),
+            None => path.to_string(),
+        }
+    } else {
+        path.to_string()
+    }
+}
+
 /// Resolve a host alias into an `SshConfigHostEntry` using the parsed config.
 ///
 /// Returns fully owned data (no borrowed lifetimes).
-fn resolve_entry(alias: &str, config: &SSHConfig) -> SshConfigHostEntry {
+fn resolve_entry(alias: &str, config: &SSHConfig, config_text: &str) -> SshConfigHostEntry {
     let settings = config.query(alias);
 
     // HostName: only return if different from alias (Electron behavior)
@@ -86,15 +159,17 @@ fn resolve_entry(alias: &str, config: &SSHConfig) -> SshConfigHostEntry {
     // User
     let user = settings.get("User").map(|v| v.to_string());
 
-    // IdentityFile: check if explicitly configured
-    let has_identity_file = settings.contains_key("IdentityFile");
+    // IdentityFile: extract from RAW TEXT (not from crate's HashMap query)
+    // The ssh_config crate v0.1.0 uses HashMap::insert which loses duplicate keys.
+    // We must scan the original config text to capture ALL IdentityFile values.
+    let identity_files = extract_identity_files_for_alias(config_text, alias);
 
     SshConfigHostEntry {
         alias: alias.to_string(),
         host_name,
         user,
         port,
-        has_identity_file,
+        identity_files,
     }
 }
 
@@ -255,7 +330,7 @@ fn parse_and_resolve(config_text: &str) -> Result<Vec<SshConfigHostEntry>, Strin
     let aliases = extract_host_aliases(config_text);
     let entries: Vec<SshConfigHostEntry> = aliases
         .iter()
-        .map(|alias| resolve_entry(alias, &config))
+        .map(|alias| resolve_entry(alias, &config, config_text))
         .collect();
 
     Ok(entries)
@@ -273,6 +348,8 @@ pub struct SshConfigParser {
     entries_by_alias: HashMap<String, SshConfigHostEntry>,
     /// Host aliases in file order.
     aliases: Vec<String>,
+    /// Raw config text (needed for per-host-block IdentityFile extraction in resolve_host).
+    raw_config_text: String,
 }
 
 impl SshConfigParser {
@@ -313,6 +390,7 @@ impl SshConfigParser {
         Ok(Self {
             entries_by_alias,
             aliases,
+            raw_config_text: config_text.to_string(),
         })
     }
 
@@ -328,7 +406,12 @@ impl SshConfigParser {
     ///
     /// Returns `None` if the alias is not found in the config.
     pub fn resolve_host(&self, alias: &str) -> Option<SshConfigHostEntry> {
-        self.entries_by_alias.get(alias).cloned()
+        // Check if alias is known before re-parsing
+        if !self.entries_by_alias.contains_key(alias) {
+            return None;
+        }
+        let config = SSHConfig::parse_str(&self.raw_config_text).ok()?;
+        Some(resolve_entry(alias, &config, &self.raw_config_text))
     }
 }
 
@@ -378,7 +461,9 @@ mod tests {
         assert_eq!(host.host_name.as_deref(), Some("192.168.1.100"));
         assert_eq!(host.user.as_deref(), Some("admin"));
         assert_eq!(host.port, Some(2222));
-        assert!(host.has_identity_file);
+        assert_eq!(host.identity_files.len(), 1);
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(host.identity_files[0], home.join(".ssh/id_rsa").to_string_lossy().to_string());
     }
 
     #[test]
@@ -487,23 +572,62 @@ Host no-hostname
     }
 
     #[test]
-    fn test_has_identity_file() {
+    fn test_identity_files_parsing() {
         let file = write_config(
-            r#"Host with-key
+            r#"Host with-single-key
     IdentityFile ~/.ssh/id_ed25519
+
+Host with-multi-keys-same-line
+    IdentityFile ~/.ssh/custom_key ~/.ssh/backup_key
+
+Host with-multi-keys-separate-lines
+    IdentityFile ~/.ssh/first_key
+    IdentityFile ~/.ssh/second_key
 
 Host without-key
     HostName example.com
+
+Host with-absolute-path
+    IdentityFile /absolute/path/to/key
+
+Host with-bare-tilde
+    IdentityFile ~
 "#,
         );
         let parser = SshConfigParser::from_path(file.path()).unwrap().unwrap();
         let hosts = parser.get_hosts();
+        let home = dirs::home_dir().unwrap();
 
-        let with_key = hosts.iter().find(|h| h.alias == "with-key").unwrap();
-        assert!(with_key.has_identity_file);
+        // Single key: should resolve ~ to home dir
+        let single = hosts.iter().find(|h| h.alias == "with-single-key").unwrap();
+        assert_eq!(single.identity_files.len(), 1);
+        assert_eq!(single.identity_files[0], home.join(".ssh/id_ed25519").to_string_lossy().to_string());
 
-        let without_key = hosts.iter().find(|h| h.alias == "without-key").unwrap();
-        assert!(!without_key.has_identity_file);
+        // Multiple keys on same line: space-separated values should all be parsed
+        let multi_same_line = hosts.iter().find(|h| h.alias == "with-multi-keys-same-line").unwrap();
+        assert_eq!(multi_same_line.identity_files.len(), 2);
+        assert_eq!(multi_same_line.identity_files[0], home.join(".ssh/custom_key").to_string_lossy().to_string());
+        assert_eq!(multi_same_line.identity_files[1], home.join(".ssh/backup_key").to_string_lossy().to_string());
+
+        // Multiple keys on separate lines: BOTH must be captured (P0 scenario)
+        let multi_separate = hosts.iter().find(|h| h.alias == "with-multi-keys-separate-lines").unwrap();
+        assert_eq!(multi_separate.identity_files.len(), 2, "Separate-line IdentityFiles must both be captured");
+        assert_eq!(multi_separate.identity_files[0], home.join(".ssh/first_key").to_string_lossy().to_string());
+        assert_eq!(multi_separate.identity_files[1], home.join(".ssh/second_key").to_string_lossy().to_string());
+
+        // No IdentityFile directive: empty vec
+        let none = hosts.iter().find(|h| h.alias == "without-key").unwrap();
+        assert!(none.identity_files.is_empty());
+
+        // Absolute path (no ~): passed through as-is
+        let abs = hosts.iter().find(|h| h.alias == "with-absolute-path").unwrap();
+        assert_eq!(abs.identity_files.len(), 1);
+        assert_eq!(abs.identity_files[0], "/absolute/path/to/key");
+
+        // Bare tilde: expands to home directory
+        let bare_tilde = hosts.iter().find(|h| h.alias == "with-bare-tilde").unwrap();
+        assert_eq!(bare_tilde.identity_files.len(), 1);
+        assert_eq!(bare_tilde.identity_files[0], home.to_string_lossy().to_string());
     }
 
     #[test]
@@ -708,5 +832,48 @@ Host visible
         // extra-host should appear only once despite being included twice (via direct + symlink)
         let extra_count = hosts.iter().filter(|h| h.alias == "extra-host").count();
         assert_eq!(extra_count, 1, "extra-host should appear exactly once (deduplicated via symlink cycle detection)");
+    }
+
+    // ── IdentityFile extraction helper tests ─────────────────────
+
+    #[test]
+    fn test_expand_tilde_in_identity_path() {
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(expand_tilde_in_identity_path("~/Documents/key"), home.join("Documents/key").to_string_lossy().to_string());
+        assert_eq!(expand_tilde_in_identity_path("~"), home.to_string_lossy().to_string());
+        assert_eq!(expand_tilde_in_identity_path("/etc/ssh/key"), "/etc/ssh/key");
+        assert_eq!(expand_tilde_in_identity_path("relative/key"), "relative/key");
+        assert_eq!(expand_tilde_in_identity_path(""), "");
+        // ~ in middle of path: NOT expanded
+        assert_eq!(expand_tilde_in_identity_path("/path/to/~user/key"), "/path/to/~user/key");
+    }
+
+    #[test]
+    fn test_extract_identity_files_for_alias() {
+        let config = r#"Host other
+    IdentityFile ~/.ssh/other_key
+
+Host target
+   HostName 10.0.0.1
+    IdentityFile ~/.ssh/target_key1
+    IdentityFile ~/.ssh/target_key2
+
+Host after
+    IdentityFile ~/.ssh/after_key
+"#;
+        let files = extract_identity_files_for_alias(config, "target");
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0], home.join(".ssh/target_key1").to_string_lossy().to_string());
+        assert_eq!(files[1], home.join(".ssh/target_key2").to_string_lossy().to_string());
+        // Must not pick up IdentityFile from other blocks
+        assert!(!files.iter().any(|f| f.contains("other_key")));
+        assert!(!files.iter().any(|f| f.contains("after_key")));
+    }
+
+    #[test]
+    fn test_extract_identity_files_nonexistent_alias() {
+        let files = extract_identity_files_for_alias("Host real\n    IdentityFile ~/.ssh/real_key\n", "nonexistent");
+        assert!(files.is_empty());
     }
 }

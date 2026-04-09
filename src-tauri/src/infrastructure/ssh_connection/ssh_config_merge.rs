@@ -15,7 +15,7 @@ pub(super) fn merge_with_ssh_config_static(
                 if let Some(ref user) = entry.user { config.username = user.clone(); }
             }
             if config.port == 22 { if let Some(port) = entry.port { config.port = port; } }
-            if matches!(config.auth_method, SshAuthMethod::Auto) && entry.has_identity_file {
+            if matches!(config.auth_method, SshAuthMethod::Auto) && !entry.identity_files.is_empty() {
                 config.auth_method = SshAuthMethod::PrivateKey;
             }
         }

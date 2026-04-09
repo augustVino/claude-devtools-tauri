@@ -317,7 +317,7 @@ pub async fn auth_auto<H: client::Handler>(
     // Step 1: If SSH config has IdentityFile, try config identity keys first
     if let (Some(parser), Some(alias)) = (config_parser, resolved_alias) {
         if let Some(entry) = parser.resolve_host(alias) {
-            if entry.has_identity_file {
+            if !entry.identity_files.is_empty() {
                 for key_name in CONFIG_KEY_NAMES {
                     let key_path = ssh_dir.join(key_name);
                     if try_key_auth_with_timeout(session, username, &key_path).await.is_ok() {
