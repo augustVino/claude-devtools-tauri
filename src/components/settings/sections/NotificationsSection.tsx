@@ -113,7 +113,7 @@ export const NotificationsSection = ({
             <button
               onClick={onClearSnooze}
               disabled={saving}
-              className={`rounded-md bg-red-500/10 px-3 py-1.5 text-sm font-medium text-red-400 transition-all duration-150 hover:bg-red-500/20 ${saving ? 'cursor-not-allowed opacity-50' : ''} `}
+              className={`rounded-md bg-red-500/10 px-3 py-1.5 text-sm font-medium text-red-400 transition-[background-color] duration-150 hover:bg-red-500/20 ${saving ? 'cursor-not-allowed opacity-50' : ''} `}
             >
               Clear Snooze
             </button>

@@ -95,7 +95,7 @@ export const ColorPaletteSelector = ({
               title={color.label}
               onClick={() => handlePresetClick(color.key as TriggerColor)}
               disabled={disabled}
-              className={`size-5 rounded-full transition-all ${isSelected ? 'ring-2 ring-white/60 ring-offset-1 ring-offset-surface' : 'hover:ring-1 hover:ring-white/30'}`}
+              className={`size-5 rounded-full transition-[box-shadow] ${isSelected ? 'ring-2 ring-white/60 ring-offset-1 ring-offset-surface' : 'hover:ring-1 hover:ring-white/30'}`}
               style={{ backgroundColor: color.hex }}
             />
           );
@@ -107,7 +107,7 @@ export const ColorPaletteSelector = ({
           title="Custom hex color"
           onClick={handleCustomClick}
           disabled={disabled}
-          className={`flex size-5 items-center justify-center rounded-full border text-[9px] font-bold leading-none transition-all ${
+          className={`flex size-5 items-center justify-center rounded-full border text-[9px] font-bold leading-none transition-[box-shadow] ${
             isCustom
               ? 'border-white/40 text-white ring-2 ring-white/60 ring-offset-1 ring-offset-surface'
               : 'border-border-emphasis text-text-muted hover:ring-1 hover:ring-white/30'

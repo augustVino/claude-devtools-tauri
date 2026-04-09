@@ -57,7 +57,7 @@ export const SettingsSelect = <T extends string | number>({
         type="button"
         onClick={() => !disabled && setIsOpen(!isOpen)}
         disabled={disabled}
-        className={`flex h-8 items-center justify-between gap-2 rounded-md border bg-transparent px-2 text-sm transition-all duration-150 focus:outline-none focus:ring-1 focus:ring-zinc-700 ${fullWidth ? 'w-full' : 'min-w-[140px]'} ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${isOpen ? 'ring-1 ring-zinc-700' : ''} `}
+        className={`flex h-8 items-center justify-between gap-2 rounded-md border bg-transparent px-2 text-sm transition-[border-color,box-shadow] duration-150 focus:outline-none focus:ring-1 focus:ring-zinc-700 ${fullWidth ? 'w-full' : 'min-w-[140px]'} ${disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${isOpen ? 'ring-1 ring-zinc-700' : ''} `}
         style={{
           color: 'var(--color-text-secondary)',
           borderColor: isOpen ? 'var(--color-border)' : 'var(--color-border-subtle)',

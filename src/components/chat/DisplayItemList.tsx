@@ -249,7 +249,7 @@ export const DisplayItemList = React.memo(function DisplayItemList({
               <div>
                 <button
                   onClick={() => onItemClick(itemKey)}
-                  className="group flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 transition-all duration-200"
+                  className="group flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 transition-[background-color,border-color] duration-200"
                   style={{
                     backgroundColor: TOOL_CALL_BG,
                     border: `1px solid ${TOOL_CALL_BORDER}`,

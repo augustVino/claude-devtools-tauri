@@ -56,7 +56,7 @@ const CommandSearch = ({ value, onChange }: Readonly<CommandSearchProps>): React
     <div className="relative mx-auto w-full max-w-xl">
       {/* Search container with glow effect on focus */}
       <div
-        className={`relative flex items-center gap-3 rounded-sm border bg-surface-raised px-4 py-3 transition-all duration-200 ${
+        className={`relative flex items-center gap-3 rounded-sm border bg-surface-raised px-4 py-3 transition-[border-color,box-shadow] duration-200 ${
           isFocused
             ? 'border-zinc-500 shadow-[0_0_20px_rgba(255,255,255,0.04)] ring-1 ring-zinc-600/30'
             : 'border-border hover:border-zinc-600'
@@ -156,7 +156,7 @@ const RepositoryCard = ({
   return (
     <button
       onClick={onClick}
-      className={`group relative flex min-h-[120px] flex-col overflow-hidden rounded-sm border p-4 text-left transition-all duration-300 ${
+      className={`group relative flex min-h-[120px] flex-col overflow-hidden rounded-sm border p-4 text-left transition-[background-color,border-color] duration-300 ${
         isHighlighted
           ? 'border-border-emphasis bg-surface-raised'
           : 'bg-surface/50 border-border hover:border-border-emphasis hover:bg-surface-raised'
@@ -234,7 +234,7 @@ const NewProjectCard = (): React.JSX.Element => {
 
   return (
     <button
-      className="hover:bg-surface/30 group relative flex min-h-[120px] flex-col items-center justify-center rounded-sm border border-dashed border-border bg-transparent p-4 transition-all duration-300 hover:border-border-emphasis"
+      className="hover:bg-surface/30 group relative flex min-h-[120px] flex-col items-center justify-center rounded-sm border border-dashed border-border bg-transparent p-4 transition-[background-color,border-color] duration-300 hover:border-border-emphasis"
       onClick={handleClick}
       title="Select a project folder"
     >

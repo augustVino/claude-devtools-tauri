@@ -25,13 +25,11 @@ pub struct WatcherOrchestrator {
     cache: DataCache,
     file_watcher: Arc<Mutex<FileWatcher>>,
     todo_watcher: Arc<Mutex<FileWatcher>>,
-    /// Optional callback invoked on file change events to invalidate project-level caches.
+    /// Callback invoked on file change events to invalidate project-level caches.
     /// Mirrors Electron's `FileWatcher.setProjectScanner().invalidateCachesForProject()`.
-    /// Will be wired to ProjectScanner once caching is introduced.
     ///
-    /// **Constraint**: Callback MUST be non-blocking (O(1) HashMap delete etc).
-    /// If future cache invalidation requires I/O, upgrade signature to async fn.
-    #[allow(dead_code)]
+    /// **Constraint**: Callback MUST be non-blocking or spawn async work internally.
+    /// Current implementation spawns a tokio task for DataCache.invalidate_project().
     on_project_cache_invalidate: Option<Arc<dyn Fn(&str) + Send + Sync>>,
 }
 
@@ -59,9 +57,8 @@ impl WatcherOrchestrator {
     ///
     /// This mirrors Electron's `FileWatcher.setProjectScanner()` pattern where
     /// file change events trigger `ProjectScanner.invalidateCachesForProject()`.
-    /// In Tauri, ProjectScanner does not yet have caches, so this is a forward-looking
-    /// hook. Once ProjectScanner gains `contentPresenceCache` and/or `sessionMetadataCache`,
-    /// wire this to `project_scanner.invalidate_caches_for_project(project_id)`.
+    /// In Tauri, this is wired to `DataCache.invalidate_project()` in
+    /// `ServiceContext::spawn_watcher_tasks()`.
     pub fn set_on_cache_invalidate<F>(&mut self, callback: F)
     where
         F: Fn(&str) + Send + Sync + 'static,

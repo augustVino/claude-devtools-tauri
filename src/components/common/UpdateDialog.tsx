@@ -228,7 +228,7 @@ export const UpdateDialog = (): React.JSX.Element | null => {
               </div>
               <div className="h-2 w-full overflow-hidden rounded-full" style={{ backgroundColor: 'var(--color-surface)' }}>
                 <div
-                  className="h-full rounded-full bg-blue-600 transition-all duration-300 ease-out"
+                  className="h-full rounded-full bg-blue-600 transition-[width] duration-300 ease-out"
                   style={{ width: `${downloadProgress}%` }}
                 />
               </div>

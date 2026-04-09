@@ -470,6 +470,19 @@ function createDirectoryInjection(path: string, aiGroupId: string): ClaudeMdInje
 // =============================================================================
 
 /**
+ * Result of computing CLAUDE.md stats for an AI group.
+ * Includes both the stats and the updated paths set for threading to the next group.
+ *
+ * Lifecycle: `previousPaths` is valid only within a single `processSessionClaudeMd`
+ * call. Do NOT cache or share across calls — it is mutated in-place during computation.
+ */
+interface ComputeClaudeMdStatsResult {
+  stats: ClaudeMdStats;
+  /** Updated previousPaths set — caller should thread this to the next group */
+  previousPaths: Set<string>;
+}
+
+/**
  * Parameters for computing CLAUDE.md stats for an AI group.
  */
 interface ComputeClaudeMdStatsParams {
@@ -477,6 +490,8 @@ interface ComputeClaudeMdStatsParams {
   userGroup: UserGroup | null;
   isFirstGroup: boolean;
   previousInjections: ClaudeMdInjection[];
+  /** Threaded path set from previous group — O(1) reuse avoids O(N) Set rebuild per group */
+  previousPaths: Set<string>;
   projectRoot: string;
   contextTokens: number;
   tokenData?: Record<string, ClaudeMdFileInfo>;
@@ -484,20 +499,24 @@ interface ComputeClaudeMdStatsParams {
 
 /**
  * Compute CLAUDE.md injection statistics for an AI group.
+ *
+ * ⚠️ WARNING: This mutates `previousInjections` in-place via push (mutable push pattern).
+ * Consumers must NOT mutate `stats.accumulatedInjections` after retrieval — it aliases
+ * the caller's `previousInjections` array.
  */
-function computeClaudeMdStats(params: ComputeClaudeMdStatsParams): ClaudeMdStats {
+function computeClaudeMdStats(params: ComputeClaudeMdStatsParams): ComputeClaudeMdStatsResult {
   const {
     aiGroup,
     userGroup,
     isFirstGroup,
     previousInjections,
+    previousPaths,
     projectRoot,
     contextTokens,
     tokenData,
   } = params;
 
   const newInjections: ClaudeMdInjection[] = [];
-  const previousPaths = new Set(previousInjections.map((inj) => inj.path));
 
   // For the first group, add global injections
   // Use "ai-N" format for firstSeenInGroup to enable turn navigation in SessionClaudeMdPanel
@@ -562,8 +581,12 @@ function computeClaudeMdStats(params: ComputeClaudeMdStatsParams): ClaudeMdStats
     }
   }
 
-  // Build accumulated injections
-  const accumulatedInjections = [...previousInjections, ...newInjections];
+  // Build accumulated injections (mutable push to avoid O(N²) spread copy)
+  // ⚠️ WARNING: This mutates the caller's previousInjections array in-place.
+  for (const inj of newInjections) {
+    previousInjections.push(inj);
+  }
+  const accumulatedInjections = previousInjections; // alias, not a copy
 
   // Calculate totals
   const totalEstimatedTokens = accumulatedInjections.reduce(
@@ -575,12 +598,15 @@ function computeClaudeMdStats(params: ComputeClaudeMdStatsParams): ClaudeMdStats
   const percentageOfContext = contextTokens > 0 ? (totalEstimatedTokens / contextTokens) * 100 : 0;
 
   return {
-    newInjections,
-    accumulatedInjections,
-    totalEstimatedTokens,
-    percentageOfContext,
-    newCount: newInjections.length,
-    accumulatedCount: accumulatedInjections.length,
+    stats: {
+      newInjections,
+      accumulatedInjections,
+      totalEstimatedTokens,
+      percentageOfContext,
+      newCount: newInjections.length,
+      accumulatedCount: accumulatedInjections.length,
+    },
+    previousPaths,
   };
 }
 
@@ -602,6 +628,9 @@ export function processSessionClaudeMd(
   let isFirstAiGroup = true;
   let previousUserGroup: UserGroup | null = null;
 
+  // Threaded path set for O(N) previousPaths reuse across AI groups
+  let previousPaths = new Set<string>();
+
   for (const item of items) {
     // Track user groups for pairing with subsequent AI groups
     if (item.type === 'user') {
@@ -612,6 +641,7 @@ export function processSessionClaudeMd(
     // Handle compact items: reset accumulated state across compaction boundaries
     if (item.type === 'compact') {
       accumulatedInjections = [];
+      previousPaths = new Set<string>();
       isFirstAiGroup = true;
       previousUserGroup = null;
       continue;
@@ -625,19 +655,27 @@ export function processSessionClaudeMd(
       // Use input tokens as a proxy for context window usage
       const contextTokens = aiGroup.tokens.input || 0;
 
-      // Compute stats for this group
-      const stats = computeClaudeMdStats({
+      // Compute stats for this group (with threaded previousPaths)
+      const result = computeClaudeMdStats({
         aiGroup,
         userGroup: previousUserGroup,
         isFirstGroup: isFirstAiGroup,
         previousInjections: accumulatedInjections,
+        previousPaths,
         projectRoot,
         contextTokens,
         tokenData,
       });
+      const stats = result.stats;
 
-      // Store stats
-      statsMap.set(aiGroup.id, stats);
+      // Store stats with snapshot to prevent mutation pollution from subsequent push operations
+      statsMap.set(aiGroup.id, {
+        ...stats,
+        accumulatedInjections: [...stats.accumulatedInjections],
+      });
+
+      // Thread updated paths to next iteration
+      previousPaths = result.previousPaths;
 
       // Update accumulated state for next iteration
       accumulatedInjections = stats.accumulatedInjections;

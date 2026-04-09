@@ -152,7 +152,6 @@ impl DataCache {
     }
 
     /// 使指定项目下的所有缓存条目失效。
-    #[allow(dead_code)]
     pub async fn invalidate_project(&self, project_id: &str) {
         if !self.is_enabled() {
             return;

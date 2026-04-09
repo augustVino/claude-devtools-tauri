@@ -37,7 +37,7 @@ interface ChatHistoryProps {
 }
 
 export const ChatHistory = ({ tabId }: ChatHistoryProps): React.ReactElement => {
-  const VIRTUALIZATION_THRESHOLD = 120;
+  const VIRTUALIZATION_THRESHOLD = 30;
   const ESTIMATED_CHAT_ITEM_HEIGHT = 260;
 
   // Per-tab UI state (context panel, scroll position, expansion) from useTabUI
@@ -852,7 +852,7 @@ export const ChatHistory = ({ tabId }: ChatHistoryProps): React.ReactElement => 
               scrollToBottom('smooth');
               setShowScrollButton(false);
             }}
-            className="absolute bottom-5 z-20 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs shadow-lg transition-all"
+            className="absolute bottom-5 z-20 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs shadow-lg transition-[background-color,box-shadow]"
             style={{
               right:
                 isContextPanelVisible && allContextInjections.length > 0

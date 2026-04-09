@@ -535,7 +535,7 @@ export const DateGroupedSessions = (): React.JSX.Element => {
                     className="sticky top-0 flex h-full items-center gap-1.5 border-t px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wider"
                     style={{
                       backgroundColor:
-                        'color-mix(in srgb, var(--color-surface-sidebar) 95%, transparent)',
+                        'var(--color-surface-sidebar)',
                       color: 'var(--color-text-muted)',
                       borderColor: 'var(--color-border-emphasis)',
                     }}
@@ -548,7 +548,7 @@ export const DateGroupedSessions = (): React.JSX.Element => {
                     className="sticky top-0 flex h-full items-center border-t px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wider"
                     style={{
                       backgroundColor:
-                        'color-mix(in srgb, var(--color-surface-sidebar) 95%, transparent)',
+                        'var(--color-surface-sidebar)',
                       color: 'var(--color-text-muted)',
                       borderColor: 'var(--color-border-emphasis)',
                     }}

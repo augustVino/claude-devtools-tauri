@@ -70,7 +70,7 @@ const ChatHistoryItemInner = ({
       return (
         <div
           ref={registerChatItemRef(item.group.id)}
-          className={`rounded-lg transition-all duration-[3000ms] ease-out ${hl.className}`}
+          className={`rounded-lg transition-[background-color,box-shadow] duration-[3000ms] ease-out ${hl.className}`}
           style={hl.style}
         >
           <UserChatGroup userGroup={item.group} />
@@ -88,7 +88,7 @@ const ChatHistoryItemInner = ({
       return (
         <div
           ref={registerChatItemRef(item.group.id)}
-          className={`rounded-lg transition-all duration-[3000ms] ease-out ${hl.className}`}
+          className={`rounded-lg transition-[background-color,box-shadow] duration-[3000ms] ease-out ${hl.className}`}
           style={hl.style}
         >
           <SystemChatGroup systemGroup={item.group} />
@@ -110,7 +110,7 @@ const ChatHistoryItemInner = ({
       return (
         <div
           ref={registerAIGroupRef(item.group.id)}
-          className={`rounded-lg transition-all duration-[3000ms] ease-out ${hl.className}`}
+          className={`rounded-lg transition-[background-color,box-shadow] duration-[3000ms] ease-out ${hl.className}`}
           style={hl.style}
         >
           <AIChatGroup

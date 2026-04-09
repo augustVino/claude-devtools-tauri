@@ -472,6 +472,7 @@ impl SessionServiceImpl {
         // Strip raw messages before IPC transfer (aligns with Electron's slimDetail).
         // Renderer never uses raw messages — they exist only for export.
         // This reduces IPC serialization volume by ~50-60%.
+        detail.messages.clear();
         for process in &mut detail.processes {
             process.messages.clear();
         }

@@ -67,7 +67,7 @@ export const CompactBoundary = ({
       {/* Collapsible Header - Amber/orange accent for distinction */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="group flex w-full cursor-pointer items-center gap-3 overflow-hidden rounded-lg px-4 py-2.5 transition-all duration-200"
+        className="group flex w-full cursor-pointer items-center gap-3 overflow-hidden rounded-lg px-4 py-2.5 transition-[background-color,border-color] duration-200"
         style={{
           backgroundColor: TOOL_CALL_BG,
           border: `1px solid ${TOOL_CALL_BORDER}`,

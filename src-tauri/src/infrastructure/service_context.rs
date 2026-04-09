@@ -105,7 +105,7 @@ impl ServiceContext {
     ) {
         use crate::infrastructure::watcher_orchestrator::WatcherOrchestrator;
 
-        let orchestrator = WatcherOrchestrator::new(
+        let mut orchestrator = WatcherOrchestrator::new(
             self.projects_dir.clone(),
             self.todos_dir.clone(),
             self.fs_provider.clone(),
@@ -113,6 +113,19 @@ impl ServiceContext {
             self.file_watcher.clone(),
             self.todo_watcher.clone(),
         );
+
+        // Wire project-level cache invalidation callback (mirrors Electron's
+        // FileWatcher→ProjectScanner.invalidateCachesForProject linkage).
+        // DataCache.invalidate_project is async; spawn a lightweight task to avoid
+        // blocking the file watcher event loop.
+        let cache_for_invalidation = self.cache.clone();
+        orchestrator.set_on_cache_invalidate(move |project_id: &str| {
+            let cache = cache_for_invalidation.clone();
+            let pid = project_id.to_string();
+            tauri::async_runtime::spawn(async move {
+                cache.invalidate_project(&pid).await;
+            });
+        });
 
         let cancel_token = orchestrator.spawn_all(
             app_handle,
