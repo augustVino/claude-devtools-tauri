@@ -125,10 +125,11 @@ export function createMarkdownComponents(searchCtx: SearchContext | null): Compo
 
       if (isBlock) {
         const lang = className?.replace('language-', '') ?? '';
+        const text = content.replace(/\n$/, '');
         if (lang === 'mermaid') {
           return (
-            <React.Suspense fallback={<code className="block font-mono text-xs">{content}</code>}>
-              <MermaidViewer code={content} />
+            <React.Suspense fallback={<code className="block font-mono text-xs">{text}</code>}>
+              <MermaidViewer code={text} />
             </React.Suspense>
           );
         }
