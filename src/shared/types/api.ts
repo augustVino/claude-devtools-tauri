@@ -243,7 +243,8 @@ export interface SshConfigHostEntry {
   hostName?: string;
   user?: string;
   port?: number;
-  hasIdentityFile: boolean;
+  /** Resolved IdentityFile paths (~ expanded to absolute). Empty if not configured. */
+  identityFiles?: string[];
 }
 
 /**
