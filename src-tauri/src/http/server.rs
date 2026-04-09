@@ -48,7 +48,7 @@ pub fn spawn_http_server(
     let app = crate::http::build_router(http_state, dist_dir);
     let shutdown_token = shutdown.clone();
 
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         match tokio::net::TcpListener::bind(format!("127.0.0.1:{}", port)).await {
             Ok(listener) => {
                 log::info!("HTTP server listening on 127.0.0.1:{}", port);
