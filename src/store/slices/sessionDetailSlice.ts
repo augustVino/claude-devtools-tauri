@@ -657,49 +657,8 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
           .map((item) => (item as { type: 'ai'; group: { id: string } }).group.id)
       );
 
-      // Update only the data, preserve UI states
-      set((state) => ({
-        sessionDetail: slimDetail,
-        conversation: newConversation,
-        // Update on latest sessions state to avoid restoring stale sidebar snapshots.
-        sessions: state.sessions.map((s) =>
-          s.id === sessionId ? { ...s, isOngoing: detail.session?.isOngoing ?? false } : s
-        ),
-        // Preserve visible group if it still exists, otherwise keep current
-        ...(visibleGroupStillExists
-          ? {
-              selectedAIGroup: updatedSelectedGroup
-            }
-          : {})
-        // Note: aiGroupExpansionLevels and expandedStepIds are NOT touched
-        // so expansion states are preserved
-      }));
-
-      // Auto-expand newly arrived AI groups if the setting is enabled.
-      // Uses prevGroupIds snapshotted before set() so the diff is accurate.
-      if (get().appConfig?.general?.autoExpandAIGroups) {
-        const oldGroupIds = prevGroupIds;
-        const newGroupIds = newConversation.items
-          .filter(
-            (item) =>
-              item.type === 'ai' &&
-              !oldGroupIds.has((item as { type: 'ai'; group: { id: string } }).group.id)
-          )
-          .map((item) => (item as { type: 'ai'; group: { id: string } }).group.id);
-
-        if (newGroupIds.length > 0) {
-          for (const tab of latestAllTabs) {
-            if (tab.type === 'session' && tab.sessionId === sessionId) {
-              for (const groupId of newGroupIds) {
-                get().expandAIGroupForTab(tab.id, groupId);
-              }
-            }
-          }
-        }
-      }
-
-      // Also update per-tab session data for all tabs viewing this session
-      const latestTabSessionData = { ...get().tabSessionData };
+      // Build per-tab session data before the single merged set() below
+      const latestTabSessionData: Record<string, TabSessionData> = { ...get().tabSessionData };
       for (const tab of latestAllTabs) {
         if (tab.type === 'session' && tab.sessionId === sessionId && latestTabSessionData[tab.id]) {
           const tabData = latestTabSessionData[tab.id];
@@ -726,7 +685,49 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
           };
         }
       }
-      set({ tabSessionData: latestTabSessionData });
+
+      // Update only the data, preserve UI states (single merged set — was dual set())
+      set((state) => ({
+        sessionDetail: slimDetail,
+        conversation: newConversation,
+        // Update on latest sessions state to avoid restoring stale sidebar snapshots.
+        sessions: state.sessions.map((s) =>
+          s.id === sessionId ? { ...s, isOngoing: detail.session?.isOngoing ?? false } : s
+        ),
+        // Preserve visible group if it still exists, otherwise keep current
+        ...(visibleGroupStillExists
+          ? {
+              selectedAIGroup: updatedSelectedGroup
+            }
+          : {}),
+        // Note: aiGroupExpansionLevels and expandedStepIds are NOT touched
+        // so expansion states are preserved
+        tabSessionData: latestTabSessionData,
+      }));
+
+      // Auto-expand newly arrived AI groups if the setting is enabled.
+      // Uses prevGroupIds snapshotted before set() so the diff is accurate.
+      if (get().appConfig?.general?.autoExpandAIGroups) {
+        const oldGroupIds = prevGroupIds;
+        const newGroupIds = newConversation.items
+          .filter(
+            (item) =>
+              item.type === 'ai' &&
+              !oldGroupIds.has((item as { type: 'ai'; group: { id: string } }).group.id)
+          )
+          .map((item) => (item as { type: 'ai'; group: { id: string } }).group.id);
+
+        if (newGroupIds.length > 0) {
+          for (const tab of latestAllTabs) {
+            if (tab.type === 'session' && tab.sessionId === sessionId) {
+              for (const groupId of newGroupIds) {
+                get().expandAIGroupForTab(tab.id, groupId);
+              }
+            }
+          }
+        }
+      }
+
     } catch (error) {
       logger.error('refreshSessionInPlace error:', error);
       // Don't set error state - this is a background refresh

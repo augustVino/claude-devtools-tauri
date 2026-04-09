@@ -336,7 +336,6 @@ export function useSettingsHandlers({
 
     if (isTauriMode()) {
       const { save } = await import("@tauri-apps/plugin-dialog");
-      const { invoke } = await import("@tauri-apps/api/core");
 
       try {
         const filePath = await save({
@@ -347,7 +346,7 @@ export function useSettingsHandlers({
 
         if (filePath == null) return; // User cancelled
 
-        await invoke("write_text_file", { path: filePath, content });
+        await api.writeTextFile(filePath, content);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         setError(`Export failed: ${message}`);

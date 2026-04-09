@@ -458,6 +458,9 @@ export interface ElectronAPI {
   ) => Promise<{ success: boolean; error?: string }>;
   openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
 
+  /** Write text content to a file at the given path (desktop-only). */
+  writeTextFile: (path: string, content: string) => Promise<void>;
+
   // Window controls (when title bar is hidden, e.g. Windows / Linux)
   windowControls: {
     minimize: () => Promise<void>;

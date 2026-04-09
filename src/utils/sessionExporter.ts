@@ -438,11 +438,10 @@ export async function triggerDownload(
   const content = fn(detail);
 
   // Detect Tauri via isTauriMode from the API adapter
-  const { isTauriMode } = await import("@renderer/api");
+  const { isTauriMode, api } = await import("@renderer/api");
 
   if (isTauriMode()) {
     const { save } = await import("@tauri-apps/plugin-dialog");
-    const { invoke } = await import("@tauri-apps/api/core");
 
     const filterMap: Record<
       ExportFormat,
@@ -462,7 +461,7 @@ export async function triggerDownload(
 
       if (filePath == null) return; // User cancelled
 
-      await invoke("write_text_file", { path: filePath, content });
+      await api.writeTextFile(filePath, content);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       alert(`Export failed: ${message}`);

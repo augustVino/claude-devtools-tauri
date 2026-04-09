@@ -267,6 +267,9 @@ export class TauriAPIClient implements ElectronAPI {
     }
   };
 
+  readonly writeTextFile = async (path: string, content: string): Promise<void> =>
+    invoke('write_text_file', { path, content });
+
   // ===========================================================================
   // Waterfall and Conversation Group commands
   // ===========================================================================

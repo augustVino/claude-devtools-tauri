@@ -630,6 +630,10 @@ export class HttpAPIClient implements ElectronAPI {
     return { success: true };
   };
 
+  writeTextFile = async (_path: string, _content: string): Promise<void> => {
+    throw new Error('writeTextFile is only available in Tauri/desktop mode');
+  };
+
   windowControls = {
     minimize: async (): Promise<void> => {},
     maximize: async (): Promise<void> => {},
