@@ -168,6 +168,12 @@ export class TauriAPIClient implements ElectronAPI {
   ): Promise<SessionDetail | null> =>
     invoke("get_session_detail", { projectId, sessionId });
 
+  readonly getSessionDetailForExport = (
+    projectId: string,
+    sessionId: string,
+  ): Promise<SessionDetail | null> =>
+    invoke("get_session_detail_for_export", { projectId, sessionId });
+
   readonly getSessionMetrics = (
     projectId: string,
     sessionId: string,

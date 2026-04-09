@@ -257,6 +257,7 @@ pub fn run() {
       commands::version::get_app_version,
       commands::sessions::get_sessions,
       commands::sessions::get_session_detail,
+      commands::sessions::get_session_detail_for_export,
       commands::sessions::get_session_metrics,
       commands::sessions::get_sessions_paginated,
       commands::sessions::get_sessions_by_ids,

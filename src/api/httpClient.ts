@@ -261,6 +261,14 @@ export class HttpAPIClient implements ElectronAPI {
       `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}`,
     );
 
+  getSessionDetailForExport = (
+    projectId: string,
+    sessionId: string,
+  ): Promise<SessionDetail | null> =>
+    this.get<SessionDetail | null>(
+      `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/export-detail`,
+    );
+
   getSessionMetrics = (
     projectId: string,
     sessionId: string,

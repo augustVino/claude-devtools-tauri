@@ -411,6 +411,35 @@ impl SessionServiceImpl {
     //  会话详情
     // ════════════════════════════════════════════════════════════════
 
+    /// 获取完整会话详情（含原始消息），专供导出功能使用。
+    ///
+    /// 不走 slim 缓存，每次重新解析以确保数据完整性。
+    pub async fn get_session_detail_for_export(
+        &self,
+        project_id: &str,
+        session_id: &str,
+    ) -> Result<Option<SessionDetail>, AppError> {
+        // 始终重新解析，不使用 slim 缓存
+        let session_path = self.session_path(project_id, session_id);
+        if !session_path.exists() {
+            return Ok(None);
+        }
+
+        let parsed = parse_session_file(&session_path).await;
+        let session = self
+            .build_session_metadata(&session_path, project_id)
+            .await
+            .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
+
+        let subagents = self.resolve_subagents(project_id, session_id, &parsed).await;
+        let detail = ChunkBuilder::build_session_detail(
+            session, parsed.messages.clone(), subagents,
+        );
+        // 注意：此处不清空 process.messages —— 导出需要完整数据
+
+        Ok(Some(detail))
+    }
+
     /// 获取指定会话的完整详情（含可视化 Chunk 数据）。
     ///
     /// 优先从缓存读取，缓存未命中时解析 JSONL 文件并通过 ChunkBuilder 构建详情。
@@ -437,8 +466,15 @@ impl SessionServiceImpl {
             .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
 
         let subagents = self.resolve_subagents(project_id, session_id, &parsed).await;
-        let detail =
+        let mut detail =
             ChunkBuilder::build_session_detail(session, parsed.messages.clone(), subagents);
+
+        // Strip raw messages before IPC transfer (aligns with Electron's slimDetail).
+        // Renderer never uses raw messages — they exist only for export.
+        // This reduces IPC serialization volume by ~50-60%.
+        for process in &mut detail.processes {
+            process.messages.clear();
+        }
 
         // 写入缓存
         self.cache
@@ -736,6 +772,10 @@ impl super::session_service_trait::SessionService for SessionServiceImpl {
 
     async fn get_session_detail(&self, project_id: &str, session_id: &str) -> Result<Option<crate::types::chunks::SessionDetail>, AppError> {
         self.get_session_detail(project_id, session_id).await
+    }
+
+    async fn get_session_detail_for_export(&self, project_id: &str, session_id: &str) -> Result<Option<crate::types::chunks::SessionDetail>, AppError> {
+        self.get_session_detail_for_export(project_id, session_id).await
     }
 
     async fn get_sessions_paginated(&self, project_id: &str, cursor: Option<&str>, limit: Option<u32>, options: Option<crate::types::domain::SessionsPaginationOptions>) -> Result<crate::types::domain::PaginatedSessionsResult, AppError> {

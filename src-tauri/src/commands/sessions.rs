@@ -64,6 +64,16 @@ pub async fn get_session_detail(
 }
 
 #[command]
+pub async fn get_session_detail_for_export(
+    service: State<'_, Arc<dyn SessionService>>,
+    project_id: String,
+    session_id: String,
+) -> Result<Option<SessionDetail>, String> {
+    service.get_session_detail_for_export(&project_id, &session_id).await
+        .map_err(|e| e.into_tauri_string())
+}
+
+#[command]
 pub async fn get_session_metrics(
     service: State<'_, Arc<dyn SessionService>>,
     project_id: String,

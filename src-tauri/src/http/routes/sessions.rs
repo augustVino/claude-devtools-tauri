@@ -90,6 +90,18 @@ pub async fn get_session_detail(
         .map_err(|e| error_json(e.to_string()))
 }
 
+pub async fn get_session_detail_for_export(
+    State(state): State<HttpState>,
+    Path(path): Path<ProjectSessionPath>,
+) -> Result<Json<Option<SessionDetail>>, (StatusCode, Json<super::ErrorResponse>)> {
+    let safe_pid = guards::validate_project_id(&path.project_id).map_err(error_json)?;
+    let safe_sid = guards::validate_session_id(&path.session_id).map_err(error_json)?;
+
+    state.session_service.get_session_detail_for_export(&safe_pid, &safe_sid).await
+        .map(Json)
+        .map_err(|e| error_json(e.to_string()))
+}
+
 pub async fn get_session_metrics(
     State(state): State<HttpState>,
     Path(path): Path<ProjectSessionPath>,

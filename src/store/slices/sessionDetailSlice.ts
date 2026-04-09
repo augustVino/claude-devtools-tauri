@@ -14,6 +14,7 @@ import {
 } from '@renderer/utils/groupTransformer';
 import { createLogger } from '@shared/utils/logger';
 
+import { batchAsync } from '../utils/batchAsync';
 import { resolveFilePath } from '../utils/pathResolution';
 
 const logger = createLogger('Store:sessionDetail');
@@ -159,7 +160,9 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
   // Per-tab session data
   tabSessionData: {},
 
-  // Fetch full session detail with chunks and subagents
+  // Fetch full session detail with chunks and subagents — two-phase loading:
+  //   Phase 1 (sync await): fetch + transform → immediate UI render (~200-500ms)
+  //   Phase 2 (fire-and-forget): async context tracking (CLAUDE.md, mentioned files)
   fetchSessionDetail: async (projectId: string, sessionId: string, tabId?: string) => {
     const requestGeneration = ++sessionDetailFetchGeneration;
     set({
@@ -184,14 +187,15 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
       });
     }
     try {
+      // ═══════════════════════════════════════
+      // PHASE 1: 即时渲染 (~200-500ms)
+      // ═══════════════════════════════════════
       const detail = await api.getSessionDetail(projectId, sessionId);
       if (requestGeneration !== sessionDetailFetchGeneration) {
         return;
       }
 
       // Transform chunks to conversation
-      // Chunks are EnhancedChunk[] at runtime - validate with type guard
-      // Pass isOngoing to mark the last AI group when session is still in progress
       const isOngoing = detail?.session?.isOngoing ?? false;
       const enhancedChunks = detail ? asEnhancedChunkArray(detail.chunks) : null;
       const conversation: SessionConversation | null =
@@ -199,220 +203,21 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
           ? transformChunksToConversation(enhancedChunks, detail.processes, isOngoing)
           : null;
 
+      // slimDetail: strip raw data no longer needed after conversion to conversation
+      const slimDetail = detail
+        ? { ...detail, chunks: [] as SessionDetail['chunks'], processes: [] as Process[] }
+        : null;
+
       // Initialize visibleAIGroupId to first AI Group if available
       const firstAIItem = conversation?.items?.find((item) => item.type === 'ai');
       const firstAIGroupId = firstAIItem?.type === 'ai' ? firstAIItem.group.id : null;
       const firstAIGroup = firstAIItem?.type === 'ai' ? firstAIItem.group : null;
 
-      // Compute CLAUDE.md stats for the session
-      const projectRoot = detail?.session?.projectPath ?? '';
-      const { connectionMode } = get();
-      let claudeMdStats: Map<string, ClaudeMdStats> | null = null;
-      let contextStats: Map<string, ContextStats> | null = null;
-      let phaseInfo: ContextPhaseInfo | null = null;
-      // Fetch agent configs from .claude/agents/ (only when project changes).
-      // Fire-and-forget: don't block transcript rendering — color badges update async.
-      if (connectionMode !== 'ssh' && projectRoot && projectRoot !== agentConfigsCachedForProject) {
-        agentConfigsCachedForProject = projectRoot; // Optimistic set to prevent duplicate fetches
-        api
-          .readAgentConfigs(projectRoot)
-          .then((configs) => {
-            set({ agentConfigs: configs });
-          })
-          .catch((err) => {
-            logger.error('Failed to read agent configs:', err);
-            agentConfigsCachedForProject = ''; // Reset so it retries next time
-          });
-      }
-
-      if (connectionMode !== 'ssh' && conversation?.items) {
-        // Fetch real CLAUDE.md token data
-        let claudeMdTokenData: Record<string, ClaudeMdFileInfo> = {};
-        try {
-          claudeMdTokenData = await api.readClaudeMdFiles(projectRoot);
-          if (requestGeneration !== sessionDetailFetchGeneration) {
-            return;
-          }
-        } catch (err) {
-          logger.error('Failed to read CLAUDE.md files:', err);
-        }
-
-        claudeMdStats = processSessionClaudeMd(conversation.items, projectRoot, claudeMdTokenData);
-
-        // Fetch real tokens for directory CLAUDE.md files
-        // Directory injections are detected dynamically from Read tool paths and aren't in pre-fetched tokenData
-        // We need to validate these BEFORE calling processSessionContext so both trackers have consistent data
-        const directoryTokenData: Record<string, ClaudeMdFileInfo> = {}; // Validated directory token data
-
-        if (claudeMdStats && claudeMdStats.size > 0) {
-          // Collect all unique directory injection paths
-          const directoryPaths = new Set<string>();
-          for (const stats of claudeMdStats.values()) {
-            for (const injection of stats.accumulatedInjections) {
-              if (injection.source === 'directory') {
-                directoryPaths.add(injection.path);
-              }
-            }
-          }
-
-          // Fetch real tokens for each directory path (parallel IPC calls)
-          if (directoryPaths.size > 0) {
-            const directoryTokens = new Map<string, number>();
-            const nonExistentPaths = new Set<string>();
-
-            const directoryResults = await Promise.all(
-              Array.from(directoryPaths).map(async (fullPath) => {
-                try {
-                  const dirPath = fullPath.replace(/[\\/]CLAUDE\.md$/, '');
-                  const fileInfo = await api.readDirectoryClaudeMd(dirPath);
-                  return { fullPath, fileInfo, error: false };
-                } catch (err) {
-                  logger.error('Failed to read directory CLAUDE.md:', fullPath, err);
-                  return { fullPath, fileInfo: null, error: true };
-                }
-              })
-            );
-            if (requestGeneration !== sessionDetailFetchGeneration) {
-              return;
-            }
-
-            for (const { fullPath, fileInfo, error } of directoryResults) {
-              if (error || !fileInfo) {
-                nonExistentPaths.add(fullPath);
-              } else if (fileInfo.exists && fileInfo.estimatedTokens > 0) {
-                directoryTokens.set(fullPath, fileInfo.estimatedTokens);
-                directoryTokenData[fullPath] = fileInfo;
-              } else {
-                nonExistentPaths.add(fullPath);
-              }
-            }
-
-            // Update stats: set real tokens and REMOVE non-existent files
-            for (const [, stats] of claudeMdStats.entries()) {
-              // Filter out non-existent paths
-              stats.accumulatedInjections = stats.accumulatedInjections.filter(
-                (inj) => inj.source !== 'directory' || !nonExistentPaths.has(inj.path)
-              );
-              stats.newInjections = stats.newInjections.filter(
-                (inj) => inj.source !== 'directory' || !nonExistentPaths.has(inj.path)
-              );
-
-              // Update tokens for existing files
-              for (const injection of stats.accumulatedInjections) {
-                if (injection.source === 'directory' && directoryTokens.has(injection.path)) {
-                  injection.estimatedTokens = directoryTokens.get(injection.path)!;
-                }
-              }
-              for (const injection of stats.newInjections) {
-                if (injection.source === 'directory' && directoryTokens.has(injection.path)) {
-                  injection.estimatedTokens = directoryTokens.get(injection.path)!;
-                }
-              }
-
-              // Recalculate totals and counts
-              stats.totalEstimatedTokens = stats.accumulatedInjections.reduce(
-                (sum, inj) => sum + inj.estimatedTokens,
-                0
-              );
-              stats.accumulatedCount = stats.accumulatedInjections.length;
-              stats.newCount = stats.newInjections.length;
-            }
-          }
-        }
-
-        // Compute unified context stats (CLAUDE.md + mentioned files + tool outputs)
-        // Extract all mentioned file paths from user groups
-        const mentionedFilePaths = new Set<string>();
-        for (const item of conversation.items) {
-          if (item.type === 'user' && item.group.content.fileReferences) {
-            for (const ref of item.group.content.fileReferences) {
-              // Skip empty or invalid paths (e.g., '.', empty string)
-              const trimmedPath = ref.path?.trim();
-              if (!trimmedPath || trimmedPath === '.' || trimmedPath === './') {
-                continue;
-              }
-              // Use resolveFilePath to properly handle ./ and ../ prefixes
-              const absolutePath = resolveFilePath(projectRoot, trimmedPath);
-              // Skip if resolved path is the project root itself (directory)
-              if (absolutePath && absolutePath !== projectRoot) {
-                mentionedFilePaths.add(absolutePath);
-              }
-            }
-          }
-        }
-
-        // Also collect @-mentions from isMeta:true user messages in AI responses
-        for (const item of conversation.items) {
-          if (item.type === 'ai') {
-            for (const msg of item.group.responses) {
-              if (msg.type !== 'user') continue;
-              let text = '';
-              if (typeof msg.content === 'string') {
-                text = msg.content;
-              } else if (Array.isArray(msg.content)) {
-                for (const block of msg.content) {
-                  if (block.type === 'text' && block.text) text += block.text;
-                }
-              }
-              if (text) {
-                for (const ref of extractFileReferences(text)) {
-                  const trimmedPath = ref.path?.trim();
-                  if (!trimmedPath || trimmedPath === '.' || trimmedPath === './') {
-                    continue;
-                  }
-                  const absolutePath = resolveFilePath(projectRoot, trimmedPath);
-                  if (absolutePath && absolutePath !== projectRoot) {
-                    mentionedFilePaths.add(absolutePath);
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        // Fetch token data for each mentioned file (parallel IPC calls)
-        const mentionedFileTokenData = new Map<string, MentionedFileInfo>();
-        const mentionedFileResults = await Promise.all(
-          Array.from(mentionedFilePaths).map(async (filePath) => {
-            try {
-              const fileInfo = await api.readMentionedFile(filePath, projectRoot);
-              return { filePath, fileInfo };
-            } catch (err) {
-              logger.error('Failed to read mentioned file:', filePath, err);
-              return { filePath, fileInfo: null };
-            }
-          })
-        );
-        if (requestGeneration !== sessionDetailFetchGeneration) {
-          return;
-        }
-        for (const { filePath, fileInfo } of mentionedFileResults) {
-          if (fileInfo) {
-            mentionedFileTokenData.set(filePath, fileInfo);
-          }
-        }
-
-        // Process Visible Context with all token data
-        // Pass validated directory token data so contextTracker can filter non-existent files
-        const phaseResult = processSessionContextWithPhases(
-          conversation.items,
-          projectRoot,
-          claudeMdTokenData,
-          mentionedFileTokenData,
-          directoryTokenData
-        );
-        contextStats = phaseResult.statsMap;
-        phaseInfo = phaseResult.phaseInfo;
-      }
-
-      // Update tab label if this session is open in a tab
-      const currentState = get();
-      if (requestGeneration !== sessionDetailFetchGeneration) {
-        return;
-      }
-      const activeTab = currentState.getActiveTab();
+      // [F-2] Check stillViewingSession before Phase 1 set() — prevent stale data pollution
+      const phase1State = get();
+      const activeTab = phase1State.getActiveTab();
       const stillViewingSession =
-        currentState.selectedSessionId === sessionId ||
+        phase1State.selectedSessionId === sessionId ||
         (activeTab?.type === 'session' &&
           activeTab.sessionId === sessionId &&
           activeTab.projectId === projectId);
@@ -421,29 +226,70 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
           sessionDetailLoading: false,
           conversationLoading: false
         });
+        if (tabId) {
+          const prev = get().tabSessionData;
+          set({
+            tabSessionData: {
+              ...prev,
+              [tabId]: {
+                ...(prev[tabId] ?? createEmptyTabSessionData()),
+                sessionDetailLoading: false,
+                conversationLoading: false
+              }
+            }
+          });
+        }
         return;
       }
-      const existingTab = findTabBySession(currentState.openTabs, sessionId);
+
+      // Update tab label
+      const existingTab = findTabBySession(phase1State.openTabs, sessionId);
       if (existingTab && detail) {
         const newLabel = detail.session.firstMessage
           ? truncateLabel(detail.session.firstMessage)
           : `Session ${sessionId.slice(0, 8)}`;
-        currentState.updateTabLabel(existingTab.id, newLabel);
+        phase1State.updateTabLabel(existingTab.id, newLabel);
       }
 
+      // ── Immediate render: user sees conversation now ──
       set({
-        sessionDetail: detail,
+        sessionDetail: slimDetail,
         sessionDetailLoading: false,
         conversation,
         conversationLoading: false,
         visibleAIGroupId: firstAIGroupId,
         selectedAIGroup: firstAIGroup,
-        sessionClaudeMdStats: claudeMdStats,
-        sessionContextStats: contextStats,
-        sessionPhaseInfo: phaseInfo
+        // Phase 2 stats filled later
+        sessionClaudeMdStats: null,
+        sessionContextStats: null,
+        sessionPhaseInfo: null,
       });
 
-      // Auto-expand all AI groups if the setting is enabled
+      // Per-tab data (Phase 1)
+      if (tabId) {
+        const prev = get().tabSessionData;
+        set({
+          tabSessionData: {
+            ...prev,
+            [tabId]: {
+              ...(prev[tabId] ?? createEmptyTabSessionData()),
+              sessionDetail: slimDetail,
+              conversation,
+              conversationLoading: false,
+              sessionDetailLoading: false,
+              sessionDetailError: null,
+              // Phase 2 stats filled later
+              sessionClaudeMdStats: null,
+              sessionContextStats: null,
+              sessionPhaseInfo: null,
+              visibleAIGroupId: firstAIGroupId,
+              selectedAIGroup: firstAIGroup,
+            },
+          },
+        });
+      }
+
+      // [F-3] Auto-expand AI groups immediately after Phase 1, before Phase 2 starts
       if (tabId && conversation?.items && get().appConfig?.general?.autoExpandAIGroups) {
         for (const item of conversation.items) {
           if (item.type === 'ai') {
@@ -452,27 +298,215 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
         }
       }
 
-      // Store per-tab session data
-      if (tabId) {
-        const prev = get().tabSessionData;
-        set({
-          tabSessionData: {
-            ...prev,
-            [tabId]: {
-              sessionDetail: detail,
-              conversation,
-              conversationLoading: false,
-              sessionDetailLoading: false,
-              sessionDetailError: null,
-              sessionClaudeMdStats: claudeMdStats,
-              sessionContextStats: contextStats,
-              sessionPhaseInfo: phaseInfo,
-              visibleAIGroupId: firstAIGroupId,
-              selectedAIGroup: firstAIGroup
+      // Fetch agent configs from .claude/agents/ (fire-and-forget)
+      const projectRoot = detail?.session?.projectPath ?? '';
+      const { connectionMode } = get();
+      if (connectionMode !== 'ssh' && projectRoot && projectRoot !== agentConfigsCachedForProject) {
+        agentConfigsCachedForProject = projectRoot;
+        api
+          .readAgentConfigs(projectRoot)
+          .then((configs) => {
+            set({ agentConfigs: configs });
+          })
+          .catch((err) => {
+            logger.error('Failed to read agent configs:', err);
+            agentConfigsCachedForProject = '';
+          });
+      }
+
+      // ═══════════════════════════════════════
+      // PHASE 2: 异步上下文追踪 (fire-and-forget)
+      // ═══════════════════════════════════════
+      void (async () => {
+        try {
+          // Skip for SSH mode (same as current behavior)
+          if (connectionMode === 'ssh' || !conversation?.items) return;
+
+          // Generation check (1 of 4): after SSH mode check
+          if (requestGeneration !== sessionDetailFetchGeneration) return;
+
+          // --- CLAUDE.md token data ---
+          let claudeMdTokenData: Record<string, ClaudeMdFileInfo> = {};
+          try {
+            claudeMdTokenData = await api.readClaudeMdFiles(projectRoot);
+          } catch (err) {
+            logger.error('Failed to read CLAUDE.md files:', err);
+            // [W-4] Don't return on error - continue to mentioned files collection
+          }
+
+          // Generation check (2 of 4): after CLAUDE.md files read
+          if (requestGeneration !== sessionDetailFetchGeneration) return;
+
+          const claudeMdStats = processSessionClaudeMd(conversation.items, projectRoot, claudeMdTokenData);
+
+          // Directory CLAUDE.md files (using batchAsync instead of Promise.all)
+          const directoryTokenData: Record<string, ClaudeMdFileInfo> = {};
+
+          if (claudeMdStats && claudeMdStats.size > 0) {
+            const directoryPaths = new Set<string>();
+            for (const stats of claudeMdStats.values()) {
+              for (const injection of stats.accumulatedInjections) {
+                if (injection.source === 'directory') directoryPaths.add(injection.path);
+              }
+            }
+
+            if (directoryPaths.size > 0) {
+              const directoryTokens = new Map<string, number>();
+              const nonExistentPaths = new Set<string>();
+
+              const directoryResults = await batchAsync(
+                Array.from(directoryPaths),
+                async (fullPath) => {
+                  try {
+                    const dirPath = fullPath.replace(/[\\/]CLAUDE\.md$/, '');
+                    const fileInfo = await api.readDirectoryClaudeMd(dirPath);
+                    return { fullPath, fileInfo, error: false };
+                  } catch (err) {
+                    logger.error('Failed to read directory CLAUDE.md:', fullPath, err);
+                    return { fullPath, fileInfo: null, error: true };
+                  }
+                },
+                5, // concurrency
+              );
+
+              // Generation check (3 of 4): after directory CLAUDE.md files read
+              if (requestGeneration !== sessionDetailFetchGeneration) return;
+
+              for (const { fullPath, fileInfo, error } of directoryResults) {
+                if (error || !fileInfo) {
+                  nonExistentPaths.add(fullPath);
+                } else if (fileInfo.exists && fileInfo.estimatedTokens > 0) {
+                  directoryTokens.set(fullPath, fileInfo.estimatedTokens);
+                  directoryTokenData[fullPath] = fileInfo;
+                } else {
+                  nonExistentPaths.add(fullPath);
+                }
+              }
+
+              // Update stats: set real tokens and REMOVE non-existent files
+              for (const [, stats] of claudeMdStats.entries()) {
+                stats.accumulatedInjections = stats.accumulatedInjections.filter(
+                  (inj) => inj.source !== 'directory' || !nonExistentPaths.has(inj.path)
+                );
+                stats.newInjections = stats.newInjections.filter(
+                  (inj) => inj.source !== 'directory' || !nonExistentPaths.has(inj.path)
+                );
+
+                for (const injection of stats.accumulatedInjections) {
+                  if (injection.source === 'directory' && directoryTokens.has(injection.path)) {
+                    injection.estimatedTokens = directoryTokens.get(injection.path)!;
+                  }
+                }
+                for (const injection of stats.newInjections) {
+                  if (injection.source === 'directory' && directoryTokens.has(injection.path)) {
+                    injection.estimatedTokens = directoryTokens.get(injection.path)!;
+                  }
+                }
+
+                stats.totalEstimatedTokens = stats.accumulatedInjections.reduce(
+                  (sum, inj) => sum + inj.estimatedTokens, 0
+                );
+                stats.accumulatedCount = stats.accumulatedInjections.length;
+                stats.newCount = stats.newInjections.length;
+              }
             }
           }
-        });
-      }
+
+          // Mentioned files (using batchAsync instead of Promise.all)
+          const mentionedFilePaths = new Set<string>();
+          for (const item of conversation.items) {
+            if (item.type === 'user' && item.group.content.fileReferences) {
+              for (const ref of item.group.content.fileReferences) {
+                const trimmedPath = ref.path?.trim();
+                if (!trimmedPath || trimmedPath === '.' || trimmedPath === './') continue;
+                const absolutePath = resolveFilePath(projectRoot, trimmedPath);
+                if (absolutePath && absolutePath !== projectRoot) mentionedFilePaths.add(absolutePath);
+              }
+            }
+          }
+
+          for (const item of conversation.items) {
+            if (item.type === 'ai') {
+              for (const msg of item.group.responses) {
+                if (msg.type !== 'user') continue;
+                let text = '';
+                if (typeof msg.content === 'string') {
+                  text = msg.content;
+                } else if (Array.isArray(msg.content)) {
+                  for (const block of msg.content) {
+                    if (block.type === 'text' && block.text) text += block.text;
+                  }
+                }
+                if (text) {
+                  for (const ref of extractFileReferences(text)) {
+                    const trimmedPath = ref.path?.trim();
+                    if (!trimmedPath || trimmedPath === '.' || trimmedPath === './') continue;
+                    const absolutePath = resolveFilePath(projectRoot, trimmedPath);
+                    if (absolutePath && absolutePath !== projectRoot) mentionedFilePaths.add(absolutePath);
+                  }
+                }
+              }
+            }
+          }
+
+          const mentionedFileTokenData = new Map<string, MentionedFileInfo>();
+          const mentionedFileResults = await batchAsync(
+            Array.from(mentionedFilePaths),
+            async (filePath) => {
+              try {
+                const fileInfo = await api.readMentionedFile(filePath, projectRoot);
+                return { filePath, fileInfo };
+              } catch (err) {
+                logger.error('Failed to read mentioned file:', filePath, err);
+                return { filePath, fileInfo: null };
+              }
+            },
+            5, // concurrency
+          );
+
+          // Generation check (4 of 4): final check before updating state
+          if (requestGeneration !== sessionDetailFetchGeneration) return;
+
+          for (const { filePath, fileInfo } of mentionedFileResults) {
+            if (fileInfo) mentionedFileTokenData.set(filePath, fileInfo);
+          }
+
+          // Context processing
+          const phaseResult = processSessionContextWithPhases(
+            conversation.items, projectRoot, claudeMdTokenData,
+            mentionedFileTokenData, directoryTokenData,
+          );
+
+          // Update store — only fill stats data
+          set({
+            sessionClaudeMdStats: claudeMdStats,
+            sessionContextStats: phaseResult.statsMap,
+            sessionPhaseInfo: phaseResult.phaseInfo,
+          });
+
+          // Update per-tab data
+          if (tabId) {
+            const prev = get().tabSessionData;
+            const existing = prev[tabId];
+            if (existing) {
+              set({
+                tabSessionData: {
+                  ...prev,
+                  [tabId]: {
+                    ...existing,
+                    sessionClaudeMdStats: claudeMdStats,
+                    sessionContextStats: phaseResult.statsMap,
+                    sessionPhaseInfo: phaseResult.phaseInfo,
+                  },
+                },
+              });
+            }
+          }
+        } catch (err) {
+          // Phase 2 errors must not affect already-rendered UI
+          logger.error('Phase 2 context tracking failed:', err);
+        }
+      })();
     } catch (error) {
       logger.error('fetchSessionDetail error:', error);
       if (requestGeneration !== sessionDetailFetchGeneration) {

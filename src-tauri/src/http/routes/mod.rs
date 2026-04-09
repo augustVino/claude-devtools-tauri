@@ -115,6 +115,10 @@ pub fn build_routes() -> Router<HttpState> {
             get(sessions::get_session_detail),
         )
         .route(
+            "/api/projects/{project_id}/sessions/{session_id}/export-detail",
+            get(sessions::get_session_detail_for_export),
+        )
+        .route(
             "/api/projects/{project_id}/sessions/{session_id}/groups",
             get(sessions::get_session_groups),
         )

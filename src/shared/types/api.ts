@@ -366,6 +366,11 @@ export interface ElectronAPI {
     projectId: string,
     sessionId: string,
   ) => Promise<SessionDetail | null>;
+  /** Fetch full session detail with chunks and processes for export */
+  getSessionDetailForExport: (
+    projectId: string,
+    sessionId: string,
+  ) => Promise<SessionDetail | null>;
   getSessionMetrics: (
     projectId: string,
     sessionId: string,

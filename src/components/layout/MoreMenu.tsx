@@ -19,13 +19,19 @@ import {
   Type,
 } from "lucide-react";
 
+import { api } from "@renderer/api";
 import type { SessionDetail } from "@renderer/types/data";
 import type { Tab } from "@renderer/types/tabs";
 import type { ExportFormat } from "@renderer/utils/sessionExporter";
 
 interface MoreMenuProps {
   activeTab: Tab | undefined;
-  activeTabSessionDetail: SessionDetail | null;
+  /** Whether the active tab has session data (for export menu visibility) */
+  activeTabHasSession: boolean;
+  /** Project ID of the active session tab */
+  activeTabProjectId: string | undefined;
+  /** Session ID of the active session tab */
+  activeTabSessionId: string | undefined;
 }
 
 interface MenuItem {
@@ -38,11 +44,14 @@ interface MenuItem {
 
 export const MoreMenu = ({
   activeTab,
-  activeTabSessionDetail,
+  activeTabHasSession,
+  activeTabProjectId,
+  activeTabSessionId,
 }: Readonly<MoreMenuProps>): React.JSX.Element => {
   const [isOpen, setIsOpen] = useState(false);
   const [buttonHover, setButtonHover] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const openCommandPalette = useStore((s) => s.openCommandPalette);
@@ -81,16 +90,30 @@ export const MoreMenu = ({
 
   const handleExport = useCallback(
     async (format: ExportFormat) => {
-      if (activeTabSessionDetail) {
-        await triggerDownload(activeTabSessionDetail, format);
+      if (!activeTabProjectId || !activeTabSessionId) {
+        setIsOpen(false);
+        return;
       }
-      setIsOpen(false);
+
+      setIsExporting(true);
+      try {
+        // Re-fetch full session detail for export (includes chunks and processes)
+        const fullDetail = await api.getSessionDetailForExport(
+          activeTabProjectId,
+          activeTabSessionId,
+        );
+        if (fullDetail) {
+          await triggerDownload(fullDetail, format);
+        }
+      } finally {
+        setIsExporting(false);
+        setIsOpen(false);
+      }
     },
-    [activeTabSessionDetail],
+    [activeTabProjectId, activeTabSessionId],
   );
 
-  const isSessionWithData =
-    activeTab?.type === "session" && activeTabSessionDetail != null;
+  const isSessionWithData = activeTab?.type === "session" && activeTabHasSession;
 
   // Build menu sections
   const topItems: MenuItem[] = [
@@ -203,6 +226,26 @@ export const MoreMenu = ({
       >
         <MoreHorizontal className="size-4" />
       </button>
+
+      {/* Export loading indicator overlay */}
+      {isExporting && (
+        <div
+          className="absolute right-0 top-full z-50 mt-1 flex items-center gap-2 rounded-md border px-3 py-2 text-xs"
+          style={{
+            backgroundColor: "var(--color-surface-overlay)",
+            borderColor: "var(--color-border)",
+            color: "var(--color-text-secondary)",
+          }}
+        >
+          <div
+            className="size-3 animate-spin rounded-full border-2 border-transparent"
+            style={{
+              borderTopColor: "var(--color-accent)",
+            }}
+          />
+          Exporting...
+        </div>
+      )}
 
       {/* Dropdown menu */}
       {isOpen && (
