@@ -171,9 +171,9 @@ export function asEnhancedChunkArray(chunks: Chunk[]): EnhancedChunk[] | null {
     if (chunk.chunkType === "ai" && !("semanticSteps" in chunk)) {
       (base as Record<string, unknown>).semanticSteps = [];
       // Adapt semanticStepGroups: convert number timestamps to Date objects
-      const rawGroups = (chunk as Record<string, unknown>)
+      const rawGroups = (chunk as unknown as Record<string, unknown>)
         .semanticStepGroups as
-        | import("./main/types/chunks").RawSemanticStepGroup[]
+        | import("../main/types/chunks").RawSemanticStepGroup[]
         | undefined;
       (base as Record<string, unknown>).semanticStepGroups = (
         rawGroups ?? []
