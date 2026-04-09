@@ -117,6 +117,9 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
     tabId: string;
   } | null>(null);
 
+  // Rename state
+  const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
+
   // Track last clicked tab for Shift range selection
   const lastClickedTabIdRef = useRef<string | null>(null);
 
@@ -366,6 +369,9 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
               onContextMenu={handleContextMenu}
               onClose={closeTab}
               setRef={setTabRef}
+              isRenameRequested={renamingTabId === tab.id}
+              onRenameComplete={() => setRenamingTabId(null)}
+              onRequestRename={(id) => setRenamingTabId(id)}
             />
           ))}
         </SortableContext>
@@ -496,6 +502,7 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
               ? () => toggleHideSession(contextMenuTab.sessionId!)
               : undefined
           }
+          onRename={() => setRenamingTabId(contextMenuTabId)}
         />
       )}
     </div>
