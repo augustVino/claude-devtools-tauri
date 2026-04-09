@@ -19,6 +19,7 @@ import type {
   HttpServerAPI,
   HttpServerStatus,
   NotificationsAPI,
+  NotificationStats,
   NotificationTrigger,
   PaginatedSessionsResult,
   Project,
@@ -418,6 +419,8 @@ export class HttpAPIClient implements ElectronAPI {
     delete: (id) => this.del(`/api/notifications/${encodeURIComponent(id)}`),
     clear: () => this.del("/api/notifications"),
     getUnreadCount: () => this.get("/api/notifications/unread-count"),
+    getStats: (): Promise<NotificationStats> =>
+      this.get<NotificationStats>("/api/notifications/stats"),
     // IPC signature: (event: unknown, error: unknown) => void
     onNew: (callback) =>
       this.addEventListener("notification:new", (data: unknown) =>

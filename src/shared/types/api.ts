@@ -10,6 +10,7 @@
 import type {
   AppConfig,
   DetectedError,
+  NotificationStats,
   NotificationTrigger,
   TriggerTestResult,
 } from "./notifications";
@@ -85,6 +86,7 @@ export interface NotificationsAPI {
   delete: (id: string) => Promise<boolean>;
   clear: () => Promise<boolean>;
   getUnreadCount: () => Promise<number>;
+  getStats: () => Promise<NotificationStats>;
   onNew: (callback: (event: unknown, error: unknown) => void) => () => void;
   onUpdated: (
     callback: (
