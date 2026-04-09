@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 
 import { CopyButton } from '@renderer/components/common/CopyButton';
 import {
@@ -56,10 +56,40 @@ export const MermaidViewer: React.FC<MermaidViewerProps> = ({ code }) => {
   const [showCode, setShowCode] = useState(false);
   const [svg, setSvg] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isVisible, setIsVisible] = useState(false);
   const { isDark } = useTheme();
+
+  // 第三层懒加载：IntersectionObserver 可见性检测
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+          observer.disconnect(); // 渲染结果缓存于 state，无需重复观察
+        }
+      },
+      { rootMargin: '200px' } // CPU 密集型渲染预留足够预热时间
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // isDark 切换且不可见时清除旧主题 SVG
+  useEffect(() => {
+    if (!isVisible && svg) {
+      setSvg('');
+    }
+  }, [isDark, isVisible]);
 
   // Render mermaid diagram
   useEffect(() => {
+    if (!isVisible) return;
+
     let cancelled = false;
     const render = async (): Promise<void> => {
       try {
@@ -93,10 +123,10 @@ export const MermaidViewer: React.FC<MermaidViewerProps> = ({ code }) => {
     };
     void render();
     return () => { cancelled = true; };
-  }, [code, isDark]);
+  }, [code, isDark, isVisible]);
 
   return (
-    <div className="group relative overflow-hidden rounded-lg shadow-sm"
+    <div ref={containerRef} className="group relative overflow-hidden rounded-lg shadow-sm"
          style={{ backgroundColor: CODE_BG, border: `1px solid ${CODE_BORDER}` }}>
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-1.5"
@@ -122,6 +152,18 @@ export const MermaidViewer: React.FC<MermaidViewerProps> = ({ code }) => {
              style={{ backgroundColor: PROSE_PRE_BG, color: COLOR_TEXT }}>
           <code className="font-mono">{code}</code>
         </pre>
+      ) : !isVisible ? (
+        <div style={{
+          minHeight: 200,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          opacity: 0.4,
+        }}>
+          <span style={{ color: 'var(--text-muted, #888)', fontSize: 11 }}>
+            Mermaid diagram
+          </span>
+        </div>
       ) : error ? (
         <div className="p-3">
           <div className="mb-2 rounded px-2 py-1 text-xs"
