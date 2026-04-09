@@ -12,9 +12,13 @@ pub mod state;
 
 use std::path::PathBuf;
 
-use axum::Router;
+use axum::{
+    Router,
+    routing::{any_service, get},
+    http::{StatusCode, header},
+    response::IntoResponse,
+};
 use tower_http::services::{ServeDir, ServeFile};
-use tower_http::ServiceExt as _;
 
 use crate::http::state::HttpState;
 
@@ -24,16 +28,34 @@ use crate::http::state::HttpState;
 pub fn build_router(http_state: HttpState, dist_dir: PathBuf) -> Router {
     let api_routes = routes::build_routes();
 
-    let index_html = dist_dir.join("index.html");
+    let dist = dist_dir.clone();
+    let index_html = dist.join("index.html");
+    let spa_index = index_html.clone();
     let serve_dir = ServeDir::new(&dist_dir).not_found_service(ServeFile::new(index_html));
-
-    // Axum 0.8 + tower-http 0.6: ServeDir 返回 ServeFileSystemResponseBody，
-    // 与 Router 期望的 axum::body::Body 不兼容。需通过 map_response_body 映射。
-    let static_files = serve_dir.map_response_body(axum::body::Body::new);
-
     Router::new()
         .merge(api_routes)
-        .fallback_service(static_files)
+        .route("/", get(move || async move {
+            spa_handler(&spa_index).await
+        }))
+        .fallback_service(any_service(serve_dir))
         .layer(cors::cors_layer())
         .with_state(http_state)
+}
+
+/// SPA index.html 保底 handler：读取并返回 dist/index.html。
+async fn spa_handler(index_path: &std::path::Path) -> impl IntoResponse {
+    match tokio::fs::read_to_string(index_path).await {
+        Ok(html) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            html,
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain")],
+            format!("SPA index not found: {}", e),
+        )
+            .into_response(),
+    }
 }
