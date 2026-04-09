@@ -2,6 +2,10 @@ import React from 'react';
 
 import { PROSE_BODY } from '@renderer/constants/cssVariables';
 
+const MermaidViewer = React.lazy(() =>
+  import('./viewers/MermaidViewer').then((m) => ({ default: m.MermaidViewer }))
+);
+
 import { CopyButton } from '@renderer/components/common/CopyButton';
 
 import { highlightSearchInChildren, type SearchContext } from './searchHighlightUtils';
@@ -120,6 +124,14 @@ export function createMarkdownComponents(searchCtx: SearchContext | null): Compo
       const isBlock = (hasLanguageClass ?? false) || isMultiLine;
 
       if (isBlock) {
+        const lang = className?.replace('language-', '') ?? '';
+        if (lang === 'mermaid') {
+          return (
+            <React.Suspense fallback={<code className="block font-mono text-xs">{content}</code>}>
+              <MermaidViewer code={content} />
+            </React.Suspense>
+          );
+        }
         return (
           <code className="block font-mono text-xs" style={{ color: 'var(--color-text)' }}>
             {hl(children)}
@@ -141,7 +153,17 @@ export function createMarkdownComponents(searchCtx: SearchContext | null): Compo
     },
 
     // Code blocks — with copy button
-    pre: ({ children }) => {
+    pre: ({ children, node }) => {
+      // Detect mermaid: skip <pre> wrapper for mermaid blocks
+      const codeEl = node?.children?.find(
+        (c): c is { properties?: { className?: string[] } =>
+          'tagName' in c && c.tagName === 'code'
+      );
+      const isMermaid = codeEl?.properties?.className?.includes('language-mermaid');
+      if (isMermaid) {
+        return <>{children}</>;
+      }
+
       const extractText = (node: React.ReactNode): string => {
         if (typeof node === 'string') return node;
         if (Array.isArray(node)) return node.map(extractText).join('');
