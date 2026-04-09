@@ -371,7 +371,7 @@ export const TabBar = ({ paneId }: TabBarProps): React.JSX.Element => {
               setRef={setTabRef}
               isRenameRequested={renamingTabId === tab.id}
               onRenameComplete={() => setRenamingTabId(null)}
-              onRequestRename={(id) => setRenamingTabId(id)}
+              onRequestRename={(id: string) => setRenamingTabId(id)}
             />
           ))}
         </SortableContext>
