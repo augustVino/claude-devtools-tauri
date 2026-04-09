@@ -18,15 +18,14 @@ import type mermaidApi from 'mermaid';
 // Mermaid initialization (lazy-loaded to keep it out of the main bundle)
 // =============================================================================
 
-let mermaidInstance: typeof mermaidApi | null = null;
+let mermaidPromise: Promise<typeof mermaidApi> | null = null;
 let lastMermaidTheme: 'dark' | 'default' | null = null;
 
 async function getMermaid(): Promise<typeof mermaidApi> {
-  if (!mermaidInstance) {
-    const mod = await import('mermaid');
-    mermaidInstance = mod.default;
+  if (!mermaidPromise) {
+    mermaidPromise = import('mermaid').then((mod) => mod.default);
   }
-  return mermaidInstance;
+  return mermaidPromise;
 }
 
 async function ensureMermaidInit(isDark: boolean): Promise<typeof mermaidApi> {
@@ -66,7 +65,20 @@ export const MermaidViewer: React.FC<MermaidViewerProps> = ({ code }) => {
       try {
         const m = await ensureMermaidInit(isDark);
         const id = `mermaid-${uniqueId}`;
-        const { svg: rendered } = await m.render(id, code);
+        let rendered: string;
+        try {
+          const result = await m.render(id, code);
+          rendered = result.svg;
+        } catch (renderErr) {
+          // ID conflict retry with timestamp suffix
+          if (renderErr instanceof Error && renderErr.message?.includes('already in use')) {
+            const retryId = `${id}-${Date.now()}`;
+            const retryResult = await m.render(retryId, code);
+            rendered = retryResult.svg;
+          } else {
+            throw renderErr;
+          }
+        }
         if (!cancelled) {
           setSvg(rendered);
           setError(null);
@@ -81,7 +93,7 @@ export const MermaidViewer: React.FC<MermaidViewerProps> = ({ code }) => {
     };
     void render();
     return () => { cancelled = true; };
-  }, [code, isDark, uniqueId]);
+  }, [code, isDark]);
 
   return (
     <div className="group relative overflow-hidden rounded-lg shadow-sm"
