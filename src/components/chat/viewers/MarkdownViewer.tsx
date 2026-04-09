@@ -27,6 +27,10 @@ import { FileText } from 'lucide-react';
 import remarkGfm from 'remark-gfm';
 import { useShallow } from 'zustand/react/shallow';
 
+const MermaidViewer = React.lazy(() =>
+  import('./MermaidViewer').then((m) => ({ default: m.MermaidViewer }))
+);
+
 import {
   createSearchContext,
   EMPTY_SEARCH_MATCHES,
@@ -159,6 +163,15 @@ function createViewerMarkdownComponents(searchCtx: SearchContext | null): Compon
         const lang = codeClassName?.replace('language-', '') ?? '';
         const raw = typeof children === 'string' ? children : '';
         const text = raw.replace(/\n$/, '');
+
+        if (lang === 'mermaid') {
+          return (
+            <React.Suspense fallback={<code className="font-mono text-xs">{text}</code>}>
+              <MermaidViewer code={text} />
+            </React.Suspense>
+          );
+        }
+
         const lines = text.split('\n');
         return (
           <code className="font-mono text-xs" style={{ color: COLOR_TEXT }}>
@@ -186,17 +199,29 @@ function createViewerMarkdownComponents(searchCtx: SearchContext | null): Compon
     },
 
     // Code blocks
-    pre: ({ children }) => (
-      <pre
-        className="my-3 overflow-x-auto rounded-lg p-3 text-xs leading-relaxed"
-        style={{
-          backgroundColor: PROSE_PRE_BG,
-          border: `1px solid ${PROSE_PRE_BORDER}`,
-        }}
-      >
-        {children}
-      </pre>
-    ),
+    pre: ({ children, node }) => {
+      // Detect mermaid: skip <pre> wrapper
+      const codeEl = node?.children?.find(
+        (c): c is { properties?: { className?: string[] } } =>
+          'tagName' in c && c.tagName === 'code'
+      );
+      const isMermaid = codeEl?.properties?.className?.includes('language-mermaid');
+      if (isMermaid) {
+        return <>{children}</>;
+      }
+
+      return (
+        <pre
+          className="my-3 overflow-x-auto rounded-lg p-3 text-xs leading-relaxed"
+          style={{
+            backgroundColor: PROSE_PRE_BG,
+            border: `1px solid ${PROSE_PRE_BORDER}`,
+          }}
+        >
+          {children}
+        </pre>
+      );
+    },
 
     // Blockquotes
     blockquote: ({ children }) => (
