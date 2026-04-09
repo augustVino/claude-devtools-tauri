@@ -17,6 +17,9 @@ pub(super) fn merge_with_ssh_config_static(
             if config.port == 22 { if let Some(port) = entry.port { config.port = port; } }
             if matches!(config.auth_method, SshAuthMethod::Auto) && !entry.identity_files.is_empty() {
                 config.auth_method = SshAuthMethod::PrivateKey;
+                if config.private_key_path.is_none() {
+                    config.private_key_path = Some(entry.identity_files[0].clone());
+                }
             }
         }
     }
