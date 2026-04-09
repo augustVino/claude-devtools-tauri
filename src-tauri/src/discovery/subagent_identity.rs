@@ -207,8 +207,8 @@ pub(super) fn calculate_metrics(messages: &[ParsedMessage]) -> SessionMetrics {
         total_tokens: total_input + total_output,
         input_tokens: total_input,
         output_tokens: total_output,
-        cache_read_tokens: if cache_read > 0 { Some(cache_read) } else { None },
-        cache_creation_tokens: if cache_creation > 0 { Some(cache_creation) } else { None },
+        cache_read_tokens: cache_read,
+        cache_creation_tokens: cache_creation,
         message_count,
         cost_usd: None,
     }

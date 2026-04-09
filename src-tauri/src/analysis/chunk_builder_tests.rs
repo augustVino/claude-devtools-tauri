@@ -234,8 +234,8 @@ fn test_get_total_chunk_metrics() {
                 total_tokens: 50,
                 input_tokens: 30,
                 output_tokens: 20,
-                cache_read_tokens: None,
-                cache_creation_tokens: None,
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
                 message_count: 1,
                 cost_usd: None,
             },
@@ -251,8 +251,8 @@ fn test_get_total_chunk_metrics() {
                 total_tokens: 100,
                 input_tokens: 60,
                 output_tokens: 40,
-                cache_read_tokens: Some(10),
-                cache_creation_tokens: None,
+                cache_read_tokens: 10,
+                cache_creation_tokens: 0,
                 message_count: 2,
                 cost_usd: None,
             },
@@ -270,6 +270,6 @@ fn test_get_total_chunk_metrics() {
     assert_eq!(metrics.duration_ms, 300);
     assert_eq!(metrics.input_tokens, 90);
     assert_eq!(metrics.output_tokens, 60);
-    assert_eq!(metrics.cache_read_tokens, Some(10));
+    assert_eq!(metrics.cache_read_tokens, 10);
     assert_eq!(metrics.message_count, 3);
 }

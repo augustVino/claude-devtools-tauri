@@ -122,18 +122,16 @@ impl SubagentResolver {
 
         let mut total_input = 0u64;
         let mut total_output = 0u64;
-        let mut total_cache_read: Option<u64> = Some(0);
-        let mut total_cache_creation: Option<u64> = Some(0);
+        let mut total_cache_read: u64 = 0;
+        let mut total_cache_creation: u64 = 0;
         let mut total_messages = 0u32;
 
         for s in subagents {
             total_input += s.metrics.input_tokens;
             total_output += s.metrics.output_tokens;
             total_messages += s.metrics.message_count;
-            total_cache_read =
-                Some(total_cache_read.unwrap_or(0) + s.metrics.cache_read_tokens.unwrap_or(0));
-            total_cache_creation =
-                Some(total_cache_creation.unwrap_or(0) + s.metrics.cache_creation_tokens.unwrap_or(0));
+            total_cache_read = total_cache_read.saturating_add(s.metrics.cache_read_tokens);
+            total_cache_creation = total_cache_creation.saturating_add(s.metrics.cache_creation_tokens);
         }
 
         SessionMetrics {
@@ -724,8 +722,8 @@ mod tests {
                 metrics: SessionMetrics {
                     input_tokens: 100,
                     output_tokens: 50,
-                    cache_read_tokens: Some(20),
-                    cache_creation_tokens: Some(10),
+                    cache_read_tokens: 20,
+                    cache_creation_tokens: 10,
                     message_count: 3,
                     ..Default::default()
                 },
@@ -746,8 +744,8 @@ mod tests {
                 metrics: SessionMetrics {
                     input_tokens: 200,
                     output_tokens: 100,
-                    cache_read_tokens: Some(30),
-                    cache_creation_tokens: Some(5),
+                    cache_read_tokens: 30,
+                    cache_creation_tokens: 5,
                     message_count: 5,
                     ..Default::default()
                 },
@@ -763,8 +761,8 @@ mod tests {
         let total = SubagentResolver::get_total_subagent_metrics(&subagents);
         assert_eq!(total.input_tokens, 300);
         assert_eq!(total.output_tokens, 150);
-        assert_eq!(total.cache_read_tokens, Some(50));
-        assert_eq!(total.cache_creation_tokens, Some(15));
+        assert_eq!(total.cache_read_tokens, 50);
+        assert_eq!(total.cache_creation_tokens, 15);
         assert_eq!(total.message_count, 8);
     }
 

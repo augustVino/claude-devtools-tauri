@@ -375,8 +375,8 @@ pub fn calculate_metrics(messages: &[ParsedMessage]) -> crate::types::domain::Se
         total_tokens: input_tokens + cache_creation_tokens + cache_read_tokens + output_tokens,
         input_tokens,
         output_tokens,
-        cache_read_tokens: if cache_read_tokens > 0 { Some(cache_read_tokens) } else { None },
-        cache_creation_tokens: if cache_creation_tokens > 0 { Some(cache_creation_tokens) } else { None },
+        cache_read_tokens,
+        cache_creation_tokens,
         message_count: messages.len() as u32,
         cost_usd: None,
     }

@@ -68,13 +68,13 @@ impl ChunkBuilder {
         if chunks.is_empty() { return SessionMetrics::default(); }
 
         let (mut dur, mut in_tok, mut out_tok) = (0u64, 0u64, 0u64);
-        let (mut cache_read, mut cache_create, mut msg_count) = (None, None, 0u32);
+        let (mut cache_read, mut cache_create, mut msg_count) = (0u64, 0u64, 0u32);
 
         for chunk in chunks {
             let m = Self::chunk_metrics(chunk);
             dur += m.duration_ms; in_tok += m.input_tokens; out_tok += m.output_tokens;
-            cache_read = Self::merge_opt(cache_read, m.cache_read_tokens);
-            cache_create = Self::merge_opt(cache_create, m.cache_creation_tokens);
+            cache_read = cache_read.saturating_add(m.cache_read_tokens);
+            cache_create = cache_create.saturating_add(m.cache_creation_tokens);
             msg_count += m.message_count;
         }
 
@@ -239,13 +239,7 @@ impl ChunkBuilder {
 
     fn single_msg_metrics() -> SessionMetrics {
         SessionMetrics { duration_ms: 0, total_tokens: 0, input_tokens: 0, output_tokens: 0,
-            cache_read_tokens: None, cache_creation_tokens: None, message_count: 1, cost_usd: None }
-    }
-
-    #[allow(dead_code)]
-    fn merge_opt(a: Option<u64>, b: Option<u64>) -> Option<u64> {
-        match (a, b) { (None, None) => None, (Some(x), None) | (None, Some(x)) => Some(x),
-            (Some(x), Some(y)) => Some(x + y) }
+            cache_read_tokens: 0, cache_creation_tokens: 0, message_count: 1, cost_usd: None }
     }
 
     /// Build SubagentDetail from parsed messages and nested subagents.

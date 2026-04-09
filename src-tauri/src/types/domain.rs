@@ -149,10 +149,10 @@ pub struct SessionMetrics {
     pub input_tokens: u64,
     #[serde(rename = "outputTokens")]
     pub output_tokens: u64,
-    #[serde(rename = "cacheReadTokens", skip_serializing_if = "Option::is_none")]
-    pub cache_read_tokens: Option<u64>,
-    #[serde(rename = "cacheCreationTokens", skip_serializing_if = "Option::is_none")]
-    pub cache_creation_tokens: Option<u64>,
+    #[serde(rename = "cacheReadTokens")]
+    pub cache_read_tokens: u64,
+    #[serde(rename = "cacheCreationTokens")]
+    pub cache_creation_tokens: u64,
     #[serde(rename = "messageCount")]
     pub message_count: u32,
     #[serde(rename = "costUsd", skip_serializing_if = "Option::is_none")]
