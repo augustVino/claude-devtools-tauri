@@ -213,11 +213,7 @@ pub fn extract_session_title_from_parsed(messages: &[ParsedMessage]) -> Option<S
             let text = extract_text_content(msg);
             let trimmed = text.trim();
             if !trimmed.is_empty() {
-                let title = if trimmed.len() > 500 {
-                    trimmed[..500].to_string()
-                } else {
-                    trimmed.to_string()
-                };
+                let title: String = trimmed.chars().take(500).collect();
                 return Some(title);
             }
         }

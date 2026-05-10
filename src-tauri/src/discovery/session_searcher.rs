@@ -563,34 +563,69 @@ impl SessionSearcher {
         session_title: &str,
     ) {
         let lower_text = entry.text.to_lowercase();
+        let lower_query = query.to_lowercase();
+
+        // Build a mapping: for each char position in lower_text, store the
+        // corresponding byte offset in entry.text.  When a char expands during
+        // lowercasing (e.g. ß → ss), all resulting chars map to the same
+        // original byte offset, so slicing entry.text returns the correct
+        // original characters.
+        let lower_char_count = lower_text.chars().count();
+        let mut orig_byte_for_lower_char: Vec<usize> =
+            Vec::with_capacity(lower_char_count + 1);
+
+        for (orig_byte_off, orig_ch) in entry.text.char_indices() {
+            for _ in orig_ch.to_lowercase() {
+                orig_byte_for_lower_char.push(orig_byte_off);
+            }
+        }
+        orig_byte_for_lower_char.push(entry.text.len());
+
+        let lower_query_chars = lower_query.chars().count();
         let mut pos = 0;
         let mut match_index_in_item: u32 = 0;
 
-        while let Some(found_pos) = lower_text[pos..].find(query) {
+        while let Some(found_pos) = lower_text[pos..].find(&lower_query) {
             if results.len() >= max_results {
                 return;
             }
 
             let absolute_pos = pos + found_pos;
-            let mut context_start = absolute_pos.saturating_sub(50);
-            let mut context_end = (absolute_pos + query.len() + 50).min(entry.text.len());
 
-            // Adjust to char boundaries for safe UTF-8 string slicing
-            while context_start > 0 && !entry.text.is_char_boundary(context_start) {
-                context_start -= 1;
-            }
-            while context_end < entry.text.len() && !entry.text.is_char_boundary(context_end) {
-                context_end += 1;
-            }
+            // Convert byte offset in lower_text to byte offset in entry.text.
+            // absolute_pos is a valid char boundary in lower_text (str::find guarantee).
+            let matched_start_char = lower_text[..absolute_pos].chars().count();
+            let matched_end_char = matched_start_char + lower_query_chars;
 
-            let context = &entry.text[context_start..context_end];
-            let matched_text = &entry.text[absolute_pos..absolute_pos + query.len()];
+            let matched_byte_start = orig_byte_for_lower_char
+                .get(matched_start_char)
+                .copied()
+                .unwrap_or(entry.text.len());
+            let matched_byte_end = orig_byte_for_lower_char
+                .get(matched_end_char)
+                .copied()
+                .unwrap_or(entry.text.len());
+
+            let context_char_start = matched_start_char.saturating_sub(50);
+            let context_char_end = matched_end_char.min(lower_char_count);
+
+            let context_byte_start = orig_byte_for_lower_char
+                .get(context_char_start)
+                .copied()
+                .unwrap_or(0);
+            let context_byte_end = orig_byte_for_lower_char
+                .get(context_char_end)
+                .copied()
+                .unwrap_or(entry.text.len());
+
+            let context = &entry.text[context_byte_start..context_byte_end];
+            let matched_text = &entry.text[matched_byte_start..matched_byte_end];
 
             let context_with_ellipsis = format!(
                 "{}{}{}",
-                if context_start > 0 { "..." } else { "" },
+                if context_byte_start > 0 { "..." } else { "" },
                 context,
-                if context_end < entry.text.len() { "..." } else { "" }
+                if context_byte_end < entry.text.len() { "..." } else { "" }
             );
 
             results.push(SearchResult {
@@ -604,12 +639,12 @@ impl SessionSearcher {
                 group_id: entry.group_id.clone(),
                 item_type: entry.item_type.clone(),
                 match_index_in_item: Some(match_index_in_item),
-                match_start_offset: Some(absolute_pos as u32),
+                match_start_offset: Some(matched_byte_start as u32),
                 message_uuid: entry.message_uuid.clone(),
             });
 
             match_index_in_item += 1;
-            pos = absolute_pos + query.len();
+            pos = absolute_pos + lower_query.len();
         }
     }
 }
@@ -850,5 +885,51 @@ mod tests {
         // 期望: [10] (所有 limits >= total_files, 只有 final push)
         let boundaries = build_fast_search_stage_boundaries(10);
         assert_eq!(boundaries, vec![10]);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Regression: char-based matching with to_lowercase byte-length changes
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn test_search_lowercase_byte_length_divergence() {
+        // 德语 ß 小写化为 "ss"（1 字符 → 2 字符），byte-offset 方案会在此 panic 或返回错误结果。
+        // 修复后使用 char-index 映射，正确返回原始文本中的 "Straße"。
+        let (temp_dir, mut searcher) = setup_test_env();
+
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+
+        let session_content = r#"{"type":"user","message":{"role":"user","content":"hello"},"uuid":"u1","timestamp":"2024-01-01T00:00:00Z"}
+{"type":"assistant","message":{"role":"assistant","id":"msg_1","type":"message","content":[{"type":"text","text":"Die Straße ist groß"}],"model":"claude-3","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}},"uuid":"a1","timestamp":"2024-01-01T00:01:00Z"}
+"#;
+        fs::write(project_dir.join("session-utf8.jsonl"), session_content).unwrap();
+
+        // 搜索 "strasse"（小写化后 ß→ss 匹配 "Straße"）
+        let result = searcher.search_sessions("-Users-test-project", "strasse", 50);
+        assert_eq!(result.total_matches, 1, "should match 'Straße' when searching for 'strasse'");
+        let sr = &result.results[0];
+        // matched_text 应为原始文本中的 "Straße"，不能包含上下文词汇
+        assert!(sr.matched_text == "Straße", "matched_text should be 'Straße', got '{}'", sr.matched_text);
+        assert!(!sr.matched_text.contains("ist"), "matched_text must not contain surrounding context");
+    }
+
+    #[test]
+    fn test_search_unicode_no_byte_length_divergence() {
+        // 多字节 Unicode 字符（to_lowercase 不改变长度）不应导致切片 panic
+        let (temp_dir, mut searcher) = setup_test_env();
+
+        let project_dir = temp_dir.path().join("projects").join("-Users-test-project");
+        fs::create_dir_all(&project_dir).unwrap();
+
+        let session_content = r#"{"type":"user","message":{"role":"user","content":"test"},"uuid":"u1","timestamp":"2024-01-01T00:00:00Z"}
+{"type":"assistant","message":{"role":"assistant","id":"msg_1","type":"message","content":[{"type":"text","text":"こんにちは世界"}],"model":"claude-3","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":20}},"uuid":"a1","timestamp":"2024-01-01T00:01:00Z"}
+"#;
+        fs::write(project_dir.join("session-unicode.jsonl"), session_content).unwrap();
+
+        let result = searcher.search_sessions("-Users-test-project", "世界", 50);
+        assert_eq!(result.total_matches, 1);
+        let sr = &result.results[0];
+        assert_eq!(sr.matched_text, "世界");
     }
 }

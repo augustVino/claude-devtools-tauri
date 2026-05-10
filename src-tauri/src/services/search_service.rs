@@ -68,7 +68,7 @@ impl SearchServiceImpl {
         let q = query.to_string();
 
         tokio::task::spawn_blocking(move || -> Result<SearchSessionsResult, AppError> {
-            let mut s = searcher.lock()?;
+            let mut s = searcher.lock().unwrap_or_else(|e| e.into_inner());
             Ok(s.search_sessions(&pid, &q, max))
         })
         .await?
@@ -96,7 +96,7 @@ impl SearchServiceImpl {
         let q = query.to_string();
 
         tokio::task::spawn_blocking(move || -> Result<SearchSessionsResult, AppError> {
-            let mut s = searcher.lock()?;
+            let mut s = searcher.lock().unwrap_or_else(|e| e.into_inner());
             Ok(s.search_all_projects(&q, max))
         })
         .await?
@@ -111,7 +111,7 @@ impl SearchServiceImpl {
         let sid = session_id.to_string();
 
         tokio::task::spawn_blocking(move || -> Result<FindSessionByIdResult, AppError> {
-            let mut s = searcher.lock()?;
+            let mut s = searcher.lock().unwrap_or_else(|e| e.into_inner());
             Ok(s.find_session_by_id(&sid))
         })
         .await?
@@ -136,7 +136,7 @@ impl SearchServiceImpl {
         let frag = fragment.trim().to_string();
 
         tokio::task::spawn_blocking(move || -> Result<FindSessionsByPartialIdResult, AppError> {
-            let mut s = searcher.lock()?;
+            let mut s = searcher.lock().unwrap_or_else(|e| e.into_inner());
             Ok(s.find_sessions_by_partial_id(&frag, max))
         })
         .await?
@@ -144,7 +144,7 @@ impl SearchServiceImpl {
 
     /// Rebuild the internal SessionSearcher with new paths (e.g., after claude root change).
     pub fn rebuild(&self, projects_dir: PathBuf, todos_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Result<(), AppError> {
-        let mut guard = self.searcher.lock()?;
+        let mut guard = self.searcher.lock().unwrap_or_else(|e| e.into_inner());
         *guard = SessionSearcher::new(projects_dir, todos_dir, fs_provider, None);
         Ok(())
     }
