@@ -233,6 +233,8 @@ export const CommandPalette = (): React.JSX.Element | null => {
   );
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const resultsContainerRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const [query, setQuery] = useState('');
   const [sessionResults, setSessionResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -454,6 +456,17 @@ export const CommandPalette = (): React.JSX.Element | null => {
   useEffect(() => {
     setSelectedIndex(0);
   }, [filteredProjects, sessionResults]);
+
+  // Auto-scroll selected item into view when selectedIndex changes
+  useEffect(() => {
+    if (!itemRefs.current.size) return;
+
+    const selectedKey = `item-${selectedIndex}`;
+    const selectedElement = itemRefs.current.get(selectedKey);
+    if (selectedElement && resultsContainerRef.current) {
+      selectedElement.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [selectedIndex]);
 
   // Handle project click
   const handleProjectClick = useCallback(
@@ -701,7 +714,7 @@ export const CommandPalette = (): React.JSX.Element | null => {
         </div>
 
         {/* Results */}
-        <div className="max-h-[50vh] overflow-y-auto">
+        <div ref={resultsContainerRef} className="max-h-[50vh] overflow-y-auto">
           {queryIsUUID ? (
             // Exact UUID lookup result
             loading ? null : sessionIdMatch?.found && sessionIdMatch.session ? (
@@ -732,16 +745,21 @@ export const CommandPalette = (): React.JSX.Element | null => {
             loading ? null : partialIdMatches.length > 0 ? (
               <div className="py-2">
                 {partialIdMatches.map((match, index) => (
-                  <SessionIdMatchItem
-                    key={match.session.id}
-                    projectName={projectNameByWorktreeId.get(match.projectId) ?? match.projectId}
-                    sessionTitle={match.session.firstMessage ?? ''}
-                    messageCount={match.session.messageCount}
-                    createdAt={match.session.createdAt}
-                    sessionId={match.session.id}
-                    isSelected={index === selectedIndex}
-                    onClick={() => handlePartialMatchClick(match.projectId, match.session.id)}
-                  />
+                  <div key={match.session.id} ref={(el) => {
+                    const key = `item-${index}`;
+                    if (el) itemRefs.current.set(key, el);
+                    else itemRefs.current.delete(key);
+                  }}>
+                    <SessionIdMatchItem
+                      projectName={projectNameByWorktreeId.get(match.projectId) ?? match.projectId}
+                      sessionTitle={match.session.firstMessage ?? ''}
+                      messageCount={match.session.messageCount}
+                      createdAt={match.session.createdAt}
+                      sessionId={match.session.id}
+                      isSelected={index === selectedIndex}
+                      onClick={() => handlePartialMatchClick(match.projectId, match.session.id)}
+                    />
+                  </div>
                 ))}
               </div>
             ) : (
@@ -758,12 +776,17 @@ export const CommandPalette = (): React.JSX.Element | null => {
             ) : (
               <div className="py-2">
                 {filteredProjects.map((repo, index) => (
-                  <ProjectResultItem
-                    key={repo.id}
-                    repo={repo}
-                    isSelected={index === selectedIndex}
-                    onClick={() => handleProjectClick(repo)}
-                  />
+                  <div key={repo.id} ref={(el) => {
+                    const key = `item-${index}`;
+                    if (el) itemRefs.current.set(key, el);
+                    else itemRefs.current.delete(key);
+                  }}>
+                    <ProjectResultItem
+                      repo={repo}
+                      isSelected={index === selectedIndex}
+                      onClick={() => handleProjectClick(repo)}
+                    />
+                  </div>
                 ))}
               </div>
             )
@@ -788,15 +811,20 @@ export const CommandPalette = (): React.JSX.Element | null => {
                   : undefined;
 
                 return (
-                  <SessionResultItem
-                    key={`${result.sessionId}-${index}`}
-                    result={result}
-                    isSelected={index === selectedIndex}
-                    onClick={() => handleSessionResultClick(result)}
-                    highlightMatch={highlightMatch}
-                    showProjectName={globalSearchEnabled}
-                    projectName={projectName}
-                  />
+                  <div key={`${result.sessionId}-${index}`} ref={(el) => {
+                    const key = `item-${index}`;
+                    if (el) itemRefs.current.set(key, el);
+                    else itemRefs.current.delete(key);
+                  }}>
+                    <SessionResultItem
+                      result={result}
+                      isSelected={index === selectedIndex}
+                      onClick={() => handleSessionResultClick(result)}
+                      highlightMatch={highlightMatch}
+                      showProjectName={globalSearchEnabled}
+                      projectName={projectName}
+                    />
+                  </div>
                 );
               })}
             </div>
