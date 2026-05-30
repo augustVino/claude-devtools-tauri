@@ -139,6 +139,8 @@ export const createMemorySlice: StateCreator<AppState, [], [], MemorySlice> = (
       projectId,
       label: "Memory",
     });
+    // Trigger loading immediately so the tab doesn't briefly show "no memory"
+    void state.loadMemoryForProject(projectId);
   },
 
   refreshMemoryForProject: async (projectId: string) => {
@@ -149,7 +151,13 @@ export const createMemorySlice: StateCreator<AppState, [], [], MemorySlice> = (
       for (const [key, value] of Object.entries(state.fileContents)) {
         if (!key.startsWith(prefix)) next[key] = value;
       }
-      return { fileContents: next };
+      return {
+        fileContents: next,
+        expandedEntriesByProjectId: {
+          ...state.expandedEntriesByProjectId,
+          [projectId]: [],
+        },
+      };
     });
     await get().loadMemoryForProject(projectId);
   },

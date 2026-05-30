@@ -2,8 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-#[allow(dead_code)] // wired in Tasks 2-5
-
 /// Parsed entry from MEMORY.md index file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
