@@ -1,14 +1,14 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState } from 'react';
 
-import { isDesktopMode } from "@renderer/api";
-import { Bell, HardDrive, Server, Settings, Wrench } from "lucide-react";
+import { isDesktopMode } from '@renderer/api';
+import { Bell, HardDrive, Server, Settings, Wrench } from 'lucide-react';
 
 export type SettingsSection =
-  | "general"
-  | "connection"
-  | "workspace"
-  | "notifications"
-  | "advanced";
+  | 'general'
+  | 'connection'
+  | 'workspace'
+  | 'notifications'
+  | 'advanced';
 
 interface SettingsTabsProps {
   activeSection: SettingsSection;
@@ -23,11 +23,11 @@ interface TabConfig {
 }
 
 const tabs: TabConfig[] = [
-  { id: "general", label: "General", icon: Settings },
-  { id: "connection", label: "Connection", icon: Server, desktopOnly: true },
-  { id: "workspace", label: "Workspaces", icon: HardDrive, desktopOnly: true },
-  { id: "notifications", label: "Notifications", icon: Bell },
-  { id: "advanced", label: "Advanced", icon: Wrench },
+  { id: 'general', label: 'General', icon: Settings },
+  //   { id: "connection", label: "Connection", icon: Server, desktopOnly: true },
+  //   { id: "workspace", label: "Workspaces", icon: HardDrive, desktopOnly: true },
+  { id: 'notifications', label: 'Notifications', icon: Bell },
+  { id: 'advanced', label: 'Advanced', icon: Wrench },
 ];
 
 export const SettingsTabs = ({
@@ -38,13 +38,13 @@ export const SettingsTabs = ({
   const isDesktop = useMemo(() => isDesktopMode(), []);
   const visibleTabs = useMemo(
     () => tabs.filter((tab) => !tab.desktopOnly || isDesktop),
-    [isDesktop],
+    [isDesktop]
   );
 
   return (
     <div
       className="inline-flex gap-1 border-b"
-      style={{ borderColor: "var(--color-border)" }}
+      style={{ borderColor: 'var(--color-border)' }}
     >
       {visibleTabs.map((tab) => {
         const Icon = tab.icon;
@@ -52,9 +52,9 @@ export const SettingsTabs = ({
         const isHovered = hoveredTab === tab.id;
 
         const getTextColor = (): string => {
-          if (isActive) return "var(--color-text)";
-          if (isHovered) return "var(--color-text-secondary)";
-          return "var(--color-text-muted)";
+          if (isActive) return 'var(--color-text)';
+          if (isHovered) return 'var(--color-text-secondary)';
+          return 'var(--color-text-muted)';
         };
 
         return (
@@ -64,12 +64,12 @@ export const SettingsTabs = ({
             onMouseEnter={() => setHoveredTab(tab.id)}
             onMouseLeave={() => setHoveredTab(null)}
             className={`flex items-center gap-2 px-3 py-2 text-sm transition-colors ${
-              isActive ? "rounded-md font-medium" : ""
+              isActive ? 'rounded-md font-medium' : ''
             }`}
             style={{
               backgroundColor: isActive
-                ? "var(--color-surface-raised)"
-                : "transparent",
+                ? 'var(--color-surface-raised)'
+                : 'transparent',
               color: getTextColor(),
             }}
           >

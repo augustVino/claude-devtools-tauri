@@ -11,17 +11,20 @@ import { Loader2 } from 'lucide-react';
 import { useSettingsConfig, useSettingsHandlers } from './hooks';
 import {
   AdvancedSection,
-  ConnectionSection,
+  //   ConnectionSection,
   GeneralSection,
   NotificationsSection,
-  WorkspaceSection,
+  //   WorkspaceSection,
 } from './sections';
 import { type SettingsSection, SettingsTabs } from './SettingsTabs';
 
 export const SettingsView = (): React.JSX.Element | null => {
-  const [activeSection, setActiveSection] = useState<SettingsSection>('general');
+  const [activeSection, setActiveSection] =
+    useState<SettingsSection>('general');
   const pendingSettingsSection = useStore((s) => s.pendingSettingsSection);
-  const clearPendingSettingsSection = useStore((s) => s.clearPendingSettingsSection);
+  const clearPendingSettingsSection = useStore(
+    (s) => s.clearPendingSettingsSection
+  );
 
   // Consume pending section via useEffect to avoid setState during render
   useEffect(() => {
@@ -63,7 +66,10 @@ export const SettingsView = (): React.JSX.Element | null => {
         className="flex flex-1 items-center justify-center"
         style={{ backgroundColor: 'var(--color-surface)' }}
       >
-        <div className="flex items-center gap-3" style={{ color: 'var(--color-text-muted)' }}>
+        <div
+          className="flex items-center gap-3"
+          style={{ color: 'var(--color-text-muted)' }}
+        >
           <Loader2 className="size-5 animate-spin" />
           <span>Loading settings...</span>
         </div>
@@ -98,11 +104,17 @@ export const SettingsView = (): React.JSX.Element | null => {
   if (!config) return null;
 
   return (
-    <div className="flex-1 overflow-auto" style={{ backgroundColor: 'var(--color-surface)' }}>
+    <div
+      className="flex-1 overflow-auto"
+      style={{ backgroundColor: 'var(--color-surface)' }}
+    >
       <div className="mx-auto max-w-2xl px-6 py-8">
         {/* Header */}
         <div className="mb-6">
-          <h1 className="text-lg font-medium" style={{ color: 'var(--color-text)' }}>
+          <h1
+            className="text-lg font-medium"
+            style={{ color: 'var(--color-text)' }}
+          >
             Settings
           </h1>
           <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
@@ -116,7 +128,10 @@ export const SettingsView = (): React.JSX.Element | null => {
         </div>
 
         {/* Tabs */}
-        <SettingsTabs activeSection={activeSection} onSectionChange={setActiveSection} />
+        <SettingsTabs
+          activeSection={activeSection}
+          onSectionChange={setActiveSection}
+        />
 
         {/* Content */}
         <div className="mt-4">
@@ -129,9 +144,9 @@ export const SettingsView = (): React.JSX.Element | null => {
             />
           )}
 
-          {activeSection === 'connection' && <ConnectionSection />}
+          {/* {activeSection === 'connection' && <ConnectionSection />} */}
 
-          {activeSection === 'workspace' && <WorkspaceSection />}
+          {/* {activeSection === 'workspace' && <WorkspaceSection />} */}
 
           {activeSection === 'notifications' && (
             <NotificationsSection
