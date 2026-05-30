@@ -4,6 +4,7 @@ pub mod messages;
 pub mod chunks;
 pub mod config;
 pub mod ssh;
+pub mod memory;
 
 #[allow(unused_imports)]
 pub use config::*;
@@ -17,3 +18,5 @@ pub use chunks::*;
 pub use jsonl::*;
 #[allow(unused_imports)]
 pub use ssh::*;
+#[allow(unused_imports)]
+pub use memory::*;

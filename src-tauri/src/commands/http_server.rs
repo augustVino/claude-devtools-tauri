@@ -107,6 +107,7 @@ pub async fn start(
             subagent_svc: app.state::<Arc<dyn crate::services::SubagentService>>().inner().clone(),
             ssh_svc: app.state::<Arc<dyn crate::services::SshService>>().inner().clone(),
             config_svc: app.state::<Arc<dyn crate::services::ConfigService>>().inner().clone(),
+            memory_svc: app.state::<Arc<dyn crate::services::MemoryService>>().inner().clone(),
         };
 
         // 前端构建产物目录：RENDERER_PATH 环境变量优先，fallback 到 CARGO_MANIFEST_DIR/../dist

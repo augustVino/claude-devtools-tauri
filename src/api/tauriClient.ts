@@ -13,6 +13,10 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   ElectronAPI,
   ConfigAPI,
+  MemoryAPI,
+  MemoryIndex,
+  MemoryReadFileResult,
+  MemoryOpenResult,
   ClaudeMdFileInfo,
   AgentConfig,
   MentionedFileInfo,
@@ -552,6 +556,16 @@ export class TauriAPIClient implements ElectronAPI {
       invoke("hide_sessions", { projectId, sessionIds }),
     unhideSessions: (projectId: string, sessionIds: string[]): Promise<void> =>
       invoke("unhide_sessions", { projectId, sessionIds }),
+  };
+
+  readonly memory: MemoryAPI = {
+    hasMemory: (projectId: string) => invoke<boolean>("has_memory", { projectId }),
+    getIndex: (projectId: string) =>
+      invoke<MemoryIndex | null>("get_memory_index", { projectId }),
+    readFile: (projectId: string, fileName: string) =>
+      invoke<MemoryReadFileResult>("read_memory_file", { projectId, fileName }),
+    copyPath: (projectId: string, fileName: string | null) =>
+      invoke<MemoryOpenResult>("copy_memory_path", { projectId, fileName }),
   };
 
   // Event listeners — wired to Tauri events

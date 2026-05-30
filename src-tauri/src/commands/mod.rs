@@ -24,6 +24,7 @@ pub mod tray;
 pub mod http_server;
 pub mod context;
 pub mod ssh;
+pub mod memory;
 
 #[allow(unused_imports)]
 pub use window::*;
@@ -47,6 +48,8 @@ pub use subagents::*;
 pub use notifications::*;
 #[allow(unused_imports)]
 pub use ssh::*;
+#[allow(unused_imports)]
+pub use memory::*;
 
 /// 跨命令共享的应用状态。
 ///

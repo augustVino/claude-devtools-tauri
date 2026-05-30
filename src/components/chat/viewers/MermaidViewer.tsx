@@ -53,12 +53,21 @@ interface MermaidViewerProps {
 
 export const MermaidViewer: React.FC<MermaidViewerProps> = ({ code }) => {
   const uniqueId = useId().replace(/:/g, '-');
+  const mermaidId = `mermaid-${uniqueId}`;
   const [showCode, setShowCode] = useState(false);
   const [svg, setSvg] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(false);
   const { isDark } = useTheme();
+
+  // Mermaid renders error SVGs to document.body under `d{id}` and `{id}` wrapper divs
+  // (errorRenderer.draw throws before removeTempElements cleanup in mermaid.core.mjs)
+  // Clean up orphaned nodes to prevent accumulation of error icons at page bottom
+  const cleanupOrphans = (): void => {
+    document.getElementById(`d${mermaidId}`)?.remove();
+    document.getElementById(mermaidId)?.remove();
+  };
 
   // 第三层懒加载：IntersectionObserver 可见性检测
   useEffect(() => {
@@ -94,15 +103,14 @@ export const MermaidViewer: React.FC<MermaidViewerProps> = ({ code }) => {
     const render = async (): Promise<void> => {
       try {
         const m = await ensureMermaidInit(isDark);
-        const id = `mermaid-${uniqueId}`;
         let rendered: string;
         try {
-          const result = await m.render(id, code);
+          const result = await m.render(mermaidId, code);
           rendered = result.svg;
         } catch (renderErr) {
           // ID conflict retry with timestamp suffix
           if (renderErr instanceof Error && renderErr.message?.includes('already in use')) {
-            const retryId = `${id}-${Date.now()}`;
+            const retryId = `${mermaidId}-${Date.now()}`;
             const retryResult = await m.render(retryId, code);
             rendered = retryResult.svg;
           } else {
@@ -119,10 +127,15 @@ export const MermaidViewer: React.FC<MermaidViewerProps> = ({ code }) => {
           setError(err instanceof Error ? err.message : 'Failed to render mermaid diagram');
           setSvg('');
         }
+      } finally {
+        cleanupOrphans();
       }
     };
     void render();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      cleanupOrphans();
+    };
   }, [code, isDark, isVisible]);
 
   return (

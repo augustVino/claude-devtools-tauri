@@ -78,6 +78,11 @@ pub fn run() {
           get_projects_base_path(),
       ));
 
+  // MemoryService (IPC + HTTP paths)
+  let memory_service: Arc<dyn services::MemoryService> = Arc::new(services::MemoryServiceImpl::new(
+      get_projects_base_path(),
+  ));
+
   // Zoom factor state: track zoom since Tauri v2 has set_zoom() but no zoom() getter.
   // Store f64 as bits in AtomicU64 for lock-free concurrent access.
   let zoom_factor: Arc<AtomicU64> = Arc::new(AtomicU64::new(1.0f64.to_bits()));
@@ -125,6 +130,7 @@ pub fn run() {
       app.manage(project_service.clone());
       app.manage(search_service.clone());
       app.manage(subagent_service.clone());
+      app.manage(memory_service.clone());
 
       // 4. 显示窗口（非 --minimized 模式）
       AppBootstrap::show_window_if_needed(app.handle())?;
@@ -235,6 +241,7 @@ pub fn run() {
         &subagent_service,    // Batch 2 Task 2.5 创建
         &ssh_service,         // Batch 2 Task 3.5 创建
         &config_service,      // 此处创建
+        &memory_service,      // Step 4.8 创建
       )?;
 
       // Debug 模式下启用日志插件
@@ -306,6 +313,10 @@ pub fn run() {
       commands::projects::get_repository_groups,
       commands::projects::get_worktree_sessions,
       commands::subagents::get_subagent_detail,
+      commands::memory::has_memory,
+      commands::memory::get_memory_index,
+      commands::memory::read_memory_file,
+      commands::memory::copy_memory_path,
       commands::notifications::get_notifications,
       commands::notifications::mark_notification_read,
       commands::notifications::mark_all_notifications_read,

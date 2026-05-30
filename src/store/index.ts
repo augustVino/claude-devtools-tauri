@@ -20,6 +20,7 @@ import { createTabSlice } from "./slices/tabSlice";
 import { createTabUISlice } from "./slices/tabUISlice";
 import { createUISlice } from "./slices/uiSlice";
 import { createUpdateSlice } from "./slices/updateSlice";
+import { createMemorySlice } from "./slices/memorySlice";
 
 import type { DetectedError } from "../types/data";
 import type { AppState } from "./types";
@@ -45,6 +46,7 @@ export const useStore = create<AppState>()((...args) => ({
   ...createConnectionSlice(...args),
   ...createContextSlice(...args),
   ...createUpdateSlice(...args),
+  ...createMemorySlice(...args),
 }));
 
 // =============================================================================

@@ -270,6 +270,17 @@ export const createTabSlice: StateCreator<AppState, [], [], TabSlice> = (set, ge
     newLayout = { ...newLayout, focusedPaneId: pane.id };
     set(syncFromLayout(newLayout));
 
+    // For memory tabs, sync sidebar state to match (no session fetch needed)
+    if (tab.type === 'memory' && tab.projectId) {
+      if (state.selectedProjectId !== tab.projectId) {
+        set({
+          activeProjectId: tab.projectId,
+          selectedProjectId: tab.projectId,
+        });
+      }
+      return;
+    }
+
     // For session tabs, sync sidebar state to match
     if (tab.type === 'session' && tab.sessionId && tab.projectId) {
       const sessionId = tab.sessionId;

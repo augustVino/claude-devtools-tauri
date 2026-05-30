@@ -76,6 +76,7 @@ impl AppBootstrap {
         subagent_service: &Arc<dyn crate::services::SubagentService>,
         ssh_service: &Arc<dyn crate::services::SshService>,
         config_service: &Arc<dyn crate::services::ConfigService>,
+        memory_service: &Arc<dyn crate::services::MemoryService>,
     ) -> Result<(), String> {
         let http_config = tauri::async_runtime::block_on(config_manager.get_config()).http_server.clone();
         if let Some(ref cfg) = http_config {
@@ -114,6 +115,7 @@ impl AppBootstrap {
                         subagent_svc: subagent_service.clone(),   // Batch 2 Task 2.5 创建
                         ssh_svc: ssh_service.clone(),             // Batch 2 Task 3.5 创建
                         config_svc: config_service.clone(),       // Step 4.8 创建
+                        memory_svc: memory_service.clone(),         // Step 4.8 创建
                     };
 
                     let dist_dir = std::env::var("RENDERER_PATH")

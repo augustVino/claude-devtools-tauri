@@ -18,6 +18,7 @@ import type { TabSlice } from './slices/tabSlice';
 import type { TabUISlice } from './slices/tabUISlice';
 import type { UISlice } from './slices/uiSlice';
 import type { UpdateSlice } from './slices/updateSlice';
+import type { MemorySlice } from './slices/memorySlice';
 
 // =============================================================================
 // Shared Types
@@ -90,4 +91,5 @@ export type AppState = ProjectSlice &
   ConfigSlice &
   ConnectionSlice &
   ContextSlice &
-  UpdateSlice;
+  UpdateSlice &
+  MemorySlice;

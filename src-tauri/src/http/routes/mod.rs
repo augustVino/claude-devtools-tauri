@@ -17,6 +17,7 @@ use serde::Serialize;
 pub mod config;
 pub mod contexts;
 pub mod events;
+pub mod memory;
 pub mod notifications;
 pub mod projects;
 pub mod search;
@@ -229,6 +230,11 @@ pub fn build_routes() -> Router<HttpState> {
         .merge(contexts::routes())
         // SSH
         .merge(ssh::routes())
+        // Memory
+        .route("/api/memory/has", get(memory::has_memory))
+        .route("/api/memory/index", get(memory::get_memory_index))
+        .route("/api/memory/file", get(memory::read_memory_file))
+        .route("/api/memory/copy-path", post(memory::copy_memory_path))
         // Deferred: Updater
         .route("/api/updater/check", post(deferred_not_implemented))
         .route("/api/updater/download", post(deferred_not_implemented))

@@ -7,6 +7,7 @@
 //! - [`project_service`] — Project scanning, listing, repository grouping
 //! - [`search_service`] — Session full-text search, ID lookup
 //! - [`session_service`] — Session CRUD, detail building, metadata, waterfall
+//! - [`memory_service`] — Memory viewer: read Claude memory directory and MEMORY.md index
 //!
 //! Trait modules (Phase E):
 //! - [`project_service_trait`] — ProjectService trait definition
@@ -15,6 +16,7 @@
 //! - [`subagent_service_trait`] — SubagentService trait definition (Phase B-B2)
 //! - [`ssh_service_trait`] — SshService trait definition (Phase B-B2)
 //! - [`config_service_trait`] — ConfigService trait definition (Phase B-B3)
+//! - [`memory_service_trait`] — MemoryService trait definition
 
 pub mod project_service;
 pub mod search_service;
@@ -28,6 +30,8 @@ pub mod ssh_service_trait;
 pub mod ssh_service;
 pub mod config_service_trait;
 pub mod config_service_impl;
+pub mod memory_service_trait;
+pub mod memory_service;
 
 // Re-exports: traits take original name, Impl gets suffix
 pub use session_service_trait::SessionService;
@@ -41,4 +45,6 @@ pub use search_service::SearchServiceImpl;
 pub use project_service::ProjectServiceImpl;
 pub use subagent_service::SubagentServiceImpl;
 pub use ssh_service::SshServiceImpl;
+pub use memory_service_trait::MemoryService;
+pub use memory_service::MemoryServiceImpl;
 pub use config_service_impl::ConfigServiceImpl;

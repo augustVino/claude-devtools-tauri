@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '@renderer/store';
-import { Bell, FileText, LayoutDashboard, Pin, Search, Settings, X } from 'lucide-react';
+import { Bell, Brain, FileText, LayoutDashboard, Pin, Search, Settings, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 
 import type { Tab } from '@renderer/types/tabs';
@@ -33,6 +33,7 @@ const TAB_ICONS = {
   notifications: Bell,
   settings: Settings,
   session: FileText,
+  memory: Brain,
 } as const;
 
 export const SortableTab = ({

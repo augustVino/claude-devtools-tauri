@@ -31,4 +31,5 @@ pub struct HttpState {
     pub subagent_svc: Arc<dyn crate::services::SubagentService>,
     pub ssh_svc: Arc<dyn crate::services::SshService>,
     pub config_svc: Arc<dyn crate::services::ConfigService>,
+    pub memory_svc: Arc<dyn crate::services::MemoryService>,
 }

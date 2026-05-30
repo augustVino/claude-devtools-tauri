@@ -510,6 +510,47 @@ export interface ElectronAPI {
 
   // HTTP Server API
   httpServer: HttpServerAPI;
+
+  // Memory API
+  memory: MemoryAPI;
+}
+
+// =============================================================================
+// Memory API types
+// =============================================================================
+
+export interface MemoryEntry {
+  title: string;
+  file: string;
+  hook: string;
+  lineNumber: number;
+}
+
+export interface MemoryIndex {
+  rawMarkdown: string;
+  entries: MemoryEntry[];
+  orphanFiles: string[];
+}
+
+export type MemoryReadFileResult =
+  | { success: true; content: string; path: string }
+  | { success: false; error: string };
+
+export type MemoryOpenResult =
+  | { success: true; path: string }
+  | { success: false; error: string };
+
+export interface MemoryAPI {
+  hasMemory: (projectId: string) => Promise<boolean>;
+  getIndex: (projectId: string) => Promise<MemoryIndex | null>;
+  readFile: (
+    projectId: string,
+    fileName: string,
+  ) => Promise<MemoryReadFileResult>;
+  copyPath: (
+    projectId: string,
+    fileName: string | null,
+  ) => Promise<MemoryOpenResult>;
 }
 
 // =============================================================================
