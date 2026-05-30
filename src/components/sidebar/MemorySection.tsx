@@ -33,18 +33,18 @@ export const MemorySection = () => {
   if (!hasMemory) return null;
 
   return (
-    <div
-      className="flex w-full items-center gap-1 border-b px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted"
-      style={{ borderColor: "var(--color-border)" }}
-    >
+    <div className="flex items-center gap-2 px-4 py-3" style={{ marginTop: 8 }}>
+      <Brain className="size-4" style={{ color: 'var(--color-text-muted)' }} />
       <button
         type="button"
         onClick={() => openMemoryTab(selectedProjectId)}
-        className="flex flex-1 items-center gap-1.5 text-left hover:text-text-secondary"
+        className="text-xs uppercase tracking-wider text-left"
+        style={{ color: 'var(--color-text-muted)' }}
       >
-        <Brain size={13} className="shrink-0" aria-hidden="true" />
-        <span>Memory</span>
-        {indexEntryCount > 0 && <span className="text-text-muted">({indexEntryCount})</span>}
+        Memory
+        {indexEntryCount > 0 && (
+          <span style={{ opacity: 0.6 }}> ({indexEntryCount})</span>
+        )}
       </button>
     </div>
   );

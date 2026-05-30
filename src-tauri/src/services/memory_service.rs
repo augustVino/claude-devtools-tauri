@@ -25,11 +25,12 @@ impl MemoryServiceImpl {
 
     /// Resolve memory directory path. Uses `extract_base_dir` to strip
     /// composite ID suffixes (`::{hash}`), matching project_scanner.rs.
+    /// Uses the encoded directory name directly — do NOT decode_path, as
+    /// that loses information (hyphens in real directory names get
+    /// converted to `/`, producing wrong paths).
     fn dir_path_buf(&self, project_id: &str) -> PathBuf {
         let base_dir = path_decoder::extract_base_dir(project_id);
-        self.projects_dir
-            .join(path_decoder::decode_path(base_dir))
-            .join(MEMORY_DIR_NAME)
+        self.projects_dir.join(base_dir).join(MEMORY_DIR_NAME)
     }
 
     /// Validate memory directory path via canonicalize + containment check.

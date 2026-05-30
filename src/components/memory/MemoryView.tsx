@@ -12,6 +12,7 @@ import { splitFrontmatter } from "./frontmatter";
 import { FrontmatterCard } from "./FrontmatterCard";
 
 import type { Components } from "react-markdown";
+import type { AppState } from "@renderer/store/types";
 
 interface MemoryViewProps {
   projectId: string;
@@ -80,23 +81,16 @@ function resolveWikilink(rawSlug: string, rows: ListRow[]): string | null {
 }
 
 export const MemoryView = ({ projectId }: MemoryViewProps) => {
-  const { index, hasMemory, fileContentsForProject, loadMemoryForProject, toggleMemoryEntry, expanded } =
+  const { index, hasMemory, expanded, loadMemoryForProject, toggleMemoryEntry, fileContents } =
     useStore(
-      useShallow((s) => {
-        const prefix = `${projectId}::`;
-        const projectFiles: Record<string, string | undefined> = {};
-        for (const [key, value] of Object.entries(s.fileContents)) {
-          if (key.startsWith(prefix)) projectFiles[key] = value;
-        }
-        return {
-          index: s.indexByProjectId[projectId] ?? null,
-          hasMemory: s.hasMemoryByProjectId[projectId],
-          fileContentsForProject: projectFiles,
-          loadMemoryForProject: s.loadMemoryForProject,
-          toggleMemoryEntry: s.toggleMemoryEntry,
-          expanded: s.expandedEntriesByProjectId[projectId] ?? [],
-        };
-      }),
+      useShallow((s: AppState) => ({
+        index: s.indexByProjectId[projectId] ?? null,
+        hasMemory: s.hasMemoryByProjectId[projectId],
+        expanded: s.expandedEntriesByProjectId[projectId] ?? [],
+        loadMemoryForProject: s.loadMemoryForProject,
+        toggleMemoryEntry: s.toggleMemoryEntry,
+        fileContents: s.fileContents,
+      })),
     );
 
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -143,13 +137,13 @@ export const MemoryView = ({ projectId }: MemoryViewProps) => {
   useEffect(() => {
     if (!displayedFile) return;
     const key = `${projectId}::${displayedFile}`;
-    if (fileContentsForProject[key] !== undefined) return;
+    if (fileContents[key] !== undefined) return;
     if (!expanded.includes(displayedFile)) {
       void toggleMemoryEntry(projectId, displayedFile);
     }
-  }, [displayedFile, projectId, fileContentsForProject, expanded, toggleMemoryEntry]);
+  }, [displayedFile, projectId, fileContents, expanded, toggleMemoryEntry]);
 
-  const content = displayedFile ? fileContentsForProject[`${projectId}::${displayedFile}`] : undefined;
+  const content = displayedFile ? fileContents[`${projectId}::${displayedFile}`] : undefined;
   const { frontmatter, body } = useMemo(
     () => (content !== undefined ? splitFrontmatter(content) : { frontmatter: null, body: "" }),
     [content],
