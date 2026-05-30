@@ -125,8 +125,8 @@ pub struct MemoryOpenResult {
     pub error: Option<String>,
 }
 
-// OpenTarget 定义在 types/ 或 parsing/ 中，
-// 序列化到前端需 camelCase
+// OpenTarget 定义在 `types/memory.rs`（需被 commands 和 services 共享）
+// `#[serde(rename_all = "camelCase")]` 确保前端收到 camelCase
 ```
 
 ## 前端设计
@@ -138,6 +138,7 @@ pub struct MemoryOpenResult {
 - 两个变体：`folderMenu`（侧边栏用，打开目录）和 `iconMenu`（工具栏用，图标样式）
 - 点击时调用 `api.memory.openIn(projectId, fileName, targetId)`
 - 根据 `api.memory.listAvailableOpeners()` 返回的可用应用动态渲染选项
+- 图标映射：使用 `lucide-react` 内置图标，通过 `OpenTarget.icon` 字段（字符串）映射到对应组件。上游的 `icon` 字段对应关系：`finder` → `FolderOpen`、`vscode` → `Code`、`cursor` → `MousePointer2`、`zed` → `Zap`、`xcode` → `Apple`、`ghostty` → `Terminal`、`iterm` → `Terminal`、`terminal` → `Terminal`、`android-studio` → `Smartphone`、`antigravity` → `Feather`。若 `icon` 为空或未匹配，使用 `FileText` 兜底
 
 ### `MemorySection.tsx`（修改）
 
@@ -169,8 +170,8 @@ export interface MemoryAPI {
   // 已有
   hasMemory: (projectId: string) => Promise<boolean>;
   getIndex: (projectId: string) => Promise<MemoryIndex | null>;
-  readFile: (projectId: string, fileName: string) => Promise<...>;
-  copyPath: (projectId: string, fileName: string | null) => Promise<...>;
+  readFile: (projectId: string, fileName: string) => Promise<MemoryReadFileResult>;
+  copyPath: (projectId: string, fileName: string | null) => Promise<MemoryOpenResult>;
   // 新增
   listAvailableOpeners: () => Promise<OpenTarget[]>;
   openIn: (
