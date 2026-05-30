@@ -17,6 +17,7 @@ import type {
   MemoryIndex,
   MemoryReadFileResult,
   MemoryOpenResult,
+  OpenTarget,
   ClaudeMdFileInfo,
   AgentConfig,
   MentionedFileInfo,
@@ -566,6 +567,9 @@ export class TauriAPIClient implements ElectronAPI {
       invoke<MemoryReadFileResult>("read_memory_file", { projectId, fileName }),
     copyPath: (projectId: string, fileName: string | null) =>
       invoke<MemoryOpenResult>("copy_memory_path", { projectId, fileName }),
+  listAvailableOpeners: () => invoke<OpenTarget[]>("list_memory_openers"),
+  openIn: (projectId: string, fileName: string | null, openerId: string) =>
+    invoke<MemoryOpenResult>("open_memory_in", { projectId, fileName: fileName ?? null, openerId }),
   };
 
   // Event listeners — wired to Tauri events

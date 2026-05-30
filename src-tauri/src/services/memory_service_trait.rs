@@ -11,4 +11,10 @@ pub trait MemoryService: Send + Sync {
     async fn read_file(&self, project_id: &str, file_name: &str) -> Result<MemoryFile, AppError>;
     fn get_dir_path(&self, project_id: &str) -> String;
     fn get_file_path(&self, project_id: &str, file_name: &str) -> Result<String, AppError>;
+    async fn open_in(
+        &self,
+        opener_id: &str,
+        project_id: &str,
+        file_name: Option<&str>,
+    ) -> Result<(), AppError>;
 }

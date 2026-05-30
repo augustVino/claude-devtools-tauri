@@ -317,6 +317,8 @@ pub fn run() {
       commands::memory::get_memory_index,
       commands::memory::read_memory_file,
       commands::memory::copy_memory_path,
+      commands::memory::list_memory_openers,
+      commands::memory::open_memory_in,
       commands::notifications::get_notifications,
       commands::notifications::mark_notification_read,
       commands::notifications::mark_all_notifications_read,

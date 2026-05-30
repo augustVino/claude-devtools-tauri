@@ -13,6 +13,7 @@ pub mod timeline_gap_filling;
 pub mod retry;
 pub mod time;
 pub mod timestamp;
+pub mod app_opener;
 
 // 导出路径解码器的所有公共项，供外部模块直接使用
 pub use path_decoder::*;

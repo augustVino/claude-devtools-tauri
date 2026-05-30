@@ -235,6 +235,8 @@ pub fn build_routes() -> Router<HttpState> {
         .route("/api/memory/index", get(memory::get_memory_index))
         .route("/api/memory/file", get(memory::read_memory_file))
         .route("/api/memory/copy-path", post(memory::copy_memory_path))
+        .route("/api/memory/openers", get(memory::list_memory_openers))
+        .route("/api/memory/open-in", post(memory::open_memory_in))
         // Deferred: Updater
         .route("/api/updater/check", post(deferred_not_implemented))
         .route("/api/updater/download", post(deferred_not_implemented))

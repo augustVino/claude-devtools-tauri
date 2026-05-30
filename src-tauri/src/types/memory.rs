@@ -54,6 +54,18 @@ pub struct MemoryOpenResult {
     pub error: Option<String>,
 }
 
+/// 可打开的外部应用目标。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenTarget {
+    pub id: String,
+    pub label: String,
+    pub icon_name: String,
+    pub available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shortcut_key: Option<String>,
+}
+
 /// Parse MEMORY.md content and a directory listing into a `MemoryIndex`.
 ///
 /// Entry regex: `- [Title](file.md) — hook`
@@ -172,5 +184,36 @@ mod tests {
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("\"success\":true"), "Expected boolean true: {json}");
         assert!(!json.contains("\"true\""), "Should not be string: {json}");
+    }
+
+    #[test]
+    fn open_target_serializes_camel_case() {
+        let target = OpenTarget {
+            id: "vscode".into(),
+            label: "VS Code".into(),
+            icon_name: "file-code".into(),
+            available: true,
+            shortcut_key: Some("\u{2318}O".into()),
+        };
+        let json = serde_json::to_string(&target).unwrap();
+        assert!(json.contains("\"iconName\""), "Expected camelCase: {json}");
+        assert!(json.contains("\"shortcutKey\""), "Expected camelCase: {json}");
+        assert!(!json.contains("icon_name"), "No snake_case: {json}");
+    }
+
+    #[test]
+    fn open_target_none_shortcut_skipped() {
+        let target = OpenTarget {
+            id: "finder".into(),
+            label: "Finder".into(),
+            icon_name: "folder".into(),
+            available: true,
+            shortcut_key: None,
+        };
+        let json = serde_json::to_string(&target).unwrap();
+        assert!(
+            !json.contains("shortcutKey"),
+            "shortcutKey should be omitted when None: {json}"
+        );
     }
 }

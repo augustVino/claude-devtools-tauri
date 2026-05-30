@@ -6,6 +6,7 @@ use std::io::Read;
 use crate::error::AppError;
 use crate::types::memory::{MemoryFile, MemoryIndex, parse_memory_index};
 use crate::utils::path_decoder;
+use crate::utils::app_opener;
 
 use super::memory_service_trait::MemoryService;
 
@@ -252,5 +253,21 @@ impl MemoryService for MemoryServiceImpl {
     fn get_file_path(&self, project_id: &str, file_name: &str) -> Result<String, AppError> {
         self.safe_file_path_buf(project_id, file_name)
             .map(|p| p.to_string_lossy().to_string())
+    }
+
+    async fn open_in(
+        &self,
+        opener_id: &str,
+        project_id: &str,
+        file_name: Option<&str>,
+    ) -> Result<(), AppError> {
+        let path = match file_name {
+            Some(name) if !name.trim().is_empty() => {
+                self.get_file_path(project_id, name)?
+            }
+            _ => self.get_dir_path(project_id),
+        };
+        let is_directory = file_name.map_or(true, |n| n.trim().is_empty());
+        app_opener::open_with(opener_id, &path, is_directory).await
     }
 }

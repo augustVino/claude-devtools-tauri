@@ -10,6 +10,7 @@ import { useShallow } from "zustand/react/shallow";
 
 import { splitFrontmatter } from "./frontmatter";
 import { FrontmatterCard } from "./FrontmatterCard";
+import { OpenInMenu } from "@renderer/components/sidebar/memory/OpenInMenu";
 
 import type { Components } from "react-markdown";
 import type { AppState } from "@renderer/store/types";
@@ -304,29 +305,32 @@ export const MemoryView = ({ projectId }: MemoryViewProps) => {
           style={{ borderColor: "var(--color-border)" }}
         >
           {displayedFile && (
-            <button
-              type="button"
-              aria-label={copiedAt === null ? "Copy content" : "Copied"}
-              onClick={() => void handleCopy()}
-              disabled={content === undefined}
-              className="flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs text-text hover:bg-surface-raised disabled:opacity-40"
-              style={{
-                backgroundColor: "var(--color-surface-overlay)",
-                borderColor: "var(--color-border-emphasis)",
-              }}
-            >
-              {copiedAt === null ? (
-                <>
-                  <Copy size={14} className="text-text-secondary" aria-hidden="true" />
-                  <span>Copy</span>
-                </>
-              ) : (
-                <>
-                  <Check size={14} className="text-text-secondary" aria-hidden="true" />
-                  <span>Copied</span>
-                </>
-              )}
-            </button>
+            <>
+              <button
+                type="button"
+                aria-label={copiedAt === null ? "Copy content" : "Copied"}
+                onClick={() => void handleCopy()}
+                disabled={content === undefined}
+                className="flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs text-text hover:bg-surface-raised disabled:opacity-40"
+                style={{
+                  backgroundColor: "var(--color-surface-overlay)",
+                  borderColor: "var(--color-border-emphasis)",
+                }}
+              >
+                {copiedAt === null ? (
+                  <>
+                    <Copy size={14} className="text-text-secondary" aria-hidden="true" />
+                    <span>Copy</span>
+                  </>
+                ) : (
+                  <>
+                    <Check size={14} className="text-text-secondary" aria-hidden="true" />
+                    <span>Copied</span>
+                  </>
+                )}
+              </button>
+              <OpenInMenu projectId={projectId} fileName={displayedFile} variant="iconMenu" />
+            </>
           )}
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-4">

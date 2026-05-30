@@ -106,7 +106,7 @@ export const Sidebar = (): React.JSX.Element | null => {
       <MemorySection />
 
       {/* Date-grouped session list */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-y-auto">
         <DateGroupedSessions />
       </div>
 

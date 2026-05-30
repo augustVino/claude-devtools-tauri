@@ -51,6 +51,10 @@ pub enum AppError {
     /// 文件操作错误（FsProvider 子阶段使用）
     #[error("File operation failed: {0}")]
     FileOp(String),
+
+    /// 外部应用打开失败（open -a 命令失败、应用未安装等）
+    #[error("OpenFailed: {0}")]
+    OpenFailed(String),
 }
 
 impl AppError {

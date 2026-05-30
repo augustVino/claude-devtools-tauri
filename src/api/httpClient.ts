@@ -44,7 +44,7 @@ import type {
   WaterfallData,
   WslClaudeRootCandidate,
 } from "@shared/types";
-import type { AgentConfig, MemoryAPI, MemoryIndex, MemoryReadFileResult, MemoryOpenResult, SessionDetailUnchanged } from "@shared/types/api";
+import type { AgentConfig, MemoryAPI, MemoryIndex, MemoryReadFileResult, MemoryOpenResult, OpenTarget, SessionDetailUnchanged } from "@shared/types/api";
 
 export class HttpAPIClient implements ElectronAPI {
   private baseUrl: string;
@@ -753,6 +753,13 @@ export class HttpAPIClient implements ElectronAPI {
       ),
     copyPath: (projectId: string, fileName: string | null) =>
       this.post<MemoryOpenResult>("/api/memory/copy-path", { projectId, fileName }),
+    listAvailableOpeners: () => this.get<OpenTarget[]>("/api/memory/openers"),
+    openIn: (projectId: string, fileName: string | null, openerId: string) =>
+      this.post<MemoryOpenResult>("/api/memory/open-in", {
+        projectId,
+        fileName,
+        openerId,
+      }),
   };
 
   // HTTP Server API — in browser mode, server is already running (we're using it)

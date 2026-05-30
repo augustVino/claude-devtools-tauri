@@ -3,6 +3,8 @@ import { useStore } from "@renderer/store";
 import { Brain } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 
+import { OpenInMenu } from "./memory/OpenInMenu";
+
 export const MemorySection = () => {
   const { selectedProjectId, hasMemory, indexEntryCount, loading, memoryError, loadMemoryForProject, openMemoryTab } =
     useStore(
@@ -33,19 +35,22 @@ export const MemorySection = () => {
   if (!hasMemory) return null;
 
   return (
-    <div className="flex items-center gap-2 px-4 py-3" style={{ marginTop: 8 }}>
-      <Brain className="size-4" style={{ color: 'var(--color-text-muted)' }} />
-      <button
-        type="button"
-        onClick={() => openMemoryTab(selectedProjectId)}
-        className="text-xs uppercase tracking-wider text-left"
-        style={{ color: 'var(--color-text-muted)' }}
-      >
-        Memory
-        {indexEntryCount > 0 && (
-          <span style={{ opacity: 0.6 }}> ({indexEntryCount})</span>
-        )}
-      </button>
+    <div className="flex items-center justify-between px-4 py-3" style={{ marginTop: 8 }}>
+      <div className="flex items-center gap-2">
+        <Brain className="size-4" style={{ color: 'var(--color-text-muted)' }} />
+        <button
+          type="button"
+          onClick={() => openMemoryTab(selectedProjectId)}
+          className="text-xs uppercase tracking-wider text-left"
+          style={{ color: 'var(--color-text-muted)' }}
+        >
+          Memory
+          {indexEntryCount > 0 && (
+            <span style={{ opacity: 0.6 }}> ({indexEntryCount})</span>
+          )}
+        </button>
+      </div>
+      <OpenInMenu projectId={selectedProjectId} fileName={null} variant="dots" />
     </div>
   );
 };

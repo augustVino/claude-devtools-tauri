@@ -536,9 +536,19 @@ export type MemoryReadFileResult =
   | { success: true; content: string; path: string }
   | { success: false; error: string };
 
-export type MemoryOpenResult =
-  | { success: true; path: string }
-  | { success: false; error: string };
+export interface MemoryOpenResult {
+  success: boolean;
+  path?: string;
+  error?: string;
+}
+
+export interface OpenTarget {
+  id: string;
+  label: string;
+  iconName: string;
+  available: boolean;
+  shortcutKey?: string;
+}
 
 export interface MemoryAPI {
   hasMemory: (projectId: string) => Promise<boolean>;
@@ -550,6 +560,12 @@ export interface MemoryAPI {
   copyPath: (
     projectId: string,
     fileName: string | null,
+  ) => Promise<MemoryOpenResult>;
+  listAvailableOpeners: () => Promise<OpenTarget[]>;
+  openIn: (
+    projectId: string,
+    fileName: string | null,
+    openerId: string,
   ) => Promise<MemoryOpenResult>;
 }
 

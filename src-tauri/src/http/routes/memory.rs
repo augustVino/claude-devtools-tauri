@@ -13,7 +13,7 @@ use serde::Deserialize;
 use crate::commands::guards;
 use crate::error::AppError;
 use crate::http::state::HttpState;
-use crate::types::memory::{MemoryIndex, MemoryReadFileResult, MemoryOpenResult};
+use crate::types::memory::{MemoryIndex, MemoryReadFileResult, MemoryOpenResult, OpenTarget};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -109,5 +109,22 @@ pub async fn copy_memory_path(
         success: true,
         path: Some(path),
         error: None,
+    }))
+}
+
+pub async fn list_memory_openers(
+    _state: State<HttpState>,
+) -> Result<Json<Vec<OpenTarget>>, AppError> {
+    Ok(Json(crate::utils::app_opener::detect_installations().await))
+}
+
+pub async fn open_memory_in(
+    _state: State<HttpState>,
+) -> Result<Json<MemoryOpenResult>, AppError> {
+    // HTTP 模式下不可用 — 对齐 upstream httpClient.ts 的 openIn 行为
+    Ok(Json(MemoryOpenResult {
+        success: false,
+        path: None,
+        error: Some("Open operations are not available in HTTP mode".into()),
     }))
 }
