@@ -3,12 +3,12 @@
 //! 所有业务逻辑委托给 [`SessionService`](crate::services::SessionService)。
 //! 本模块仅负责 Axum 参数提取、校验和格式转换。
 
-use axum::{Json, extract::{Path, State}, http::StatusCode};
+use axum::{Json, extract::{Path, Query, State}, http::StatusCode};
 
 use crate::commands::guards;
 use crate::http::state::HttpState;
 use crate::types::domain::{PaginatedSessionsResult, Session, SessionMetrics};
-use crate::types::chunks::{ConversationGroup, SessionDetail};
+use crate::types::chunks::{ConversationGroup, SessionDetail, SessionDetailResponse};
 
 use super::error_json;
 
@@ -17,6 +17,11 @@ use super::error_json;
 pub struct ProjectSessionPath {
     pub project_id: String,
     pub session_id: String,
+}
+
+#[derive(serde::Deserialize, Default)]
+pub struct SessionDetailQuery {
+    pub known_fingerprint: Option<String>,
 }
 
 // =============================================================================
@@ -81,11 +86,12 @@ pub async fn get_sessions_by_ids(
 pub async fn get_session_detail(
     State(state): State<HttpState>,
     Path(path): Path<ProjectSessionPath>,
-) -> Result<Json<Option<SessionDetail>>, (StatusCode, Json<super::ErrorResponse>)> {
+    Query(query): Query<SessionDetailQuery>,
+) -> Result<Json<Option<SessionDetailResponse>>, (StatusCode, Json<super::ErrorResponse>)> {
     let safe_pid = guards::validate_project_id(&path.project_id).map_err(error_json)?;
     let safe_sid = guards::validate_session_id(&path.session_id).map_err(error_json)?;
 
-    state.session_service.get_session_detail(&safe_pid, &safe_sid).await
+    state.session_service.get_session_detail(&safe_pid, &safe_sid, query.known_fingerprint.as_deref()).await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }

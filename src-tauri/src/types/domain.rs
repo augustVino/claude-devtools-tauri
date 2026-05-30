@@ -111,6 +111,8 @@ pub struct Session {
     pub project_path: String,
     #[serde(rename = "createdAt")]
     pub created_at: u64,
+    #[serde(default, rename = "updatedAt", skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub todo_data: Option<serde_json::Value>,
     #[serde(rename = "firstMessage", skip_serializing_if = "Option::is_none")]

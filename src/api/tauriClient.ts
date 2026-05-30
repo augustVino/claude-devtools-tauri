@@ -22,6 +22,7 @@ import type {
   SshConnectionStatus,
   SshConfigHostEntry,
   SshLastConnection,
+  SessionDetailUnchanged,
 } from "@shared/types/api";
 import type {
   Session,
@@ -165,8 +166,9 @@ export class TauriAPIClient implements ElectronAPI {
   readonly getSessionDetail = (
     projectId: string,
     sessionId: string,
-  ): Promise<SessionDetail | null> =>
-    invoke("get_session_detail", { projectId, sessionId });
+    knownFingerprint?: string,
+  ): Promise<SessionDetail | SessionDetailUnchanged | null> =>
+    invoke("get_session_detail", { projectId, sessionId, knownFingerprint });
 
   readonly getSessionDetailForExport = (
     projectId: string,

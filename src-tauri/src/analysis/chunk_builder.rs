@@ -59,7 +59,7 @@ impl ChunkBuilder {
     ) -> SessionDetail {
         let chunks = Self::build_chunks(&messages, &subagents);
         let metrics = calculate_metrics(&messages);
-        SessionDetail { session, messages, chunks, processes: subagents, metrics }
+        SessionDetail { session, messages, chunks, processes: subagents, metrics, fingerprint: None }
     }
 
     /// Get total metrics for all chunks.

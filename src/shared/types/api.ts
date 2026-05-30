@@ -34,6 +34,16 @@ import type {
 } from "@main/types";
 
 // =============================================================================
+// Session Detail Response Types
+// =============================================================================
+
+/** Sentinel returned when the renderer's known fingerprint matches the file on disk. */
+export interface SessionDetailUnchanged {
+  unchanged: true;
+  fingerprint: string;
+}
+
+// =============================================================================
 // Agent Config
 // =============================================================================
 
@@ -368,7 +378,8 @@ export interface ElectronAPI {
   getSessionDetail: (
     projectId: string,
     sessionId: string,
-  ) => Promise<SessionDetail | null>;
+    knownFingerprint?: string,
+  ) => Promise<SessionDetail | SessionDetailUnchanged | null>;
   /** Fetch full session detail with chunks and processes for export */
   getSessionDetailForExport: (
     projectId: string,

@@ -401,6 +401,8 @@ export interface SessionDetail {
   processes: Process[];
   /** Aggregated metrics for the entire session */
   metrics: SessionMetrics;
+  /** File-state fingerprint from backend for short-circuit optimization */
+  fingerprint?: string;
 }
 
 /**

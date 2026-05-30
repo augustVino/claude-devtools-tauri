@@ -125,6 +125,8 @@ pub struct SessionDetail {
     pub chunks: Vec<Chunk>,
     pub processes: Vec<Process>,
     pub metrics: SessionMetrics,
+    #[serde(default, rename = "fingerprint", skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
 }
 
 // =============================================================================
@@ -272,4 +274,21 @@ pub struct ConversationGroup {
     #[serde(rename = "durationMs")]
     pub duration_ms: u64,
     pub metrics: SessionMetrics,
+}
+
+// =============================================================================
+// Session Detail Response (fingerprint short-circuit)
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionDetailUnchanged {
+    pub unchanged: bool,
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SessionDetailResponse {
+    Full(SessionDetail),
+    Unchanged(SessionDetailUnchanged),
 }

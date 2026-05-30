@@ -19,11 +19,12 @@ use serde::{Deserialize, Serialize};
 struct CacheEntry {
     value: serde_json::Value,
     version: u32,
+    fingerprint: Option<String>,
 }
 
 /// 当前缓存模式版本号。当缓存结构发生变更时递增此值，
 /// 以强制升级后重新解析。
-const CURRENT_VERSION: u32 = 2;
+const CURRENT_VERSION: u32 = 3;
 
 // ---------------------------------------------------------------------------
 // DataCache
@@ -94,8 +95,9 @@ impl DataCache {
         &self,
         project_id: &str,
         session_id: &str,
+        fingerprint: Option<&str>,
     ) -> Option<serde_json::Value> {
-        self.get(&Self::build_key(project_id, session_id)).await
+        self.get(&Self::build_key(project_id, session_id), fingerprint).await
     }
 
     /// 将会话数据存入缓存。
@@ -104,8 +106,9 @@ impl DataCache {
         project_id: &str,
         session_id: &str,
         value: serde_json::Value,
+        fingerprint: Option<&str>,
     ) {
-        self.set(&Self::build_key(project_id, session_id), value).await;
+        self.set(&Self::build_key(project_id, session_id), value, fingerprint).await;
     }
 
     // ---- 子代理缓存 -------------------------------------------------------
@@ -117,7 +120,7 @@ impl DataCache {
         session_id: &str,
         subagent_id: &str,
     ) -> Option<serde_json::Value> {
-        self.get(&Self::build_subagent_key(project_id, session_id, subagent_id))
+        self.get(&Self::build_subagent_key(project_id, session_id, subagent_id), None)
             .await
     }
 
@@ -132,6 +135,7 @@ impl DataCache {
         self.set(
             &Self::build_subagent_key(project_id, session_id, subagent_id),
             value,
+            None,
         )
         .await;
     }
@@ -202,7 +206,7 @@ impl DataCache {
 
     // ---- 内部实现 ---------------------------------------------------------
 
-    async fn get(&self, key: &str) -> Option<serde_json::Value> {
+    async fn get(&self, key: &str, fingerprint: Option<&str>) -> Option<serde_json::Value> {
         if !self.is_enabled() {
             return None;
         }
@@ -211,16 +215,23 @@ impl DataCache {
             self.cache.invalidate(key).await;
             return None;
         }
+        if let (Some(fp), Some(entry_fp)) = (fingerprint, &entry.fingerprint) {
+            if fp != entry_fp {
+                self.cache.invalidate(key).await;
+                return None;
+            }
+        }
         Some(entry.value)
     }
 
-    async fn set(&self, key: &str, value: serde_json::Value) {
+    async fn set(&self, key: &str, value: serde_json::Value, fingerprint: Option<&str>) {
         if !self.is_enabled() {
             return;
         }
         let entry = CacheEntry {
             value,
             version: CURRENT_VERSION,
+            fingerprint: fingerprint.map(|s| s.to_string()),
         };
         self.cache.insert(key.to_string(), entry).await;
     }
@@ -299,8 +310,8 @@ mod tests {
         let cache = DataCache::new();
         let val = json_val(1);
 
-        cache.set_session("proj-a", "sess-1", val.clone()).await;
-        let got = cache.get_session("proj-a", "sess-1").await;
+        cache.set_session("proj-a", "sess-1", val.clone(), None).await;
+        let got = cache.get_session("proj-a", "sess-1", None).await;
 
         assert_eq!(got, Some(val));
     }
@@ -308,7 +319,7 @@ mod tests {
     #[tokio::test]
     async fn get_miss_returns_none() {
         let cache = DataCache::new();
-        let got = cache.get_session("proj-x", "sess-y").await;
+        let got = cache.get_session("proj-x", "sess-y", None).await;
         assert!(got.is_none());
     }
 
@@ -335,12 +346,12 @@ mod tests {
         let cache = DataCache::with_options(50, 0);
         let val = json_val(99);
 
-        cache.set_session("proj-a", "sess-ttl", val).await;
+        cache.set_session("proj-a", "sess-ttl", val, None).await;
 
         // 短暂等待，让 moka 的异步过期机制执行
         tokio::time::sleep(Duration::from_millis(5)).await;
 
-        let got = cache.get_session("proj-a", "sess-ttl").await;
+        let got = cache.get_session("proj-a", "sess-ttl", None).await;
         assert!(got.is_none());
     }
 
@@ -353,20 +364,20 @@ mod tests {
         // 向容量为 3 的缓存中插入 4 条数据
         for i in 0..4 {
             cache
-                .set_session("proj", &format!("sess-{i}"), json_val(i))
+                .set_session("proj", &format!("sess-{i}"), json_val(i), None)
                 .await;
         }
 
         // 至少应有一条较早的条目被淘汰。
         // 最先插入的 (sess-0) 是 LRU 淘汰候选。
-        let _first = cache.get_session("proj", "sess-0").await;
+        let _first = cache.get_session("proj", "sess-0", None).await;
         // 由于 moka 内部批处理机制，无法确定具体哪条被淘汰，
         // 但可以验证缓存数量未超过最大容量。
         let count = cache.entry_count().await;
         assert!(count <= 3, "cache should not exceed max_capacity, got {count}");
 
         // 最近写入的条目必须仍在缓存中。
-        let last = cache.get_session("proj", "sess-3").await;
+        let last = cache.get_session("proj", "sess-3", None).await;
         assert!(last.is_some(), "most-recent entry should survive eviction");
     }
 
@@ -377,19 +388,19 @@ mod tests {
         let cache = DataCache::new();
 
         cache
-            .set_session("proj-a", "sess-inv", json_val(1))
+            .set_session("proj-a", "sess-inv", json_val(1), None)
             .await;
         cache
             .set_subagent("proj-a", "sess-inv", "sub-1", json_val(2))
             .await;
         // 无关联条目
         cache
-            .set_session("proj-b", "sess-other", json_val(3))
+            .set_session("proj-b", "sess-other", json_val(3), None)
             .await;
 
         cache.invalidate_session("proj-a", "sess-inv").await;
 
-        assert!(cache.get_session("proj-a", "sess-inv").await.is_none());
+        assert!(cache.get_session("proj-a", "sess-inv", None).await.is_none());
         assert!(
             cache
                 .get_subagent("proj-a", "sess-inv", "sub-1")
@@ -398,7 +409,7 @@ mod tests {
         );
         assert!(
             cache
-                .get_session("proj-b", "sess-other")
+                .get_session("proj-b", "sess-other", None)
                 .await
                 .is_some()
         );
@@ -409,36 +420,36 @@ mod tests {
         let cache = DataCache::new();
 
         cache
-            .set_session("proj-x", "s1", json_val(10))
+            .set_session("proj-x", "s1", json_val(10), None)
             .await;
         cache
-            .set_session("proj-x", "s2", json_val(11))
+            .set_session("proj-x", "s2", json_val(11), None)
             .await;
         cache
             .set_subagent("proj-x", "s1", "sub-a", json_val(12))
             .await;
         // unrelated
         cache
-            .set_session("proj-y", "s1", json_val(20))
+            .set_session("proj-y", "s1", json_val(20), None)
             .await;
 
         cache.invalidate_project("proj-x").await;
 
-        assert!(cache.get_session("proj-x", "s1").await.is_none());
-        assert!(cache.get_session("proj-x", "s2").await.is_none());
+        assert!(cache.get_session("proj-x", "s1", None).await.is_none());
+        assert!(cache.get_session("proj-x", "s2", None).await.is_none());
         assert!(
             cache
                 .get_subagent("proj-x", "s1", "sub-a")
                 .await
                 .is_none()
         );
-        assert!(cache.get_session("proj-y", "s1").await.is_some());
+        assert!(cache.get_session("proj-y", "s1", None).await.is_some());
     }
 
     #[tokio::test]
     async fn clear_empties_cache() {
         let cache = DataCache::new();
-        cache.set_session("p", "s", json_val(1)).await;
+        cache.set_session("p", "s", json_val(1), None).await;
         cache.clear().await;
         assert_eq!(cache.entry_count().await, 0);
     }
@@ -450,8 +461,8 @@ mod tests {
         let cache = DataCache::disabled();
         assert!(!cache.is_enabled());
 
-        cache.set_session("proj", "sess", json_val(1)).await;
-        let got = cache.get_session("proj", "sess").await;
+        cache.set_session("proj", "sess", json_val(1), None).await;
+        let got = cache.get_session("proj", "sess", None).await;
         assert!(got.is_none(), "disabled cache should return None on get");
     }
 
@@ -461,19 +472,19 @@ mod tests {
         assert!(cache.is_enabled());
 
         // 写入一条数据
-        cache.set_session("proj", "sess", json_val(42)).await;
-        assert!(cache.get_session("proj", "sess").await.is_some());
+        cache.set_session("proj", "sess", json_val(42), None).await;
+        assert!(cache.get_session("proj", "sess", None).await.is_some());
 
         // 禁用后应清空且 get 返回 None
         cache.set_enabled(false).await;
         assert!(!cache.is_enabled());
-        assert!(cache.get_session("proj", "sess").await.is_none());
+        assert!(cache.get_session("proj", "sess", None).await.is_none());
 
         // 重新启用后可以正常使用
         cache.set_enabled(true).await;
         assert!(cache.is_enabled());
-        cache.set_session("proj", "sess2", json_val(99)).await;
-        assert!(cache.get_session("proj", "sess2").await.is_some());
+        cache.set_session("proj", "sess2", json_val(99), None).await;
+        assert!(cache.get_session("proj", "sess2", None).await.is_some());
     }
 
     #[tokio::test]
@@ -493,5 +504,59 @@ mod tests {
         // 克隆上重新启用，原始也应反映
         clone.set_enabled(true).await;
         assert!(cache.is_enabled(), "original should see enabled=true after set_enabled on clone");
+    }
+
+    // -- fingerprint 测试 ---------------------------------------------------
+
+    #[tokio::test]
+    async fn fingerprint_mismatch_invalidates_entry() {
+        let cache = DataCache::new();
+        cache.set_session("proj", "sess", json_val(1), Some("fp-v1")).await;
+
+        let got = cache.get_session("proj", "sess", Some("fp-v1")).await;
+        assert!(got.is_some(), "same fingerprint should hit");
+
+        let got = cache.get_session("proj", "sess", Some("fp-v2")).await;
+        assert!(got.is_none(), "different fingerprint should miss");
+    }
+
+    #[tokio::test]
+    async fn fingerprint_none_skips_check() {
+        let cache = DataCache::new();
+        cache.set_session("proj", "sess", json_val(1), Some("fp-v1")).await;
+
+        let got = cache.get_session("proj", "sess", None).await;
+        assert!(got.is_some(), "no fingerprint should always hit");
+    }
+
+    #[tokio::test]
+    async fn set_overwrites_fingerprint() {
+        let cache = DataCache::new();
+        cache.set_session("proj", "sess", json_val(1), Some("fp-v1")).await;
+        cache.set_session("proj", "sess", json_val(2), Some("fp-v2")).await;
+
+        let got = cache.get_session("proj", "sess", Some("fp-v2")).await;
+        assert_eq!(got, Some(json_val(2)));
+    }
+
+    #[tokio::test]
+    async fn mismatch_then_none_verifies_invalidation() {
+        let cache = DataCache::new();
+        cache.set_session("proj", "sess", json_val(1), Some("fp-v1")).await;
+
+        // Mismatch invalidates the entry
+        let _ = cache.get_session("proj", "sess", Some("fp-v2")).await;
+        // Even without fingerprint, entry is gone
+        let got = cache.get_session("proj", "sess", None).await;
+        assert!(got.is_none(), "entry should be invalidated after mismatch");
+    }
+
+    #[tokio::test]
+    async fn set_no_fp_get_with_fp_should_hit() {
+        let cache = DataCache::new();
+        cache.set_session("proj", "sess", json_val(1), None).await;
+
+        let got = cache.get_session("proj", "sess", Some("any-fp")).await;
+        assert!(got.is_some(), "entry without fingerprint should match any query fp");
     }
 }

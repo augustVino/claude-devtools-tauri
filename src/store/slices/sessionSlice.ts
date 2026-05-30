@@ -119,7 +119,9 @@ export const createSessionSlice: StateCreator<AppState, [], [], SessionSlice> = 
     try {
       const sessions = await api.getSessions(projectId);
       // Sort by createdAt (descending)
-      const sorted = [...sessions].sort((a, b) => b.createdAt - a.createdAt);
+      const sorted = [...sessions].sort(
+        (a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt)
+      );
       set({ sessions: sorted, sessionsLoading: false });
     } catch (error) {
       set({

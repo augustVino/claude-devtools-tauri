@@ -16,7 +16,7 @@ use crate::infrastructure::{
     fs_provider::FsProvider,
 };
 use crate::parsing::{parse_session_file, ParsedSession};
-use crate::types::chunks::{ConversationGroup, Process, SessionDetail};
+use crate::types::chunks::{ConversationGroup, Process, SessionDetail, SessionDetailResponse, SessionDetailUnchanged};
 use crate::types::domain::{
     DeleteSessionResult, PaginatedSessionsResult, Session, SessionMetrics,
     SessionsPaginationOptions,
@@ -126,6 +126,8 @@ impl SessionServiceImpl {
         let filename = path.file_stem()?.to_string_lossy().to_string();
         let metadata = path.metadata().ok()?;
 
+        let mtime_ms = crate::utils::time::time_to_ms(metadata.modified().ok());
+
         let parsed = parse_session_file(path).await;
 
         // Note: Electron does NOT check isMeta for title extraction — it processes all type='user' entries.
@@ -219,6 +221,7 @@ impl SessionServiceImpl {
             project_id: project_id.to_string(),
             project_path,
             created_at,
+            updated_at: Some(mtime_ms),
             todo_data: None,
             first_message,
             message_timestamp: first_timestamp,
@@ -243,6 +246,7 @@ impl SessionServiceImpl {
             project_id: project_id.to_string(),
             project_path: fallback_path,
             created_at: 0,
+            updated_at: None,
             todo_data: None,
             first_message: None,
             message_timestamp: None,
@@ -443,20 +447,35 @@ impl SessionServiceImpl {
     /// 获取指定会话的完整详情（含可视化 Chunk 数据）。
     ///
     /// 优先从缓存读取，缓存未命中时解析 JSONL 文件并通过 ChunkBuilder 构建详情。
+    /// 支持基于文件 mtime+size 的 fingerprint 短路：当已知 fingerprint 匹配时返回 `Unchanged`。
     pub async fn get_session_detail(
         &self,
         project_id: &str,
         session_id: &str,
-    ) -> Result<Option<SessionDetail>, AppError> {
-        // 缓存查询 — 损坏数据应向上传播而非静默降级（缓存来自可信本地文件源）
-        if let Some(cached) = self.cache.get_session(project_id, session_id).await {
-            let detail: SessionDetail = serde_json::from_value(cached)?;
-            return Ok(Some(detail));
-        }
-
+        known_fingerprint: Option<&str>,
+    ) -> Result<Option<SessionDetailResponse>, AppError> {
         let session_path = self.session_path(project_id, session_id);
         if !session_path.exists() {
             return Ok(None);
+        }
+
+        let fingerprint = self
+            .fs_provider
+            .stat(&session_path)
+            .ok()
+            .map(|s| format!("{}-{}", s.mtime_ms, s.size));
+
+        if let (Some(known), Some(ref current)) = (known_fingerprint, &fingerprint) {
+            if known == current {
+                return Ok(Some(SessionDetailResponse::Unchanged(SessionDetailUnchanged {
+                    unchanged: true,
+                    fingerprint: current.clone(),
+                })));
+            }
+        }
+
+        if let Some(cached) = self.cache.get_session(project_id, session_id, fingerprint.as_deref()).await {
+            return Ok(Some(SessionDetailResponse::Full(serde_json::from_value(cached)?)));
         }
 
         let parsed = parse_session_file(&session_path).await;
@@ -469,24 +488,25 @@ impl SessionServiceImpl {
         let mut detail =
             ChunkBuilder::build_session_detail(session, parsed.messages.clone(), subagents);
 
-        // Strip raw messages before IPC transfer (aligns with Electron's slimDetail).
-        // Renderer never uses raw messages — they exist only for export.
-        // This reduces IPC serialization volume by ~50-60%.
         detail.messages.clear();
         for process in &mut detail.processes {
             process.messages.clear();
         }
 
-        // 写入缓存
+        detail.fingerprint = fingerprint.clone();
+
+        let value = serde_json::to_value(&detail)?;
+
         self.cache
             .set_session(
                 project_id,
                 session_id,
-                serde_json::to_value(&detail)?,
+                value,
+                fingerprint.as_deref(),
             )
             .await;
 
-        Ok(Some(detail))
+        Ok(Some(SessionDetailResponse::Full(detail)))
     }
 
     /// 获取指定会话的指标数据（消息数、token 用量等）。
@@ -771,8 +791,8 @@ impl super::session_service_trait::SessionService for SessionServiceImpl {
         self.get_sessions(project_id).await
     }
 
-    async fn get_session_detail(&self, project_id: &str, session_id: &str) -> Result<Option<crate::types::chunks::SessionDetail>, AppError> {
-        self.get_session_detail(project_id, session_id).await
+    async fn get_session_detail(&self, project_id: &str, session_id: &str, known_fingerprint: Option<&str>) -> Result<Option<crate::types::chunks::SessionDetailResponse>, AppError> {
+        self.get_session_detail(project_id, session_id, known_fingerprint).await
     }
 
     async fn get_session_detail_for_export(&self, project_id: &str, session_id: &str) -> Result<Option<crate::types::chunks::SessionDetail>, AppError> {

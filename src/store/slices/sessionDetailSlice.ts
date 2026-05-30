@@ -12,6 +12,7 @@ import {
   incrementalUpdateConversation,
   transformChunksToConversation
 } from '@renderer/utils/groupTransformer';
+import { isSessionDetailUnchanged } from '@shared/utils/sessionDetailResponse';
 import { createLogger } from '@shared/utils/logger';
 
 import { batchAsync } from '../utils/batchAsync';
@@ -28,6 +29,8 @@ const sessionRefreshInFlight = new Set<string>();
 const sessionRefreshQueued = new Set<string>();
 /** Fingerprint cache for skipping unchanged session refreshes */
 const sessionChunkFingerprint = new Map<string, string>();
+/** File-level fingerprint cache for backend short-circuit */
+const sessionFileFingerprint = new Map<string, string>();
 let sessionDetailFetchGeneration = 0;
 let agentConfigsCachedForProject = '';
 
@@ -39,6 +42,8 @@ export function cleanupSessionRefreshCoordination(refreshKey: string): void {
   sessionRefreshGeneration.delete(refreshKey);
   sessionRefreshInFlight.delete(refreshKey);
   sessionRefreshQueued.delete(refreshKey);
+  sessionChunkFingerprint.delete(refreshKey);
+  sessionFileFingerprint.delete(refreshKey);
 }
 
 import { getAllTabs } from '../utils/paneHelpers';
@@ -190,9 +195,49 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
       // ═══════════════════════════════════════
       // PHASE 1: 即时渲染 (~200-500ms)
       // ═══════════════════════════════════════
-      const detail = await api.getSessionDetail(projectId, sessionId);
+      const response = await api.getSessionDetail(projectId, sessionId);
       if (requestGeneration !== sessionDetailFetchGeneration) {
         return;
+      }
+      if (!response) {
+        const refreshKey = `${projectId}/${sessionId}`;
+        sessionFileFingerprint.delete(refreshKey);
+        sessionChunkFingerprint.delete(refreshKey);
+        set({
+          sessionDetail: null,
+          sessionDetailLoading: false,
+          conversation: null,
+          conversationLoading: false,
+          sessionClaudeMdStats: null,
+          sessionContextStats: null,
+          sessionPhaseInfo: null,
+        });
+        if (tabId) {
+          const prev = get().tabSessionData;
+          set({ tabSessionData: { ...prev, [tabId]: createEmptyTabSessionData() } });
+        }
+        return;
+      }
+      if (isSessionDetailUnchanged(response)) {
+        set({ sessionDetailLoading: false, conversationLoading: false });
+        if (tabId) {
+          const prev = get().tabSessionData;
+          set({
+            tabSessionData: {
+              ...prev,
+              [tabId]: {
+                ...(prev[tabId] ?? createEmptyTabSessionData()),
+                sessionDetailLoading: false,
+                conversationLoading: false,
+              },
+            },
+          });
+        }
+        return;
+      }
+      const detail = response;
+      if (detail.fingerprint) {
+        sessionFileFingerprint.set(`${projectId}/${sessionId}`, detail.fingerprint);
       }
 
       // Transform chunks to conversation
@@ -565,15 +610,26 @@ export const createSessionDetailSlice: StateCreator<AppState, [], [], SessionDet
     sessionRefreshInFlight.add(refreshKey);
 
     try {
-      const detail = await api.getSessionDetail(projectId, sessionId);
+      const knownFingerprint = sessionFileFingerprint.get(refreshKey);
+      const response = await api.getSessionDetail(projectId, sessionId, knownFingerprint);
 
-      // Drop stale responses if a newer refresh started while this one was in flight.
       if (sessionRefreshGeneration.get(refreshKey) !== generation) {
         return;
       }
 
-      if (!detail) {
+      if (!response) {
         return;
+      }
+
+      // Fast path: file unchanged — skip transformation entirely.
+      if (isSessionDetailUnchanged(response)) {
+        sessionFileFingerprint.set(refreshKey, response.fingerprint);
+        return;
+      }
+
+      const detail = response;
+      if (detail.fingerprint) {
+        sessionFileFingerprint.set(refreshKey, detail.fingerprint);
       }
 
       // Transform chunks to conversation - validate with type guard

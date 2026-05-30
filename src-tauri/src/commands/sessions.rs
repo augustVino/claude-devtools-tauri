@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::services::{SessionService, ProjectService};
 use crate::types::domain::{DeleteSessionResult, PaginatedSessionsResult, SessionsPaginationOptions, Project, Session, SessionMetrics};
-use crate::types::chunks::{ConversationGroup, SessionDetail};
+use crate::types::chunks::{ConversationGroup, SessionDetail, SessionDetailResponse};
 use crate::infrastructure::ContextManager;
 
 // AppState is defined in commands/mod.rs — re-exported here for backward compat
@@ -58,8 +58,9 @@ pub async fn get_session_detail(
     service: State<'_, Arc<dyn SessionService>>,
     project_id: String,
     session_id: String,
-) -> Result<Option<SessionDetail>, String> {
-    service.get_session_detail(&project_id, &session_id).await
+    known_fingerprint: Option<String>,
+) -> Result<Option<SessionDetailResponse>, String> {
+    service.get_session_detail(&project_id, &session_id, known_fingerprint.as_deref()).await
         .map_err(|e| e.into_tauri_string())
 }
 

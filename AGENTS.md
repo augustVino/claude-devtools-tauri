@@ -1,8 +1,8 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
-基于 Tauri v2 的 Claude Code 会话可视化桌面应用。读取 `~/.claude/projects/` 下的 JSONL 会话文件，解析为结构化数据，提供对话浏览、上下文追踪、工具调用分析和错误检测通知等功能。支持本地和 SSH 远程连接，以及内置 HTTP 服务器模式（浏览器访问）。
+基于 Tauri v2 的 Codex 会话可视化桌面应用。读取 `~/.Codex/projects/` 下的 JSONL 会话文件，解析为结构化数据，提供对话浏览、上下文追踪、工具调用分析和错误检测通知等功能。支持本地和 SSH 远程连接，以及内置 HTTP 服务器模式（浏览器访问）。
 
 ## Quick Reference
 
@@ -16,7 +16,7 @@ pnpm lint               # ESLint
 # Rust 测试
 cd src-tauri && cargo test                          # 全部测试
 cd src-tauri && cargo test -- <module_name>         # 单模块过滤（如 config, ssh_connection）
-cd src-tauri && cargo test -p claude-devtools -- <name>  # 按名称过滤
+cd src-tauri && cargo test -p Codex-devtools -- <name>  # 按名称过滤
 
 # 前端测试（vitest + happy-dom）
 npx vitest run
@@ -30,7 +30,7 @@ npx vitest run -- path/to/test.test.tsx
 - **Rust 命令**: snake_case 命名，返回 `Result<T, String>`
 - **双传输层**: 新增 API 时需同时实现 `TauriAPIClient` 和 `HttpAPIClient`（通过 `ElectronAPI` 接口统一契约，定义在 `src/shared/types/api.ts`）
 - **ReDoS 防护**: `trigger_manager/` 下的正则必须通过 `regex_validation.rs` 检查
-- **唯一数据源**: 文件系统 (`~/.claude/projects/{hash}/*.jsonl`) 为唯一真实来源
+- **唯一数据源**: 文件系统 (`~/.Codex/projects/{hash}/*.jsonl`) 为唯一真实来源
 
 ## 架构概览
 
@@ -82,7 +82,7 @@ utils/             → 工具函数（分页、路径解码、正则校验、时
 ### 数据流
 
 ```
-~/.claude/projects/{hash}/*.jsonl
+~/.Codex/projects/{hash}/*.jsonl
   → FileWatcher (notify crate) 检测变更
   → ContextManager 管理 ServiceContext 生命周期
   → Tauri events (file-change, todo-change, notification:*, ssh:status) 或 SSE 推送到前端

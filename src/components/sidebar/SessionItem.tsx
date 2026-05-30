@@ -287,7 +287,7 @@ export const SessionItem = React.memo(function SessionItem({
             {session.messageCount}
           </span>
           <span style={{ opacity: 0.5 }}>·</span>
-          <span className="tabular-nums">{formatShortTime(new Date(session.createdAt))}</span>
+          <span className="tabular-nums">{formatShortTime(new Date(Math.max(session.updatedAt ?? session.createdAt, session.createdAt)))}</span>
           {session.contextConsumption != null && session.contextConsumption > 0 && (
             <>
               <span style={{ opacity: 0.5 }}>·</span>

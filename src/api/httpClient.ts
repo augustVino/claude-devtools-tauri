@@ -44,7 +44,7 @@ import type {
   WaterfallData,
   WslClaudeRootCandidate,
 } from "@shared/types";
-import type { AgentConfig } from "@shared/types/api";
+import type { AgentConfig, SessionDetailUnchanged } from "@shared/types/api";
 
 export class HttpAPIClient implements ElectronAPI {
   private baseUrl: string;
@@ -257,10 +257,15 @@ export class HttpAPIClient implements ElectronAPI {
   getSessionDetail = (
     projectId: string,
     sessionId: string,
-  ): Promise<SessionDetail | null> =>
-    this.get<SessionDetail | null>(
-      `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}`,
+    knownFingerprint?: string,
+  ): Promise<SessionDetail | SessionDetailUnchanged | null> => {
+    const params = knownFingerprint
+      ? `?known_fingerprint=${encodeURIComponent(knownFingerprint)}`
+      : '';
+    return this.get<SessionDetail | SessionDetailUnchanged | null>(
+      `/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}${params}`,
     );
+  };
 
   getSessionDetailForExport = (
     projectId: string,
