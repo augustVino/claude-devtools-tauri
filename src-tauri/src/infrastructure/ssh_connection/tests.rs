@@ -322,13 +322,6 @@ fn test_resolve_remote_home() {
 }
 
 #[test]
-fn test_discover_agent_socket() {
-    // This test just verifies the function runs without panicking.
-    // The result depends on the test environment.
-    let _result = agent_discovery::discover_agent_socket_static();
-}
-
-#[test]
 fn test_ssh_client_handler_is_clone() {
     let handler = SshClientHandler;
     let _handler2 = handler.clone();

@@ -1,6 +1,6 @@
 //! SSH connection manager -- manages russh SSH connections and SFTP sessions.
 
-mod agent_discovery;
+pub(crate) mod agent_discovery;
 mod client_handler;
 mod connection_state;
 mod connect_flow;      // establish_raw_connection + build_connected_bundle

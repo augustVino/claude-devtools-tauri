@@ -6,6 +6,7 @@
 //! Electron reference: `SshConnectionManager.ts` lines 147-303
 //! (`buildConnectConfig` auth section + `resolveAutoAuth`).
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,11 +15,22 @@ use russh::client;
 use russh::keys::load_secret_key;
 use russh_keys::agent::client::AgentClient;
 
-use crate::infrastructure::ssh_config_parser::SshConfigParser;
+use crate::infrastructure::ssh_connection::agent_discovery::{mask_home_path, AgentCandidate};
 use crate::types::ssh::SshAuthMethod;
 
-/// Default authentication timeout (10 seconds).
+/// Default authentication timeout (covers all candidates combined).
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Per-candidate timeout — prevents dead socket from blocking entire chain.
+const AGENT_CANDIDATE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// SFTP open timeout — aligns with Electron SFTP_OPEN_TIMEOUT_MS=8000.
+/// Phase 3 will make this configurable via SshConfig.sftp_open_timeout_secs.
+///
+/// `pub(crate)` so connect_flow can access via `ssh_auth::SFTP_OPEN_TIMEOUT`.
+/// (connect_flow.rs:14 has `use crate::infrastructure::ssh_auth;` module-level
+/// import — constants are not auto-imported, must be qualified.)
+pub(crate) const SFTP_OPEN_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Default SSH private key paths tried during auto auth.
 const DEFAULT_KEY_NAMES: &[&str] = &["id_ed25519", "id_rsa", "id_ecdsa"];
@@ -147,77 +159,107 @@ pub async fn auth_private_key<H: client::Handler>(
     }
 }
 
-/// Authenticate using the SSH agent.
-///
-/// Connects to the local SSH agent and tries each loaded identity.
-/// If `agent_socket` is provided, uses that specific socket path via
-/// `connect_uds()` (critical for macOS GUI apps where `SSH_AUTH_SOCK`
-/// may not be set but the socket is discoverable via launchctl/1Password).
-/// Otherwise falls back to `connect_env()` which reads `SSH_AUTH_SOCK`.
-/// Wrapped in a 10-second timeout.
+/// Authenticate using the SSH agent (multi-candidate).
 pub async fn auth_agent<H: client::Handler>(
     session: &mut client::Handle<H>,
     username: &str,
-    agent_socket: Option<&str>,
+    agent_sockets: &[AgentCandidate],
 ) -> Result<(), AuthError> {
-    let result = tokio::time::timeout(
-        AUTH_TIMEOUT,
-        do_auth_agent(session, username, agent_socket),
-    )
-    .await;
-
-    match result {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) => Err(e),
-        Err(_) => Err(AuthError::new("SSH agent authentication timed out")),
+    // Outer 10s timeout — rarely triggers since per-candidate 3s limits
+    // each attempt. If triggered, include partial errors from inner call.
+    match tokio::time::timeout(AUTH_TIMEOUT, do_auth_agent_multi(session, username, agent_sockets)).await {
+        Ok(inner) => inner,
+        Err(_) => Err(AuthError::new(format!(
+            "SSH agent authentication timed out after {}s (tried {} candidates)",
+            AUTH_TIMEOUT.as_secs(),
+            agent_sockets.len()
+        ))),
     }
 }
 
-/// Connect to an SSH agent, using the provided socket path or env var.
-///
-/// If `agent_socket` is `Some`, connects directly via `connect_uds(path)`.
-/// Otherwise falls back to `connect_env()` (reads `SSH_AUTH_SOCK`).
-async fn connect_agent(agent_socket: Option<&str>) -> Result<AgentClient<tokio::net::UnixStream>, AuthError> {
-    match agent_socket {
-        Some(path) => AgentClient::connect_uds(path)
-            .await
-            .map_err(|e| AuthError::new(format!("Cannot connect to SSH agent at {}: {}", path, e))),
-        None => AgentClient::connect_env()
-            .await
-            .map_err(|e| AuthError::new(format!("Cannot connect to SSH agent: {}", e))),
-    }
-}
-
-/// Internal implementation for agent auth.
-///
-/// Uses `connect_agent()` to connect (supports both discovered socket path
-/// and env-var-based discovery), lists identities via `request_identities()`,
-/// and tries each with `session.authenticate_future()` (the Signer-based API).
-async fn do_auth_agent<H: client::Handler>(
+/// Iterate over multiple agent candidates. Per-candidate 3s timeout prevents
+/// dead socket from blocking chain. errors: Vec<String> accumulates all failures.
+async fn do_auth_agent_multi<H: client::Handler>(
     session: &mut client::Handle<H>,
     username: &str,
-    agent_socket: Option<&str>,
+    agent_sockets: &[AgentCandidate],
 ) -> Result<(), AuthError> {
-    let mut agent = connect_agent(agent_socket).await?;
+    if agent_sockets.is_empty() {
+        return Err(AuthError::new("No SSH agent sockets available"));
+    }
+
+    let mut errors: Vec<String> = Vec::new();
+
+    for candidate in agent_sockets {
+        let masked_path = mask_home_path(&candidate.path);
+
+        let attempt = tokio::time::timeout(
+            AGENT_CANDIDATE_TIMEOUT,
+            try_agent_candidate(session, username, candidate),
+        )
+        .await;
+
+        match attempt {
+            Ok(Ok(())) => {
+                log::info!("Agent auth succeeded via [{}] {}", candidate.source, masked_path);
+                return Ok(());
+            }
+            Ok(Err(e)) => {
+                log::debug!("[{}] {} failed: {}", candidate.source, masked_path, e);
+                errors.push(format!("[{}] {}: {}", candidate.source, masked_path, e));
+            }
+            Err(_) => {
+                log::debug!(
+                    "[{}] {} timed out after {}s",
+                    candidate.source, masked_path, AGENT_CANDIDATE_TIMEOUT.as_secs()
+                );
+                errors.push(format!(
+                    "[{}] {}: timed out after {}s",
+                    candidate.source, masked_path, AGENT_CANDIDATE_TIMEOUT.as_secs()
+                ));
+            }
+        }
+    }
+
+    Err(AuthError::new(format!(
+        "All {} agent candidates failed: {}",
+        agent_sockets.len(),
+        errors.join("; ")
+    )))
+}
+
+/// Try one agent candidate: connect → request identities → try each.
+/// Symmetric naming with phase 1 try_key_auth.
+async fn try_agent_candidate<H: client::Handler>(
+    session: &mut client::Handle<H>,
+    username: &str,
+    candidate: &AgentCandidate,
+) -> Result<(), AuthError> {
+    let masked = mask_home_path(&candidate.path);
+
+    let mut agent = AgentClient::connect_uds(&candidate.path)
+        .await
+        .map_err(|e| AuthError::new(format!("connect {} failed: {}", masked, e)))?;
 
     let identities = agent
         .request_identities()
         .await
-        .map_err(|e| AuthError::new(format!("Failed to request agent identities: {}", e)))?;
+        .map_err(|e| AuthError::new(format!("identities {} failed: {}", masked, e)))?;
 
     if identities.is_empty() {
-        return Err(AuthError::new("SSH agent has no identities loaded"));
+        return Err(AuthError::new(format!("{}: no identities", masked)));
     }
 
-    let mut last_error = String::from("No identities to try");
-
+    let mut last_err = AuthError::new("No identities tried");
     for identity in identities {
-        // Compute fingerprint before moving identity into authenticate_future
         let fp = identity.fingerprint();
-
-        // authenticate_future takes the AgentClient (Signer impl) and a public key.
-        // The agent handles the actual signing internally.
-        let agent_inner = connect_agent(agent_socket).await?;
+        let agent_inner = match AgentClient::connect_uds(&candidate.path).await {
+            Ok(a) => a,
+            Err(e) => {
+                last_err = AuthError::new(format!("reconnect {} failed: {}", masked, e));
+                break;
+            }
+        };
 
         let (_returned_agent, auth_result) = session
             .authenticate_future(username, identity, agent_inner)
@@ -225,20 +267,15 @@ async fn do_auth_agent<H: client::Handler>(
 
         match auth_result {
             Ok(true) => return Ok(()),
-            Ok(false) => {
-                last_error = format!("Identity {} rejected by server", fp);
-            }
+            Ok(false) => last_err = AuthError::new(format!("identity {} rejected", fp)),
             Err(e) => {
-                last_error = format!("Error authenticating with identity: {}", fp);
-                log::debug!("Agent auth error for identity: {}", e);
+                log::debug!("Auth error for identity {}: {}", fp, e);
+                last_err = AuthError::new(format!("identity {} error", fp));
             }
         }
     }
 
-    Err(AuthError::new(format!(
-        "All agent identities failed: {}",
-        last_error
-    )))
+    Err(last_err)
 }
 
 /// Try authenticating with a single key file.
@@ -290,68 +327,78 @@ pub async fn try_key_auth<H: client::Handler>(
 
 /// Authenticate with auto fallback (mirrors Electron `resolveAutoAuth`).
 ///
-/// Tries the following in order:
-/// 1. If SSH config has `IdentityFile` -> try each resolved path in order
-/// 2. SSH agent
-/// 3. Default keys: `id_ed25519`, `id_rsa`, `id_ecdsa`
-/// 4. All failed -> Err
+/// Phase 2 signature: identity_files from ssh -G + multi-candidate agent_sockets.
+/// HashSet<PathBuf> tracks tried paths — avoids re-trying default keys
+/// (ssh -G always returns id_ed25519/id_rsa/id_ecdsa by default).
 pub async fn auth_auto<H: client::Handler>(
     session: &mut client::Handle<H>,
     username: &str,
-    config_parser: Option<&SshConfigParser>,
-    resolved_alias: Option<&str>,
-    agent_socket: Option<&str>,
+    identity_files: &[PathBuf],
+    agent_sockets: &[AgentCandidate],
 ) -> Result<(), AuthError> {
     let ssh_dir = match dirs::home_dir() {
         Some(home) => home.join(".ssh"),
         None => {
             return Err(AuthError::new(
-                "Cannot determine home directory for auto auth",
+                "Cannot determine home directory for auto auth (set $HOME or use explicit PrivateKey path)",
             ))
         }
     };
 
-    // Step 1: If SSH config has IdentityFile, try each configured path first
-    if let (Some(parser), Some(alias)) = (config_parser, resolved_alias) {
-        if let Some(entry) = parser.resolve_host(alias) {
-            if !entry.identity_files.is_empty() {
-                for key_path_str in &entry.identity_files {
-                    let key_path = PathBuf::from(key_path_str);
-                    log::info!("Trying config IdentityFile: {}", key_path_str);
-                    match try_key_auth_with_timeout(session, username, &key_path).await {
-                        Ok(()) => {
-                            log::info!("Auto auth succeeded with IdentityFile: {}", key_path_str);
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            log::debug!("IdentityFile {} failed: {}, trying next", key_path_str, e);
-                        }
-                    }
-                }
-                // All configured IdentityFiles failed — fall through to agent/default keys
-                log::info!("All configured IdentityFiles exhausted, falling back to agent");
+    let mut tried_paths: HashSet<PathBuf> = HashSet::new();
+    let mut tried_steps: Vec<&str> = Vec::new();
+
+    // Step 1: identity files
+    for key_path in identity_files {
+        if !tried_paths.insert(key_path.clone()) {
+            log::debug!("Skipping duplicate identity file: {:?}", key_path);
+            continue;
+        }
+        match try_key_auth_with_timeout(session, username, key_path).await {
+            Ok(()) => {
+                log::info!("Auto auth succeeded with identity file: {:?}", key_path);
+                return Ok(());
             }
+            Err(e) => log::debug!("Identity file {:?} failed: {}", key_path, e),
         }
     }
-
-    // Step 2: Try SSH agent
-    if auth_agent(session, username, agent_socket).await.is_ok() {
-        log::info!("Auto auth succeeded with SSH agent");
-        return Ok(());
+    if !identity_files.is_empty() {
+        tried_steps.push("identity files");
     }
 
-    // Step 3: Try default keys
+    // Step 2: agent sockets
+    if !agent_sockets.is_empty() {
+        match auth_agent(session, username, agent_sockets).await {
+            Ok(()) => {
+                log::info!("Auto auth succeeded with SSH agent");
+                return Ok(());
+            }
+            Err(e) => log::debug!("All agent sockets failed: {}", e),
+        }
+        tried_steps.push("agent sockets");
+    }
+
+    // Step 3: default keys (skip already-tried)
+    let mut default_tried = 0;
     for key_name in DEFAULT_KEY_NAMES {
         let key_path = ssh_dir.join(key_name);
+        if !tried_paths.insert(key_path.clone()) {
+            continue;
+        }
         if try_key_auth_with_timeout(session, username, &key_path).await.is_ok() {
             log::info!("Auto auth succeeded with default key: {}", key_name);
             return Ok(());
         }
+        default_tried += 1;
+    }
+    if default_tried > 0 {
+        tried_steps.push("default keys");
     }
 
-    Err(AuthError::new(
-        "Auto authentication failed: tried SSH config keys, agent, and default keys",
-    ))
+    Err(AuthError::new(format!(
+        "Auto authentication failed (tried: {})",
+        if tried_steps.is_empty() { "no candidates available".to_string() } else { tried_steps.join(", ") }
+    )))
 }
 
 /// Wrap `try_key_auth` with the standard 10-second timeout.
@@ -369,29 +416,49 @@ async fn try_key_auth_with_timeout<H: client::Handler>(
 // Dispatcher
 // ---------------------------------------------------------------------------
 
+/// Build SFTP-open timeout diagnostic. IPv6 hosts get bracketed to avoid
+/// ssh parsing ambiguity (sftp user@2001:db8::1 would parse port as db8::1).
+///
+/// **No backticks** in message — `whitespace-pre-line` renders them as literal
+/// characters, not <code>. Phase 2 uses plain text.
+pub fn build_sftp_timeout_msg(user: &str, host: &str, secs: u64) -> String {
+    let host_part = if host.contains(':') {
+        format!("[{}]", host)
+    } else {
+        host.to_string()
+    };
+    format!(
+        "SFTP subsystem unavailable (timed out after {}s).\n\
+         Likely causes:\n\
+         \x20\x20• Server sshd_config missing Subsystem sftp directive\n\
+         \x20\x20• Account in restricted shell (rbash) or ChrootDirectory blocking SFTP\n\
+         Reproduce with: sftp {}@{}",
+        secs, user, host_part
+    )
+}
+
 /// Dispatch to the appropriate authentication method.
 ///
-/// This is the main entry point called by `SshConnectionManager` after
-/// establishing a TCP+SSH connection.
-///
-/// # Arguments
+/// # Arguments (changed in phase 2)
 /// * `session` - Active russh `Handle` (post-connect)
 /// * `username` - SSH username
 /// * `method` - Auth method from `SshConnectionConfig`
 /// * `password` - Password (used only when `method == Password`)
 /// * `private_key_path` - Path to private key (used when `method == PrivateKey`)
-/// * `config_parser` - SSH config parser (used when `method == Auto`)
-/// * `resolved_alias` - Original host alias (used when `method == Auto`)
-/// * `agent_socket` - Discovered agent socket path (used when `method == Agent` or `Auto`)
+/// * `identity_files` - Identity files from ssh -G (used when `method == Auto`)
+/// * `agent_sockets` - Multi-candidate agent sockets (used when `method == Agent` or `Auto`)
+///
+/// # Removed in phase 2
+/// * `config_parser: Option<&SshConfigParser>` — identity_files now passed directly
+/// * `resolved_alias: Option<&str>` — host_resolver resolves alias internally
 pub async fn authenticate<H: client::Handler>(
     session: &mut client::Handle<H>,
     username: &str,
     method: &SshAuthMethod,
     password: Option<&str>,
     private_key_path: Option<&str>,
-    config_parser: Option<&SshConfigParser>,
-    resolved_alias: Option<&str>,
-    agent_socket: Option<&str>,
+    identity_files: &[PathBuf],
+    agent_sockets: &[AgentCandidate],
 ) -> Result<(), AuthError> {
     match method {
         SshAuthMethod::Password => {
@@ -400,14 +467,10 @@ pub async fn authenticate<H: client::Handler>(
             })?;
             auth_password(session, username, pwd).await
         }
-        SshAuthMethod::PrivateKey => {
-            auth_private_key(session, username, private_key_path).await
-        }
-        SshAuthMethod::Agent => {
-            auth_agent(session, username, agent_socket).await
-        }
+        SshAuthMethod::PrivateKey => auth_private_key(session, username, private_key_path).await,
+        SshAuthMethod::Agent => auth_agent(session, username, agent_sockets).await,
         SshAuthMethod::Auto => {
-            auth_auto(session, username, config_parser, resolved_alias, agent_socket).await
+            auth_auto(session, username, identity_files, agent_sockets).await
         }
     }
 }
@@ -457,5 +520,21 @@ mod tests {
     fn test_default_key_path() {
         let home = dirs::home_dir().unwrap();
         assert_eq!(default_key_path(), home.join(".ssh").join("id_rsa"));
+    }
+
+    #[test]
+    fn test_build_sftp_timeout_msg_basic() {
+        let msg = build_sftp_timeout_msg("alice", "example.com", 8);
+        assert!(msg.contains("timed out after 8s"));
+        assert!(msg.contains("Subsystem sftp"));
+        assert!(msg.contains("restricted shell"));
+        assert!(msg.contains("sftp alice@example.com"));
+    }
+
+    #[test]
+    fn test_build_sftp_timeout_msg_ipv6_gets_brackets() {
+        let msg = build_sftp_timeout_msg("alice", "2001:db8::1", 8);
+        assert!(msg.contains("sftp alice@[2001:db8::1]"));
+        assert!(!msg.contains("alice@2001:db8::1]")); // no malformed variant
     }
 }
