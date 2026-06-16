@@ -12,14 +12,24 @@ use super::error_json;
 pub async fn get_projects(
     State(state): State<HttpState>,
 ) -> Result<Json<Vec<Project>>, (StatusCode, Json<super::ErrorResponse>)> {
-    Ok(Json(state.project_service.scan_projects()))
+    let projects = state
+        .project_service
+        .scan_projects()
+        .await
+        .map_err(|e| error_json(e.to_string()))?;
+    Ok(Json(projects))
 }
 
 /// GET /api/repository-groups
 pub async fn get_repository_groups(
     State(state): State<HttpState>,
 ) -> Result<Json<Vec<RepositoryGroup>>, (StatusCode, Json<super::ErrorResponse>)> {
-    Ok(Json(state.project_service.get_repository_groups()))
+    let groups = state
+        .project_service
+        .get_repository_groups()
+        .await
+        .map_err(|e| error_json(e.to_string()))?;
+    Ok(Json(groups))
 }
 
 /// GET /api/worktrees/{id}/sessions
@@ -28,5 +38,10 @@ pub async fn get_worktree_sessions(
     Path(worktree_id): Path<String>,
 ) -> Result<Json<Vec<Session>>, (StatusCode, Json<super::ErrorResponse>)> {
     let safe_id = guards::validate_project_id(&worktree_id).map_err(error_json)?;
-    Ok(Json(state.project_service.get_worktree_sessions(&safe_id)))
+    let sessions = state
+        .project_service
+        .get_worktree_sessions(&safe_id)
+        .await
+        .map_err(|e| error_json(e.to_string()))?;
+    Ok(Json(sessions))
 }

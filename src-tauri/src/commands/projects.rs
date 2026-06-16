@@ -10,7 +10,7 @@ use crate::types::domain::{RepositoryGroup, Session};
 pub async fn get_repository_groups(
     service: State<'_, Arc<dyn ProjectService>>,
 ) -> Result<Vec<RepositoryGroup>, String> {
-    Ok(service.get_repository_groups())
+    service.get_repository_groups().await.map_err(|e| e.into_tauri_string())
 }
 
 #[command]
@@ -18,5 +18,5 @@ pub async fn get_worktree_sessions(
     service: State<'_, Arc<dyn ProjectService>>,
     worktree_id: String,
 ) -> Result<Vec<Session>, String> {
-    Ok(service.get_worktree_sessions(&worktree_id))
+    service.get_worktree_sessions(&worktree_id).await.map_err(|e| e.into_tauri_string())
 }

@@ -56,14 +56,11 @@ pub async fn rebuild_local_context(
         }
     }
 
-    // Update SearchService internal searcher with new paths
-    let searcher = search_service.clone();
-    tokio::task::spawn_blocking(move || {
-        searcher.rebuild(projects_dir, todos_dir, fs_provider)
-    })
-    .await
-    .map_err(|e| format!("rebuild task panicked: {e}"))?     // Layer 1: JoinError → String
-    .map_err(|e| e.to_string())?;                              // Layer 2: AppError → String
+    // Update SearchService internal searcher with new paths.
+    // rebuild 是 sync no-op（SearchServiceImpl 现在从 active ServiceContext 拿 searcher），
+    // 不需要 spawn_blocking。
+    search_service.rebuild(projects_dir, todos_dir, fs_provider)
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }

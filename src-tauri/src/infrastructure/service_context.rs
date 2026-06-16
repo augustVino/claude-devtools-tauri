@@ -45,7 +45,6 @@ pub struct ServiceContext {
     pub project_scanner: ProjectScanner,
     #[allow(dead_code)]
     pub subagent_resolver: SubagentResolver,
-    #[allow(dead_code)]
     pub session_searcher: Arc<Mutex<SessionSearcher>>,
     pub file_watcher: Arc<Mutex<FileWatcher>>,
     pub todo_watcher: Arc<Mutex<FileWatcher>>,

@@ -1,34 +1,20 @@
 //! SubagentServiceImpl — 子 Agent 详情构建的具体实现。
 
-use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use async_trait::async_trait;
 use crate::error::AppError;
-use crate::infrastructure::{DataCache, fs_provider::FsProvider};
+use crate::infrastructure::ContextManager;
 use crate::services::subagent_service_trait::SubagentService;
 use crate::types::chunks::SubagentDetail;
 
 pub struct SubagentServiceImpl {
-    // DataCache 已有 #[derive(Clone)]（内部基于 Arc<Cache> + Arc<AtomicBool>）
-    // clone() 仅增加引用计数，性能开销可忽略
-    cache: DataCache,
-    // 共享 FsProvider 单例（与 SessionServiceImpl、ProjectServiceImpl 等使用同一实例）
-    fs_provider: Arc<dyn FsProvider>,
-    // projects 基础路径（在 lib.rs run() 中一次性获取，避免每次调用重复计算）
-    projects_dir: PathBuf,
+    context_manager: Arc<RwLock<ContextManager>>,
 }
 
 impl SubagentServiceImpl {
-    /// 遵循 SessionServiceImpl 的 DI 模式：所有外部依赖通过构造函数注入。
-    ///
-    /// `fs_provider` 和 `projects_dir` 来自 lib.rs 中已创建的共享实例，
-    /// 不再像原 handler 那样内联 new LocalFsProvider（code smell）。
-    pub fn new(
-        cache: DataCache,
-        fs_provider: Arc<dyn FsProvider>,
-        projects_dir: PathBuf,
-    ) -> Self {
-        Self { cache, fs_provider, projects_dir }
+    pub fn new(context_manager: Arc<RwLock<ContextManager>>) -> Self {
+        Self { context_manager }
     }
 }
 
@@ -40,8 +26,26 @@ impl SubagentService for SubagentServiceImpl {
         session_id: &str,
         subagent_id: &str,
     ) -> Result<Option<SubagentDetail>, AppError> {
+        let active_arc = {
+            let mgr = self.context_manager.read().await;
+            mgr.get_active()
+                .ok_or_else(|| AppError::Internal("No active ServiceContext".into()))?
+        };
+        let (cache, fs_provider, projects_dir) = {
+            let ctx = active_arc.read().await;
+            (
+                ctx.cache.clone(),
+                ctx.fs_provider.clone(),
+                ctx.projects_dir.clone(),
+            )
+        };
+        // 释放锁后再做长操作。
+        // ⚠️ stale read 语义：跨 IPC 调用之间 active context 可能被切换，
+        // 此时 cache/fs_provider/projects_dir 是 stale 引用——这是可接受的
+        // （已 clone Arc，FsProvider 即便 dispose 也能安全返回错误）。
+
         // 1. Check cache
-        if let Some(cached_value) = self.cache
+        if let Some(cached_value) = cache
             .get_subagent(project_id, session_id, subagent_id)
             .await
         {
@@ -53,7 +57,7 @@ impl SubagentService for SubagentServiceImpl {
 
         // 2. Build file path
         let base_dir = crate::utils::path_decoder::extract_base_dir(project_id);
-        let subagent_path = self.projects_dir
+        let subagent_path = projects_dir
             .join(&base_dir)
             .join(session_id)
             .join("subagents")
@@ -69,24 +73,16 @@ impl SubagentService for SubagentServiceImpl {
             return Ok(None);
         }
 
-        // 4. Resolve nested subagents（复用注入的 fs_provider，不再内联创建）
+        // 4. Resolve nested subagents
         let resolver = crate::discovery::subagent_resolver::SubagentResolver::new(
-            self.projects_dir.clone(),
-            self.fs_provider.clone(),
+            projects_dir.clone(),
+            fs_provider.clone(),
         );
         let nested = resolver.resolve_subagents(
             project_id, subagent_id, None, None
         );
 
         // ⚠️ 类型转换：resolver::Process → types::chunks::Process
-        //
-        // 存在两个同名但字段不同的 Process 类型：
-        //   - discovery::subagent_resolver::Process（task_id: Option<String>, is_ongoing: bool）
-        //   - types::chunks::Process（parent_task_id: Option<String>, is_ongoing: Option<bool>）
-        //
-        // chunks.rs:178-197 已实现 From<resolver::Process> for Process，
-        // 负责字段映射（task_id→parent_task_id, bool→Some(bool)）。
-        // build_subagent_detail 要求 &[_types::chunks::Process]，所以必须在此处转换。
         let nested_chunks: Vec<crate::types::chunks::Process> =
             nested.into_iter().map(Into::into).collect();
 
@@ -97,11 +93,51 @@ impl SubagentService for SubagentServiceImpl {
 
         // 6. Cache result
         if let Ok(value) = serde_json::to_value(&detail) {
-            self.cache.set_subagent(
+            cache.set_subagent(
                 project_id, session_id, subagent_id, value
             ).await;
         }
 
         Ok(Some(detail))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infrastructure::context_manager::ContextManager;
+    use std::path::PathBuf;
+
+    /// 构造空 ContextManager（无任何 context 注册），用于测试无 active context 场景。
+    fn make_empty_context_manager() -> Arc<RwLock<ContextManager>> {
+        Arc::new(RwLock::new(ContextManager::new()))
+    }
+
+    /// 构造含 local context 的 ContextManager，用于 ServiceImpl 测试。
+    #[allow(dead_code)]
+    async fn make_context_manager(
+        projects_dir: PathBuf,
+        todos_dir: PathBuf,
+    ) -> Arc<RwLock<ContextManager>> {
+        use crate::infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
+        use crate::infrastructure::LocalFsProvider;
+        let mut mgr = ContextManager::new();
+        mgr.register_context(ServiceContext::new(ServiceContextConfig {
+            id: "local".to_string(),
+            context_type: ContextType::Local,
+            projects_dir,
+            todos_dir,
+            fs_provider: Arc::new(LocalFsProvider::new()),
+            cache: None,
+        }))
+        .unwrap();
+        Arc::new(RwLock::new(mgr))
+    }
+
+    #[tokio::test]
+    async fn test_get_subagent_detail_returns_error_when_no_active_context() {
+        let svc = SubagentServiceImpl::new(make_empty_context_manager());
+        let result = svc.get_subagent_detail("proj", "sess", "sub").await;
+        assert!(matches!(result, Err(AppError::Internal(msg)) if msg.contains("No active ServiceContext")));
     }
 }

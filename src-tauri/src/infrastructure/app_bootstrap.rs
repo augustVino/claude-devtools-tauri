@@ -7,9 +7,7 @@ use tauri::Manager;
 use crate::commands::AppState;
 use crate::commands::tray::TrayIconManager;
 use crate::infrastructure::{ConfigManager, ContextManager, NotificationManager};
-use crate::infrastructure::fs_provider::LocalFsProvider;
-use crate::infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
-use crate::utils::{get_projects_base_path, get_todos_base_path, set_claude_root_override};
+use crate::utils::set_claude_root_override;
 
 /// 应用启动编排器。
 pub struct AppBootstrap;
@@ -137,39 +135,5 @@ impl AppBootstrap {
             }
         }
         Ok(())
-    }
-
-    /// 创建并注册本地 ContextManager（含 watcher 任务启动）。
-    pub fn setup_local_context(
-        app: &tauri::AppHandle,
-        config_manager: &Arc<ConfigManager>,
-        shared_cache: &crate::infrastructure::DataCache,
-        notification_manager: &Arc<RwLock<NotificationManager>>,
-    ) -> Arc<RwLock<ContextManager>> {
-        let mut mgr = ContextManager::new();
-        let local_context = ServiceContext::new(ServiceContextConfig {
-            id: "local".to_string(),
-            context_type: ContextType::Local,
-            projects_dir: get_projects_base_path(),
-            todos_dir: get_todos_base_path(),
-            fs_provider: Arc::new(LocalFsProvider::new()),
-            cache: Some(shared_cache.clone()),
-        });
-        mgr.register_context(local_context)
-            .expect("Failed to register local context");
-
-        // 启动本地上下文的 watcher 任务
-        let local_ctx = mgr.get("local").unwrap();
-        let local = local_ctx.blocking_read();
-        tauri::async_runtime::block_on(
-            local.spawn_watcher_tasks(
-                app.clone(),
-                config_manager.clone(),
-                notification_manager.clone(),
-            )
-        );
-
-        let context_manager = Arc::new(RwLock::new(mgr));
-        context_manager.clone()
     }
 }

@@ -37,46 +37,55 @@ pub fn run() {
   let shared_cache = infrastructure::DataCache::new();
   let app_state = Arc::new(RwLock::new(AppState::new(config_manager.clone(), shared_cache.clone())));
 
-  // ========== Pre-create Domain Services (registered inside setup) ==========
-  let fs_provider: Arc<dyn infrastructure::fs_provider::FsProvider> = Arc::new(infrastructure::fs_provider::LocalFsProvider::new());
+  // ========== 1. 先创建 ContextManager（注册 local context） ==========
+  let local_projects_dir = get_projects_base_path();
+  let local_todos_dir = get_todos_base_path();
+  let local_fs_provider: Arc<dyn infrastructure::fs_provider::FsProvider> =
+      Arc::new(infrastructure::fs_provider::LocalFsProvider::new());
 
-  let project_service: Arc<dyn services::ProjectService> = Arc::new(services::ProjectServiceImpl::new(
-      fs_provider.clone(),
-      get_projects_base_path(),
-      get_todos_base_path(),
-  ));
+  let mut context_manager_inner = infrastructure::ContextManager::new();
+  context_manager_inner.register_context(
+      infrastructure::service_context::ServiceContext::new(
+          infrastructure::service_context::ServiceContextConfig {
+              id: "local".to_string(),
+              context_type: infrastructure::service_context::ContextType::Local,
+              projects_dir: local_projects_dir.clone(),
+              todos_dir: local_todos_dir.clone(),
+              fs_provider: local_fs_provider.clone(),
+              cache: Some(shared_cache.clone()),
+          }
+      )
+  ).expect("Failed to register local context");
+  let context_manager: Arc<RwLock<infrastructure::ContextManager>> =
+      Arc::new(RwLock::new(context_manager_inner));
+
+  // ========== 2. 创建 Services（依赖 context_manager） ==========
+  let project_service: Arc<dyn services::ProjectService> = Arc::new(
+      services::ProjectServiceImpl::new(context_manager.clone())
+  );
 
   let search_service: Arc<dyn services::SearchServiceFull> =
-      Arc::new(services::SearchServiceImpl::new(
-          get_projects_base_path(),
-          get_todos_base_path(),
-          fs_provider.clone(),
-      ));
+      Arc::new(services::SearchServiceImpl::new(context_manager.clone()));
 
   let session_repo: Arc<dyn infrastructure::session_repository::SessionRepository> =
       Arc::new(infrastructure::local_session_repository::LocalSessionRepository::new(
-          fs_provider.clone(),
-          get_projects_base_path(),
+          local_fs_provider.clone(),
+          local_projects_dir.clone(),
           get_default_claude_base_path(),
       ));
 
-  let session_service: Arc<dyn services::SessionService> = Arc::new(services::SessionServiceImpl::new(
-      fs_provider.clone(),
-      shared_cache.clone(),
-      get_projects_base_path(),
-      get_todos_base_path(),
-      config_manager.clone(),
-      project_service.clone(),
-      session_repo,
-  ));
+  let session_service: Arc<dyn services::SessionService> = Arc::new(
+      services::SessionServiceImpl::new(
+          context_manager.clone(),
+          config_manager.clone(),
+          project_service.clone(),
+          session_repo,
+      )
+  );
 
   // SubagentService (IPC path — HTTP registration in Batch 3)
   let subagent_service: Arc<dyn services::SubagentService> =
-      Arc::new(services::SubagentServiceImpl::new(
-          shared_cache.clone(),
-          fs_provider.clone(),
-          get_projects_base_path(),
-      ));
+      Arc::new(services::SubagentServiceImpl::new(context_manager.clone()));
 
   // MemoryService (IPC + HTTP paths)
   let memory_service: Arc<dyn services::MemoryService> = Arc::new(services::MemoryServiceImpl::new(
@@ -168,13 +177,18 @@ pub fn run() {
         log::info!("NotificationManager initialized");
       });
 
-      // 9. ContextManager + 本地上下文 + Watcher
-      let context_manager = AppBootstrap::setup_local_context(
-        app.handle(),
-        &config_manager,
-        &shared_cache,
-        &notification_manager,
-      );
+      // 9. ContextManager（在外部已创建，含 local context 注册）+ 启动 local watcher
+      // context_manager 已在外部创建并 move capture 进 setup 闭包。
+      {
+          let local_ctx_arc = context_manager.blocking_read().get("local")
+              .expect("local context must be registered before setup()");
+          let local_ctx = local_ctx_arc.blocking_read();
+          tauri::async_runtime::block_on(local_ctx.spawn_watcher_tasks(
+              app.handle().clone(),
+              config_manager.clone(),
+              notification_manager.clone(),
+          ));
+      }
       app.manage(context_manager.clone());
 
       // 10. SshConnectionManager + SSH 状态转发

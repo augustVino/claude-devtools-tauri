@@ -143,5 +143,5 @@ pub async fn delete_session(
 pub async fn get_projects(
     service: State<'_, Arc<dyn ProjectService>>,
 ) -> Result<Vec<Project>, String> {
-    Ok(service.scan_projects())
+    service.scan_projects().await.map_err(|e| e.into_tauri_string())
 }

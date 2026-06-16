@@ -2,18 +2,21 @@
 //!
 //! 核心业务逻辑层：封装 JSONL 解析、缓存读写、Chunk 构建、子 Agent 解析等操作。
 //! Tauri commands 和 HTTP routes 都通过此服务访问会话数据。
+//!
+//! 持有 `Arc<RwLock<ContextManager>>`，每次方法调用从 active ServiceContext
+//! 取 fs_provider / projects_dir / cache 等依赖。
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use async_trait::async_trait;
 use crate::analysis::ChunkBuilder;
 use crate::discovery::subagent_resolver::SubagentResolver;
 use crate::error::AppError;
 use crate::infrastructure::{
-    ConfigManager, DataCache,
-    fs_provider::FsProvider,
+    ConfigManager, ContextManager, DataCache,
 };
 use crate::parsing::{parse_session_file, ParsedSession};
 use crate::types::chunks::{ConversationGroup, Process, SessionDetail, SessionDetailResponse, SessionDetailUnchanged};
@@ -34,11 +37,7 @@ use super::project_service_trait::ProjectService;
 
 /// 会话服务 — 所有会话相关操作的单一入口（具体实现）。
 pub struct SessionServiceImpl {
-    fs_provider: Arc<dyn FsProvider>,
-    cache: DataCache,
-    projects_dir: PathBuf,
-    #[allow(dead_code)]
-    todos_dir: PathBuf,
+    context_manager: Arc<RwLock<ContextManager>>,
     config_manager: Arc<ConfigManager>,
     project_service: Arc<dyn ProjectService>,
     #[allow(dead_code)]
@@ -48,19 +47,13 @@ pub struct SessionServiceImpl {
 impl SessionServiceImpl {
     /// 创建新的 SessionService。
     pub fn new(
-        fs_provider: Arc<dyn FsProvider>,
-        cache: DataCache,
-        projects_dir: PathBuf,
-        todos_dir: PathBuf,
+        context_manager: Arc<RwLock<ContextManager>>,
         config_manager: Arc<ConfigManager>,
         project_service: Arc<dyn ProjectService>,
         repo: Arc<dyn crate::infrastructure::session_repository::SessionRepository>,
     ) -> Self {
         Self {
-            fs_provider,
-            cache,
-            projects_dir,
-            todos_dir,
+            context_manager,
             config_manager,
             project_service,
             repo,
@@ -85,15 +78,28 @@ impl SessionServiceImpl {
         None
     }
 
+    /// 从 active context 取 projects_dir。
+    async fn projects_dir(&self) -> Result<PathBuf, AppError> {
+        let active_arc = {
+            let mgr = self.context_manager.read().await;
+            mgr.get_active()
+                .ok_or_else(|| AppError::Internal("No active ServiceContext".into()))?
+        };
+        let ctx = active_arc.read().await;
+        Ok(ctx.projects_dir.clone())
+    }
+
     /// 构建项目目录路径。
-    fn project_dir(&self, project_id: &str) -> PathBuf {
+    async fn project_dir(&self, project_id: &str) -> Result<PathBuf, AppError> {
         let name = extract_base_dir(project_id);
-        self.projects_dir.join(&name)
+        let projects_dir = self.projects_dir().await?;
+        Ok(projects_dir.join(&name))
     }
 
     /// 构建会话文件路径。
-    fn session_path(&self, project_id: &str, session_id: &str) -> PathBuf {
-        self.project_dir(project_id).join(format!("{}.jsonl", session_id))
+    async fn session_path(&self, project_id: &str, session_id: &str) -> Result<PathBuf, AppError> {
+        let project_dir = self.project_dir(project_id).await?;
+        Ok(project_dir.join(format!("{}.jsonl", session_id)))
     }
 
     /// 解析子 Agent 数据并转换为 chunks::Process 列表。
@@ -102,16 +108,22 @@ impl SessionServiceImpl {
         project_id: &str,
         session_id: &str,
         parsed: &ParsedSession,
-    ) -> Vec<Process> {
-        let resolver = SubagentResolver::new(
-            self.projects_dir.clone(),
-            self.fs_provider.clone(),
-        );
-        resolver
+    ) -> Result<Vec<Process>, AppError> {
+        let active_arc = {
+            let mgr = self.context_manager.read().await;
+            mgr.get_active()
+                .ok_or_else(|| AppError::Internal("No active ServiceContext".into()))?
+        };
+        let (fs_provider, projects_dir) = {
+            let ctx = active_arc.read().await;
+            (ctx.fs_provider.clone(), ctx.projects_dir.clone())
+        };
+        let resolver = SubagentResolver::new(projects_dir, fs_provider);
+        Ok(resolver
             .resolve_subagents(project_id, session_id, Some(&parsed.task_calls), Some(&parsed.messages))
             .into_iter()
             .map(Into::into)
-            .collect()
+            .collect())
     }
 
     /// 从 JSONL 文件构建会话元数据（与原 build_session_metadata 完全对齐）。
@@ -122,9 +134,15 @@ impl SessionServiceImpl {
         &self,
         path: &Path,
         project_id: &str,
-    ) -> Option<Session> {
-        let filename = path.file_stem()?.to_string_lossy().to_string();
-        let metadata = path.metadata().ok()?;
+    ) -> Result<Option<Session>, AppError> {
+        let filename = match path.file_stem() {
+            Some(n) => n.to_string_lossy().to_string(),
+            None => return Ok(None),
+        };
+        let metadata = match path.metadata() {
+            Ok(m) => m,
+            Err(_) => return Ok(None),
+        };
 
         let mtime_ms = crate::utils::time::time_to_ms(metadata.modified().ok());
 
@@ -216,7 +234,7 @@ impl SessionServiceImpl {
             })
             .unwrap_or(birthtime_ms);
 
-        Some(Session {
+        Ok(Some(Session {
             id: filename,
             project_id: project_id.to_string(),
             project_path,
@@ -233,7 +251,7 @@ impl SessionServiceImpl {
             context_consumption: None,
             compaction_count: None,
             phase_breakdown: None,
-        })
+        }))
     }
 
     /// 构建回退 Session（文件不存在时使用）。
@@ -269,7 +287,7 @@ impl SessionServiceImpl {
     ///
     /// 扫描项目目录下的 `.jsonl` 文件，构建会话元数据，并按文件修改时间降序排列。
     pub async fn get_sessions(&self, project_id: &str) -> Result<Vec<Session>, AppError> {
-        let project_dir = self.project_dir(project_id);
+        let project_dir = self.project_dir(project_id).await?;
 
         if !project_dir.exists() {
             return Ok(Vec::new());
@@ -321,7 +339,7 @@ impl SessionServiceImpl {
 
         let mut sessions = vec![];
         for entry in &file_entries {
-            if let Some(session) = self.build_session_metadata(&entry.path, project_id).await {
+            if let Some(session) = self.build_session_metadata(&entry.path, project_id).await? {
                 sessions.push(session);
             }
         }
@@ -340,7 +358,7 @@ impl SessionServiceImpl {
         options: Option<SessionsPaginationOptions>,
     ) -> Result<PaginatedSessionsResult, AppError> {
         let page_limit = limit.unwrap_or(20).min(200).max(1) as usize;
-        let all_sessions = self.project_service.list_sessions(project_id);
+        let all_sessions = self.project_service.list_sessions(project_id).await?;
 
         let opts = options.unwrap_or_default();
         let total_count = if opts.include_total_count.unwrap_or(true) {
@@ -407,7 +425,7 @@ impl SessionServiceImpl {
             return Ok(Vec::new());
         }
 
-        let all_sessions = self.project_service.list_sessions(project_id);
+        let all_sessions = self.project_service.list_sessions(project_id).await?;
         Ok(all_sessions.into_iter().filter(|s| id_set.contains(&s.id)).collect())
     }
 
@@ -424,7 +442,7 @@ impl SessionServiceImpl {
         session_id: &str,
     ) -> Result<Option<SessionDetail>, AppError> {
         // 始终重新解析，不使用 slim 缓存
-        let session_path = self.session_path(project_id, session_id);
+        let session_path = self.session_path(project_id, session_id).await?;
         if !session_path.exists() {
             return Ok(None);
         }
@@ -432,10 +450,10 @@ impl SessionServiceImpl {
         let parsed = parse_session_file(&session_path).await;
         let session = self
             .build_session_metadata(&session_path, project_id)
-            .await
+            .await?
             .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
 
-        let subagents = self.resolve_subagents(project_id, session_id, &parsed).await;
+        let subagents = self.resolve_subagents(project_id, session_id, &parsed).await?;
         let detail = ChunkBuilder::build_session_detail(
             session, parsed.messages.clone(), subagents,
         );
@@ -454,13 +472,22 @@ impl SessionServiceImpl {
         session_id: &str,
         known_fingerprint: Option<&str>,
     ) -> Result<Option<SessionDetailResponse>, AppError> {
-        let session_path = self.session_path(project_id, session_id);
+        let session_path = self.session_path(project_id, session_id).await?;
         if !session_path.exists() {
             return Ok(None);
         }
 
-        let fingerprint = self
-            .fs_provider
+        let (cache, fs_provider) = {
+            let active_arc = {
+                let mgr = self.context_manager.read().await;
+                mgr.get_active()
+                    .ok_or_else(|| AppError::Internal("No active ServiceContext".into()))?
+            };
+            let ctx = active_arc.read().await;
+            (ctx.cache.clone(), ctx.fs_provider.clone())
+        };
+
+        let fingerprint = fs_provider
             .stat(&session_path)
             .ok()
             .map(|s| format!("{}-{}", s.mtime_ms, s.size));
@@ -474,17 +501,17 @@ impl SessionServiceImpl {
             }
         }
 
-        if let Some(cached) = self.cache.get_session(project_id, session_id, fingerprint.as_deref()).await {
+        if let Some(cached) = cache.get_session(project_id, session_id, fingerprint.as_deref()).await {
             return Ok(Some(SessionDetailResponse::Full(serde_json::from_value(cached)?)));
         }
 
         let parsed = parse_session_file(&session_path).await;
         let session = self
             .build_session_metadata(&session_path, project_id)
-            .await
+            .await?
             .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
 
-        let subagents = self.resolve_subagents(project_id, session_id, &parsed).await;
+        let subagents = self.resolve_subagents(project_id, session_id, &parsed).await?;
         let mut detail =
             ChunkBuilder::build_session_detail(session, parsed.messages.clone(), subagents);
 
@@ -497,7 +524,7 @@ impl SessionServiceImpl {
 
         let value = serde_json::to_value(&detail)?;
 
-        self.cache
+        cache
             .set_session(
                 project_id,
                 session_id,
@@ -515,7 +542,7 @@ impl SessionServiceImpl {
         project_id: &str,
         session_id: &str,
     ) -> Result<Option<SessionMetrics>, AppError> {
-        let session_path = self.session_path(project_id, session_id);
+        let session_path = self.session_path(project_id, session_id).await?;
         if !session_path.exists() {
             return Ok(None);
         }
@@ -536,13 +563,13 @@ impl SessionServiceImpl {
         project_id: &str,
         session_id: &str,
     ) -> Result<Vec<ConversationGroup>, AppError> {
-        let session_path = self.session_path(project_id, session_id);
+        let session_path = self.session_path(project_id, session_id).await?;
         if !session_path.exists() {
             return Ok(vec![]);
         }
 
         let parsed = parse_session_file(&session_path).await;
-        let subagents = self.resolve_subagents(project_id, session_id, &parsed).await;
+        let subagents = self.resolve_subagents(project_id, session_id, &parsed).await?;
 
         Ok(crate::analysis::conversation_group_builder::build_groups(
             &parsed.messages,
@@ -557,7 +584,7 @@ impl SessionServiceImpl {
         session_id: &str,
     ) -> Result<Option<crate::analysis::waterfall_builder::WaterfallData>, AppError>
     {
-        let session_path = self.session_path(project_id, session_id);
+        let session_path = self.session_path(project_id, session_id).await?;
         if !session_path.exists() {
             return Ok(None);
         }
@@ -565,10 +592,10 @@ impl SessionServiceImpl {
         let parsed = parse_session_file(&session_path).await;
         let session = self
             .build_session_metadata(&session_path, project_id)
-            .await
+            .await?
             .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
 
-        let subagents = self.resolve_subagents(project_id, session_id, &parsed).await;
+        let subagents = self.resolve_subagents(project_id, session_id, &parsed).await?;
         let detail =
             ChunkBuilder::build_session_detail(session, parsed.messages.clone(), subagents);
         let waterfall =
@@ -596,7 +623,18 @@ impl SessionServiceImpl {
         }
 
         let claude_base = get_default_claude_base_path();
-        let project_dir = self.project_dir(project_id);
+        let project_dir = self.project_dir(project_id).await?;
+
+        // 拿 cache 用于失效（与原 self.cache 一致）
+        let cache: DataCache = {
+            let active_arc = {
+                let mgr = self.context_manager.read().await;
+                mgr.get_active()
+                    .ok_or_else(|| AppError::Internal("No active ServiceContext".into()))?
+            };
+            let ctx = active_arc.read().await;
+            ctx.cache.clone()
+        };
 
         let mut main_file_deleted = false;
         let mut associated_deleted = 0u32;
@@ -760,7 +798,7 @@ impl SessionServiceImpl {
             .unhide_session(project_id.to_string(), session_id.to_string()).await;
 
         // Invalidate cache
-        self.cache.invalidate_session(project_id, session_id).await;
+        cache.invalidate_session(project_id, session_id).await;
 
         // Small delay to ensure filesystem sync before returning
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -821,5 +859,37 @@ impl super::session_service_trait::SessionService for SessionServiceImpl {
 
     async fn delete_session(&self, project_id: &str, session_id: &str) -> Result<crate::types::domain::DeleteSessionResult, AppError> {
         self.delete_session(project_id, session_id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // 引入 trait 使 svc.get_sessions() 方法在作用域内可见
+    use crate::services::SessionService as _;
+    use std::path::PathBuf;
+
+    /// 构造空 ContextManager（无任何 context 注册），用于测试无 active context 场景。
+    fn make_empty_context_manager() -> Arc<RwLock<ContextManager>> {
+        Arc::new(RwLock::new(ContextManager::new()))
+    }
+
+    #[tokio::test]
+    async fn test_get_sessions_returns_error_when_no_active_context() {
+        let empty_cm = make_empty_context_manager();
+        let config_manager = Arc::new(crate::infrastructure::ConfigManager::new());
+        let project_service: Arc<dyn ProjectService> = Arc::new(
+            crate::services::ProjectServiceImpl::new(empty_cm.clone())
+        );
+        let repo: Arc<dyn crate::infrastructure::session_repository::SessionRepository> =
+            Arc::new(crate::infrastructure::local_session_repository::LocalSessionRepository::new(
+                Arc::new(crate::infrastructure::LocalFsProvider::new()),
+                PathBuf::from("/tmp"),
+                PathBuf::from("/tmp"),
+            ));
+        let svc = SessionServiceImpl::new(empty_cm, config_manager, project_service, repo);
+
+        let result = svc.get_sessions("any-project").await;
+        assert!(matches!(result, Err(AppError::Internal(msg)) if msg.contains("No active ServiceContext")));
     }
 }
