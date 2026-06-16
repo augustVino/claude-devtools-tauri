@@ -252,6 +252,16 @@ export const createContextSlice: StateCreator<AppState, [], [], ContextSlice> = 
 
       // Fetch available contexts
       await get().fetchAvailableContexts();
+
+      // SSH 启动恢复：仅恢复表单预填数据 + host combobox 数据源。
+      // 不调 api.ssh.getState() —— SSH session 是进程内的，重启必然 disconnected。
+      // 用 get() 调 connectionSlice 的 actions（zustand slice 自洽原则）
+      try {
+        await get().loadLastConnection();
+        await get().fetchSshConfigHosts();
+      } catch (sshInitError) {
+        console.error('[contextSlice] SSH state restore failed (non-blocking):', sshInitError);
+      }
     } catch (error) {
       console.error('[contextSlice] Failed to initialize context system:', error);
       set({ contextSnapshotsReady: true }); // Continue anyway
