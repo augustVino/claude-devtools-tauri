@@ -235,7 +235,9 @@ export const ConnectionSection = (): React.JSX.Element => {
 
       {connectionError && (
         <div className="rounded-md border border-red-500/20 bg-red-500/10 px-4 py-3">
-          <p className="text-sm text-red-400">{connectionError}</p>
+          <p className="whitespace-pre-line break-words font-mono text-sm text-red-400">
+            {connectionError}
+          </p>
         </div>
       )}
 
