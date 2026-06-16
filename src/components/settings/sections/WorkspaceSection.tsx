@@ -72,7 +72,6 @@ export const WorkspaceSection = (): React.JSX.Element => {
   const loadProfiles = useCallback(async () => {
     try {
       const config = await api.config.get();
-      // AppConfig type doesn't include ssh field, but ConfigManager returns it at runtime
       const loaded = config.ssh;
       setProfiles(loaded?.profiles ?? []);
     } catch (error) {
