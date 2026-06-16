@@ -8,7 +8,7 @@ use std::fmt::Write;
 
 /// Outcome of a single auth attempt (key file or agent candidate).
 #[derive(Debug, Clone)]
-pub(super) enum AttemptOutcome {
+pub(crate) enum AttemptOutcome {
     /// Auth succeeded with this candidate.
     Used,
     /// Candidate was skipped (e.g., key file not found, encrypted key unsupported).
@@ -19,7 +19,7 @@ pub(super) enum AttemptOutcome {
 
 /// A single auth attempt with source label + outcome.
 #[derive(Debug, Clone)]
-pub(super) struct AuthAttempt {
+pub(crate) struct AuthAttempt {
     /// Human-readable source: "IdentityAgent ~/Library/..." / "~/.ssh/id_ed25519" / ...
     /// Pre-masked by caller (mask_home_path) to avoid leaking $HOME.
     pub source: String,
@@ -28,7 +28,7 @@ pub(super) struct AuthAttempt {
 
 /// Per-stage timings collected during establish_raw_connection.
 #[derive(Debug, Clone, Default)]
-pub(super) struct AuthTimings {
+pub(crate) struct AuthTimings {
     /// ssh -G resolution elapsed (ms). 0 if fallback was used immediately.
     pub resolve_ms: u64,
     /// TCP pre-probe elapsed (ms). 0 if probe was skipped (error before probe).
@@ -42,18 +42,18 @@ pub(super) struct AuthTimings {
 
 /// Full trace collected during a connection attempt.
 #[derive(Debug, Clone, Default)]
-pub(super) struct AuthTrace {
+pub(crate) struct AuthTrace {
     pub attempts: Vec<AuthAttempt>,
     pub timings: AuthTimings,
 }
 
 impl AuthTrace {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     /// Append a single attempt with timing.
-    pub(super) fn record_attempt(&mut self, source: impl Into<String>, outcome: AttemptOutcome, ms: u64) {
+    pub(crate) fn record_attempt(&mut self, source: impl Into<String>, outcome: AttemptOutcome, ms: u64) {
         let source = source.into();
         self.attempts.push(AuthAttempt {
             source: source.clone(),
@@ -66,7 +66,7 @@ impl AuthTrace {
 /// Render an auth error message with trace context (multi-section).
 ///
 /// If trace is empty (no attempts/timings), returns just `root_message`.
-pub(super) fn enrich_auth_error(root_message: &str, trace: &AuthTrace) -> String {
+pub(crate) fn enrich_auth_error(root_message: &str, trace: &AuthTrace) -> String {
     let mut sections: Vec<String> = vec![root_message.to_string()];
 
     // Auth chain section

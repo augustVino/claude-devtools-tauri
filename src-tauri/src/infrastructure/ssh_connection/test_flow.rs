@@ -27,7 +27,11 @@ impl super::SshConnectionManager {
                 // raw.sftp drop → SFTP session 自动关闭
                 Ok(SshTestResult { success: true, error: None })
             }
-            Err(e) => Ok(SshTestResult { success: false, error: Some(e) }),
+            Err(auth_err) => {
+                // AuthError Display impl renders enriched multi-section message
+                // (root + auth chain + timing) when trace is non-empty.
+                Ok(SshTestResult { success: false, error: Some(auth_err.to_string()) })
+            }
         }
     }
 }

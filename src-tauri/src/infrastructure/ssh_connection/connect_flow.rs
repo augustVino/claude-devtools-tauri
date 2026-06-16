@@ -6,15 +6,17 @@
 //! - open_sftp_subsystem_static(): SFTP 子系统打开（内联，仅 ~15 行）
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use russh::client;
 use russh_sftp::client::SftpSession;
 
-use crate::infrastructure::ssh_auth;
+use crate::infrastructure::ssh_auth::{self, AuthError};
 use crate::infrastructure::ssh_config_parser::SshConfigParser;
 use crate::infrastructure::ssh_fs_provider::SshFsProvider;
 
+use super::auth_trace::AuthTrace;
+use super::tcp_probe;
 use super::{ConnectRequest, RawConnection, ConnectedBundle, SshClientHandler};
 
 /// Connection timeout (10 seconds).
@@ -24,24 +26,33 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 ///
 /// 自由函数（非 &self 方法），仅依赖传入参数，不访问 manager 状态。
 /// 返回 RawConnection（裸资源），不创建 FsProvider、不解析路径、不存储状态、不发射事件。
+///
+/// Phase 3a: 返回 `Result<_, AuthError>`；建立 AuthTrace，TCP 预探测 + 各阶段计时；
+/// 所有 Err 路径用 `AuthError::with_trace` 携带 trace，Display 时自动渲染为多段诊断信息。
 pub(super) async fn establish_raw_connection(
     request: &ConnectRequest,
     config_parser: Option<&SshConfigParser>,
-) -> Result<RawConnection, String> {
+) -> Result<RawConnection, AuthError> {
+    let mut trace = AuthTrace::new();
+
     // Phase 1: Merge (preserved as fallback path)
     let merged_config = super::ssh_config_merge::merge_with_ssh_config_static(
         request.config.clone(),
         config_parser,
     );
     if merged_config.host.trim().is_empty() {
-        return Err("Host is required".into());
+        return Err(AuthError::new("Host is required"));
     }
 
     // Phase 1.5 (phase 2 new): ssh -G. Pass original_host (alias), not merged HostName.
+    // Phase 3a: 计时 resolve_ms。
+    let resolve_start = Instant::now();
     let resolved = super::host_resolver::resolve_host(
         &request.original_host,
         config_parser,
     ).await;
+    trace.timings.resolve_ms = resolve_start.elapsed().as_millis() as u64;
+
     let mut final_config = merged_config.clone();
     if !resolved.hostname.is_empty() && resolved.hostname != final_config.host {
         final_config.host = resolved.hostname.clone();
@@ -55,19 +66,42 @@ pub(super) async fn establish_raw_connection(
         }
     }
 
-    // Phase 2: TCP Connect (10s)
+    // Phase 1.6 (phase 3a new): TCP pre-probe (timed).
+    // 区分 "host unreachable"（per-app VPN 拦截）与 "auth rejected"，
+    // 在 russh connect 可能挂起 CONNECT_TIMEOUT 之前给出快速、可诊断的失败。
+    let probe_result = tcp_probe::probe_tcp(&final_config.host, final_config.port).await;
+    trace.timings.tcp_probe_ms = probe_result.elapsed_ms();
+
+    if !probe_result.is_reachable() {
+        let root_msg = probe_result
+            .diagnostic_message(&final_config.host, final_config.port)
+            .unwrap_or_else(|| format!("TCP probe to {}:{} failed", final_config.host, final_config.port));
+        return Err(AuthError::with_trace(root_msg, trace));
+    }
+
+    // Phase 2: TCP + SSH handshake (timed; None if error during handshake)
+    let handshake_start = Instant::now();
     let addr = (final_config.host.as_str(), final_config.port);
     let russh_config = Arc::new(russh::client::Config::default());
     let session = match tokio::time::timeout(CONNECT_TIMEOUT, russh::client::connect(russh_config, addr, SshClientHandler)).await {
-        Ok(Ok(h)) => h,
-        Ok(Err(e)) => return Err(format!(
-            "SSH connection to {}:{} failed: {}",
-            final_config.host, final_config.port, e
-        )),
-        Err(_) => return Err(format!(
-            "SSH connection to {}:{} timed out after {}s",
-            final_config.host, final_config.port, CONNECT_TIMEOUT.as_secs()
-        )),
+        Ok(Ok(h)) => {
+            trace.timings.tcp_handshake_ms = Some(handshake_start.elapsed().as_millis() as u64);
+            h
+        }
+        Ok(Err(e)) => {
+            let root_msg = format!(
+                "SSH connection to {}:{} failed: {}",
+                final_config.host, final_config.port, e
+            );
+            return Err(AuthError::with_trace(root_msg, trace));
+        }
+        Err(_) => {
+            let root_msg = format!(
+                "SSH connection to {}:{} timed out after {}s",
+                final_config.host, final_config.port, CONNECT_TIMEOUT.as_secs()
+            );
+            return Err(AuthError::with_trace(root_msg, trace));
+        }
     };
 
     // Phase 3 (phase 2 new): multi-candidate agent discovery
@@ -75,9 +109,9 @@ pub(super) async fn establish_raw_connection(
         resolved.identity_agent.as_deref().and_then(|p| p.to_str()),
     ).await;
 
-    // Phase 4: Authenticate (new signature)
+    // Phase 4: Authenticate (pass trace for attempt collection)
     let mut session_mut = session;
-    if let Err(e) = ssh_auth::authenticate(
+    if let Err(auth_err) = ssh_auth::authenticate(
         &mut session_mut,
         &final_config.username,
         &final_config.auth_method,
@@ -85,16 +119,23 @@ pub(super) async fn establish_raw_connection(
         final_config.private_key_path.as_deref(),
         &resolved.identity_files,
         &agent_sockets,
+        &mut trace,
     ).await {
-        return Err(format!("authentication failed: {}", e));
+        return Err(AuthError::with_trace(
+            format!("authentication failed: {}", auth_err.message),
+            trace,
+        ));
     }
 
     // Phase 5: Open SFTP (8s timeout + IPv6-aware diagnostic)
-    let sftp = open_sftp_subsystem_static(
+    let sftp = match open_sftp_subsystem_static(
         &mut session_mut,
         &final_config.username,
         &final_config.host,
-    ).await?;
+    ).await {
+        Ok(s) => s,
+        Err(msg) => return Err(AuthError::with_trace(msg, trace)),
+    };
 
     Ok(RawConnection {
         merged_config: final_config,

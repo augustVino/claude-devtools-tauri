@@ -16,6 +16,7 @@ use russh::keys::load_secret_key;
 use russh_keys::agent::client::AgentClient;
 
 use crate::infrastructure::ssh_connection::agent_discovery::{mask_home_path, AgentCandidate};
+use crate::infrastructure::ssh_connection::auth_trace::{AttemptOutcome, AuthTrace};
 use crate::types::ssh::SshAuthMethod;
 
 /// Default authentication timeout (covers all candidates combined).
@@ -39,20 +40,46 @@ const DEFAULT_KEY_NAMES: &[&str] = &["id_ed25519", "id_rsa", "id_ecdsa"];
 #[derive(Debug)]
 pub struct AuthError {
     pub message: String,
+    /// Phase 3a: structured trace for error enrichment.
+    /// Empty trace (Default) means "no context collected" — caller used
+    /// `AuthError::new()` convenience constructor.
+    pub trace: AuthTrace,
 }
 
 impl std::fmt::Display for AuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SSH auth error: {}", self.message)
+        // If trace is empty, display just message (backward compat with phase 2).
+        // Otherwise render enriched multi-section message.
+        if self.trace.attempts.is_empty()
+            && self.trace.timings.resolve_ms == 0
+            && self.trace.timings.tcp_probe_ms == 0
+            && self.trace.timings.tcp_handshake_ms.is_none()
+            && self.trace.timings.auth_attempts_ms.is_empty()
+        {
+            write!(f, "SSH auth error: {}", self.message)
+        } else {
+            use crate::infrastructure::ssh_connection::auth_trace::enrich_auth_error;
+            write!(f, "{}", enrich_auth_error(&self.message, &self.trace))
+        }
     }
 }
 
 impl std::error::Error for AuthError {}
 
 impl AuthError {
-    fn new(msg: impl Into<String>) -> Self {
+    /// Construct without trace (phase 2 backward compat).
+    pub fn new(msg: impl Into<String>) -> Self {
         Self {
             message: msg.into(),
+            trace: AuthTrace::new(),
+        }
+    }
+
+    /// Construct with trace (phase 3a).
+    pub fn with_trace(msg: impl Into<String>, trace: AuthTrace) -> Self {
+        Self {
+            message: msg.into(),
+            trace,
         }
     }
 }
@@ -164,10 +191,11 @@ pub async fn auth_agent<H: client::Handler>(
     session: &mut client::Handle<H>,
     username: &str,
     agent_sockets: &[AgentCandidate],
+    trace: &mut AuthTrace,
 ) -> Result<(), AuthError> {
     // Outer 10s timeout — rarely triggers since per-candidate 3s limits
     // each attempt. If triggered, include partial errors from inner call.
-    match tokio::time::timeout(AUTH_TIMEOUT, do_auth_agent_multi(session, username, agent_sockets)).await {
+    match tokio::time::timeout(AUTH_TIMEOUT, do_auth_agent_multi(session, username, agent_sockets, trace)).await {
         Ok(inner) => inner,
         Err(_) => Err(AuthError::new(format!(
             "SSH agent authentication timed out after {}s (tried {} candidates)",
@@ -179,10 +207,12 @@ pub async fn auth_agent<H: client::Handler>(
 
 /// Iterate over multiple agent candidates. Per-candidate 3s timeout prevents
 /// dead socket from blocking chain. errors: Vec<String> accumulates all failures.
+/// Phase 3a: records each attempt (source + outcome + ms) into `trace`.
 async fn do_auth_agent_multi<H: client::Handler>(
     session: &mut client::Handle<H>,
     username: &str,
     agent_sockets: &[AgentCandidate],
+    trace: &mut AuthTrace,
 ) -> Result<(), AuthError> {
     if agent_sockets.is_empty() {
         return Err(AuthError::new("No SSH agent sockets available"));
@@ -192,6 +222,8 @@ async fn do_auth_agent_multi<H: client::Handler>(
 
     for candidate in agent_sockets {
         let masked_path = mask_home_path(&candidate.path);
+        let source_label = format!("{} {}", candidate.source, masked_path);
+        let attempt_start = std::time::Instant::now();
 
         let attempt = tokio::time::timeout(
             AGENT_CANDIDATE_TIMEOUT,
@@ -199,23 +231,38 @@ async fn do_auth_agent_multi<H: client::Handler>(
         )
         .await;
 
+        let attempt_ms = attempt_start.elapsed().as_millis() as u64;
+
         match attempt {
             Ok(Ok(())) => {
                 log::info!("Agent auth succeeded via [{}] {}", candidate.source, masked_path);
+                trace.record_attempt(source_label, AttemptOutcome::Used, attempt_ms);
                 return Ok(());
             }
             Ok(Err(e)) => {
-                log::debug!("[{}] {} failed: {}", candidate.source, masked_path, e);
-                errors.push(format!("[{}] {}: {}", candidate.source, masked_path, e));
+                let reason = e.to_string();
+                log::debug!("[{}] {} failed: {}", candidate.source, masked_path, reason);
+                trace.record_attempt(
+                    source_label,
+                    AttemptOutcome::Failed { reason: reason.clone() },
+                    attempt_ms,
+                );
+                errors.push(format!("[{}] {}: {}", candidate.source, masked_path, reason));
             }
             Err(_) => {
+                let reason = format!("timed out after {}s", AGENT_CANDIDATE_TIMEOUT.as_secs());
                 log::debug!(
-                    "[{}] {} timed out after {}s",
-                    candidate.source, masked_path, AGENT_CANDIDATE_TIMEOUT.as_secs()
+                    "[{}] {} {}",
+                    candidate.source, masked_path, reason
+                );
+                trace.record_attempt(
+                    source_label,
+                    AttemptOutcome::Failed { reason: reason.clone() },
+                    attempt_ms,
                 );
                 errors.push(format!(
-                    "[{}] {}: timed out after {}s",
-                    candidate.source, masked_path, AGENT_CANDIDATE_TIMEOUT.as_secs()
+                    "[{}] {}: {}",
+                    candidate.source, masked_path, reason
                 ));
             }
         }
@@ -340,6 +387,7 @@ pub async fn auth_auto<H: client::Handler>(
     username: &str,
     identity_files: &[PathBuf],
     agent_sockets: &[AgentCandidate],
+    trace: &mut AuthTrace,
 ) -> Result<(), AuthError> {
     let ssh_dir = match dirs::home_dir() {
         Some(home) => home.join(".ssh"),
@@ -358,14 +406,27 @@ pub async fn auth_auto<H: client::Handler>(
         let masked = mask_home_path(key_path);
         if !tried_paths.insert(key_path.clone()) {
             log::debug!("Skipping duplicate identity file: {}", masked);
+            trace.record_attempt(
+                masked.clone(),
+                AttemptOutcome::Skipped { reason: "duplicate path".to_string() },
+                0,
+            );
             continue;
         }
+        let attempt_start = std::time::Instant::now();
         match try_key_auth_with_timeout(session, username, key_path).await {
             Ok(()) => {
+                let ms = attempt_start.elapsed().as_millis() as u64;
                 log::info!("Auto auth succeeded with identity file: {}", masked);
+                trace.record_attempt(masked, AttemptOutcome::Used, ms);
                 return Ok(());
             }
-            Err(e) => log::debug!("Identity file {} failed: {}", masked, e),
+            Err(e) => {
+                let ms = attempt_start.elapsed().as_millis() as u64;
+                let reason = e.to_string();
+                log::debug!("Identity file {} failed: {}", masked, reason);
+                trace.record_attempt(masked, AttemptOutcome::Failed { reason }, ms);
+            }
         }
     }
     if !identity_files.is_empty() {
@@ -374,7 +435,7 @@ pub async fn auth_auto<H: client::Handler>(
 
     // Step 2: agent sockets
     if !agent_sockets.is_empty() {
-        match auth_agent(session, username, agent_sockets).await {
+        match auth_agent(session, username, agent_sockets, trace).await {
             Ok(()) => {
                 log::info!("Auto auth succeeded with SSH agent");
                 return Ok(());
@@ -388,12 +449,28 @@ pub async fn auth_auto<H: client::Handler>(
     let mut default_tried = 0;
     for key_name in DEFAULT_KEY_NAMES {
         let key_path = ssh_dir.join(key_name);
+        let masked = mask_home_path(&key_path);
         if !tried_paths.insert(key_path.clone()) {
+            trace.record_attempt(
+                masked,
+                AttemptOutcome::Skipped { reason: "duplicate path".to_string() },
+                0,
+            );
             continue;
         }
+        let attempt_start = std::time::Instant::now();
         if try_key_auth_with_timeout(session, username, &key_path).await.is_ok() {
+            let ms = attempt_start.elapsed().as_millis() as u64;
             log::info!("Auto auth succeeded with default key: {}", key_name);
+            trace.record_attempt(masked, AttemptOutcome::Used, ms);
             return Ok(());
+        } else {
+            let ms = attempt_start.elapsed().as_millis() as u64;
+            trace.record_attempt(
+                masked,
+                AttemptOutcome::Failed { reason: "rejected".to_string() },
+                ms,
+            );
         }
         default_tried += 1;
     }
@@ -467,6 +544,7 @@ pub async fn authenticate<H: client::Handler>(
     private_key_path: Option<&str>,
     identity_files: &[PathBuf],
     agent_sockets: &[AgentCandidate],
+    trace: &mut AuthTrace,
 ) -> Result<(), AuthError> {
     match method {
         SshAuthMethod::Password => {
@@ -476,9 +554,9 @@ pub async fn authenticate<H: client::Handler>(
             auth_password(session, username, pwd).await
         }
         SshAuthMethod::PrivateKey => auth_private_key(session, username, private_key_path).await,
-        SshAuthMethod::Agent => auth_agent(session, username, agent_sockets).await,
+        SshAuthMethod::Agent => auth_agent(session, username, agent_sockets, trace).await,
         SshAuthMethod::Auto => {
-            auth_auto(session, username, identity_files, agent_sockets).await
+            auth_auto(session, username, identity_files, agent_sockets, trace).await
         }
     }
 }
@@ -544,5 +622,59 @@ mod tests {
         let msg = build_sftp_timeout_msg("alice", "2001:db8::1", 8);
         assert!(msg.contains("sftp alice@[2001:db8::1]"));
         assert!(!msg.contains("alice@2001:db8::1]")); // no malformed variant
+    }
+
+    /// Phase 3a: AuthError Display with empty trace must match phase 2 format.
+    #[test]
+    fn test_auth_error_display_no_trace_returns_phase2_format() {
+        let err = AuthError::new("password rejected");
+        assert_eq!(err.to_string(), "SSH auth error: password rejected");
+    }
+
+    /// Phase 3a: AuthError Display with non-empty trace triggers enrich_auth_error.
+    #[test]
+    fn test_auth_error_display_with_trace_renders_enriched() {
+        let mut trace = AuthTrace::new();
+        trace.record_attempt(
+            "~/.ssh/id_ed25519",
+            AttemptOutcome::Failed { reason: "rejected".to_string() },
+            100,
+        );
+        let err = AuthError::with_trace("auth failed", trace);
+        let displayed = err.to_string();
+        assert!(displayed.contains("auth failed"));
+        assert!(displayed.contains("Auth chain:"));
+        assert!(displayed.contains("~/.ssh/id_ed25519 — failed (rejected)"));
+        assert!(displayed.contains("Timing:"));
+    }
+
+    /// Phase 3a: AgentSource label() must match phase 2 string literals.
+    #[test]
+    fn test_agent_source_label_matches_phase2_strings() {
+        use crate::infrastructure::ssh_connection::agent_discovery::AgentSource;
+        let cases: [(AgentSource, &str); 9] = [
+            (AgentSource::IdentityAgent, "IdentityAgent"),
+            (AgentSource::EnvSshAuthSock, "SSH_AUTH_SOCK"),
+            (AgentSource::OnePasswordAppStoreTSub, "1Password AppStore (t/agent.sock)"),
+            (AgentSource::OnePasswordAppStore, "1Password AppStore (agent.sock)"),
+            (AgentSource::OnePasswordCli, "1Password CLI"),
+            (AgentSource::Launchctl, "launchctl SSH_AUTH_SOCK"),
+            (AgentSource::HomeSshAgentSock, "~/.ssh/agent.sock"),
+            (AgentSource::SystemdAgent, "systemd ssh-agent.socket"),
+            (AgentSource::GnomeKeyring, "gnome-keyring ssh"),
+        ];
+        for (variant, expected) in cases.iter() {
+            assert_eq!(variant.label(), *expected, "label mismatch for {:?}", variant);
+            assert_eq!(variant.to_string(), *expected, "Display mismatch for {:?}", variant);
+        }
+    }
+
+    /// Phase 3a: AuthError::with_trace carries trace through Display.
+    #[test]
+    fn test_auth_error_with_trace_preserves_trace_in_display() {
+        let mut trace = AuthTrace::new();
+        trace.timings.resolve_ms = 42;
+        let err = AuthError::with_trace("early failure", trace);
+        assert!(err.to_string().contains("resolve: 42ms"));
     }
 }

@@ -6,7 +6,7 @@ mod connection_state;
 mod connect_flow;      // establish_raw_connection + build_connected_bundle
 mod host_resolver;     // ssh -G system delegation (phase 2)
 mod tcp_probe;        // TCP pre-probe (phase 3a)
-mod auth_trace;       // AuthAttempt + Timings enrichment (phase 3a)
+pub(crate) mod auth_trace;  // AuthAttempt + Timings enrichment (phase 3a) — pub(crate) so sibling ssh_auth module can import
 mod remote_path_resolver;
 mod ssh_config_merge;
 mod test_flow;         // test() reuses establish_raw_connection
@@ -236,9 +236,13 @@ impl SshConnectionManager {
                 let _ = self.event_sender.send(bundle.status.clone());
                 Ok(bundle.status)
             }
-            Err(e) => {
-                let error_status =
-                    SshConnectionStatus::error(request.config.host.clone(), e.clone());
+            Err(auth_err) => {
+                // AuthError Display impl renders enriched multi-section message
+                // (root + auth chain + timing) when trace is non-empty.
+                let error_status = SshConnectionStatus::error(
+                    request.config.host.clone(),
+                    auth_err.to_string(),
+                );
                 let _ = self.event_sender.send(error_status.clone());
                 Ok(error_status)
             }

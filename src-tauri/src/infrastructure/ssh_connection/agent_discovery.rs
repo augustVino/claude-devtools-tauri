@@ -6,15 +6,54 @@ use std::time::Duration;
 
 use crate::infrastructure::ssh_auth::expand_tilde;
 
+/// Provenance label for agent socket candidates.
+///
+/// Replaces phase 2's `source: String` with type-safe enum.
+/// Display impl produces same string labels as phase 2 for backward-compatible
+/// logging (e.g., "IdentityAgent", "SSH_AUTH_SOCK", "1Password AppStore (t/agent.sock)").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AgentSource {
+    IdentityAgent,
+    EnvSshAuthSock,
+    OnePasswordAppStoreTSub,
+    OnePasswordAppStore,
+    OnePasswordCli,
+    Launchctl,
+    HomeSshAgentSock,
+    SystemdAgent,
+    GnomeKeyring,
+}
+
+impl AgentSource {
+    pub fn label(&self) -> &'static str {
+        match self {
+            AgentSource::IdentityAgent => "IdentityAgent",
+            AgentSource::EnvSshAuthSock => "SSH_AUTH_SOCK",
+            AgentSource::OnePasswordAppStoreTSub => "1Password AppStore (t/agent.sock)",
+            AgentSource::OnePasswordAppStore => "1Password AppStore (agent.sock)",
+            AgentSource::OnePasswordCli => "1Password CLI",
+            AgentSource::Launchctl => "launchctl SSH_AUTH_SOCK",
+            AgentSource::HomeSshAgentSock => "~/.ssh/agent.sock",
+            AgentSource::SystemdAgent => "systemd ssh-agent.socket",
+            AgentSource::GnomeKeyring => "gnome-keyring ssh",
+        }
+    }
+}
+
+impl std::fmt::Display for AgentSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label())
+    }
+}
+
 /// A discovered agent socket candidate with provenance label.
 ///
 /// `pub(crate)` so ssh_auth (sibling infrastructure module) can reference it
 /// via `crate::infrastructure::ssh_connection::agent_discovery::AgentCandidate`.
 #[derive(Debug, Clone)]
 pub(crate) struct AgentCandidate {
-    /// Provenance: "IdentityAgent" / "SSH_AUTH_SOCK" / ...
-    /// (Phase 3 will make this an enum.)
-    pub source: String,
+    /// Provenance (phase 3a: type-safe enum, replaces phase 2 String).
+    pub source: AgentSource,
     pub path: PathBuf,
 }
 
@@ -61,15 +100,15 @@ pub(crate) fn dedupe_by_canonical(candidates: Vec<AgentCandidate>) -> Vec<AgentC
 /// Order: IdentityAgent → SSH_AUTH_SOCK → 1Password (3 paths) →
 /// launchctl → ~/.ssh → systemd → gnome-keyring.
 pub(crate) async fn discover_agent_sockets(identity_agent: Option<&str>) -> Vec<AgentCandidate> {
-    let mut candidates: Vec<(String, PathBuf)> = Vec::new();
+    let mut candidates: Vec<(AgentSource, PathBuf)> = Vec::new();
 
     if let Some(ia) = identity_agent {
-        candidates.push(("IdentityAgent".to_string(), expand_tilde(ia)));
+        candidates.push((AgentSource::IdentityAgent, expand_tilde(ia)));
     }
 
     if let Ok(sock) = std::env::var("SSH_AUTH_SOCK") {
         if !sock.is_empty() {
-            candidates.push(("SSH_AUTH_SOCK".to_string(), PathBuf::from(sock)));
+            candidates.push((AgentSource::EnvSshAuthSock, PathBuf::from(sock)));
         }
     }
 
@@ -79,19 +118,19 @@ pub(crate) async fn discover_agent_sockets(identity_agent: Option<&str>) -> Vec<
             .join("Group Containers")
             .join("2BUA8C4S2C.com.1password");
         candidates.push((
-            "1Password AppStore (t/agent.sock)".to_string(),
+            AgentSource::OnePasswordAppStoreTSub,
             op_base.join("t").join("agent.sock"),
         ));
         candidates.push((
-            "1Password AppStore (agent.sock)".to_string(),
+            AgentSource::OnePasswordAppStore,
             op_base.join("agent.sock"),
         ));
         candidates.push((
-            "1Password CLI".to_string(),
+            AgentSource::OnePasswordCli,
             home.join(".1password").join("agent.sock"),
         ));
         candidates.push((
-            "~/.ssh/agent.sock".to_string(),
+            AgentSource::HomeSshAgentSock,
             home.join(".ssh").join("agent.sock"),
         ));
     }
@@ -113,7 +152,7 @@ pub(crate) async fn discover_agent_sockets(identity_agent: Option<&str>) -> Vec<
             if output.status.success() {
                 let sock = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if !sock.is_empty() {
-                    candidates.push(("launchctl SSH_AUTH_SOCK".to_string(), PathBuf::from(sock)));
+                    candidates.push((AgentSource::Launchctl, PathBuf::from(sock)));
                 }
             }
         }
@@ -123,11 +162,11 @@ pub(crate) async fn discover_agent_sockets(identity_agent: Option<&str>) -> Vec<
     {
         let uid = unsafe { libc::getuid() };
         candidates.push((
-            "systemd ssh-agent.socket".to_string(),
+            AgentSource::SystemdAgent,
             PathBuf::from(format!("/run/user/{}/ssh-agent.socket", uid)),
         ));
         candidates.push((
-            "gnome-keyring ssh".to_string(),
+            AgentSource::GnomeKeyring,
             PathBuf::from(format!("/run/user/{}/keyring/ssh", uid)),
         ));
     }
@@ -149,9 +188,9 @@ pub(crate) async fn discover_agent_sockets(identity_agent: Option<&str>) -> Vec<
 mod tests {
     use super::*;
 
-    fn cand(source: &str, path: impl Into<PathBuf>) -> AgentCandidate {
+    fn cand(source: AgentSource, path: impl Into<PathBuf>) -> AgentCandidate {
         AgentCandidate {
-            source: source.to_string(),
+            source,
             path: path.into(),
         }
     }
@@ -166,10 +205,10 @@ mod tests {
         let link = tmp_dir.path().join("link.sock");
         std::os::unix::fs::symlink(&real, &link).unwrap();
 
-        let candidates = vec![cand("real", &real), cand("symlink", &link)];
+        let candidates = vec![cand(AgentSource::IdentityAgent, &real), cand(AgentSource::EnvSshAuthSock, &link)];
         let deduped = dedupe_by_canonical(candidates);
         assert_eq!(deduped.len(), 1);
-        assert_eq!(deduped[0].source, "real");
+        assert_eq!(deduped[0].source, AgentSource::IdentityAgent);
     }
 
     /// canonicalize failure (broken symlink) → falls back to raw path.
@@ -184,7 +223,7 @@ mod tests {
         std::os::unix::fs::symlink("/nonexistent/target1", &broken1).unwrap();
         std::os::unix::fs::symlink("/nonexistent/target2", &broken2).unwrap();
 
-        let candidates = vec![cand("b1", &broken1), cand("b2", &broken2)];
+        let candidates = vec![cand(AgentSource::IdentityAgent, &broken1), cand(AgentSource::EnvSshAuthSock, &broken2)];
         let deduped = dedupe_by_canonical(candidates);
         // Both kept (canonicalize failed, raw paths differ)
         assert_eq!(deduped.len(), 2);
@@ -194,7 +233,7 @@ mod tests {
     fn test_dedupe_by_canonical_preserves_distinct_paths() {
         let tmp1 = tempfile::NamedTempFile::new().unwrap();
         let tmp2 = tempfile::NamedTempFile::new().unwrap();
-        let candidates = vec![cand("a", tmp1.path()), cand("b", tmp2.path())];
+        let candidates = vec![cand(AgentSource::IdentityAgent, tmp1.path()), cand(AgentSource::EnvSshAuthSock, tmp2.path())];
         let deduped = dedupe_by_canonical(candidates);
         assert_eq!(deduped.len(), 2);
     }
@@ -224,7 +263,7 @@ mod tests {
         let tmp_path = tmp.path().to_str().unwrap().to_string();
         let result = discover_agent_sockets(Some(&tmp_path)).await;
         assert!(!result.is_empty(), "IdentityAgent candidate must be present");
-        assert_eq!(result[0].source, "IdentityAgent");
+        assert_eq!(result[0].source, AgentSource::IdentityAgent);
         assert_eq!(result[0].path, std::path::PathBuf::from(&tmp_path));
     }
 
@@ -243,7 +282,7 @@ mod tests {
         unsafe { std::env::remove_var("SSH_AUTH_SOCK"); }
         let result = discover_agent_sockets(Some("/this/path/does/not/exist/agent.sock")).await;
         for c in &result {
-            assert_ne!(c.source, "IdentityAgent");
+            assert_ne!(c.source, AgentSource::IdentityAgent);
         }
     }
 }
