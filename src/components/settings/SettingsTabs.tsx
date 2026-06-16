@@ -24,8 +24,8 @@ interface TabConfig {
 
 const tabs: TabConfig[] = [
   { id: 'general', label: 'General', icon: Settings },
-  //   { id: "connection", label: "Connection", icon: Server, desktopOnly: true },
-  //   { id: "workspace", label: "Workspaces", icon: HardDrive, desktopOnly: true },
+  { id: 'connection', label: 'Connection', icon: Server, desktopOnly: true },
+  { id: 'workspace', label: 'Workspaces', icon: HardDrive, desktopOnly: true },
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'advanced', label: 'Advanced', icon: Wrench },
 ];

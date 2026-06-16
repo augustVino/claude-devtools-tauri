@@ -11,10 +11,10 @@ import { Loader2 } from 'lucide-react';
 import { useSettingsConfig, useSettingsHandlers } from './hooks';
 import {
   AdvancedSection,
-  //   ConnectionSection,
+  ConnectionSection,
   GeneralSection,
   NotificationsSection,
-  //   WorkspaceSection,
+  WorkspaceSection,
 } from './sections';
 import { type SettingsSection, SettingsTabs } from './SettingsTabs';
 
@@ -144,9 +144,9 @@ export const SettingsView = (): React.JSX.Element | null => {
             />
           )}
 
-          {/* {activeSection === 'connection' && <ConnectionSection />} */}
+          {activeSection === 'connection' && <ConnectionSection />}
 
-          {/* {activeSection === 'workspace' && <WorkspaceSection />} */}
+          {activeSection === 'workspace' && <WorkspaceSection />}
 
           {activeSection === 'notifications' && (
             <NotificationsSection
