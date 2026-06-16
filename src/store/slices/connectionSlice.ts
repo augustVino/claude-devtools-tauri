@@ -64,6 +64,7 @@ export const createConnectionSlice: StateCreator<AppState, [], [], ConnectionSli
   // Actions
   connectSsh: async (config: SshConnectionConfig): Promise<void> => {
     set({
+      isContextSwitching: true,
       connectionState: 'connecting',
       connectedHost: config.host,
       connectionError: null,
@@ -100,6 +101,7 @@ export const createConnectionSlice: StateCreator<AppState, [], [], ConnectionSli
               ...getFullResetState(),
             }
           : {}),
+        isContextSwitching: false,
       });
 
       // Re-fetch all data and persist config when connected
@@ -124,11 +126,14 @@ export const createConnectionSlice: StateCreator<AppState, [], [], ConnectionSli
       set({
         connectionState: 'error',
         connectionError: message,
+        isContextSwitching: false,
       });
     }
   },
 
   disconnectSsh: async (): Promise<void> => {
+    set({ isContextSwitching: true });
+
     try {
       const status = await api.ssh.disconnect();
       set({
@@ -156,6 +161,7 @@ export const createConnectionSlice: StateCreator<AppState, [], [], ConnectionSli
           focusedPaneId: 'pane-default',
         },
         ...getFullResetState(),
+        isContextSwitching: false,
       });
 
       // Re-fetch local data
@@ -164,7 +170,10 @@ export const createConnectionSlice: StateCreator<AppState, [], [], ConnectionSli
       void state.fetchRepositoryGroups();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      set({ connectionError: message });
+      set({
+        connectionError: message,
+        isContextSwitching: false,
+      });
     }
   },
 
