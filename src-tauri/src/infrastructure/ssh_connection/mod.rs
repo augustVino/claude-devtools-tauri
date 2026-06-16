@@ -5,6 +5,7 @@ mod client_handler;
 mod connection_state;
 mod connect_flow;      // establish_raw_connection + build_connected_bundle
 mod host_resolver;     // ssh -G system delegation (phase 2)
+mod tcp_probe;        // TCP pre-probe (phase 3a)
 mod remote_path_resolver;
 mod ssh_config_merge;
 mod test_flow;         // test() reuses establish_raw_connection
