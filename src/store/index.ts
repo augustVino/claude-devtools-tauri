@@ -377,14 +377,17 @@ export function initializeNotificationListeners(): () => void {
   }
 
   // Listen for context changes from main process (e.g., SSH disconnect)
+  // StrictMode 幂等性：dev mode 下 useEffect 双调用，cleanup 链保证 listener 撤销后再注册
   if (api.context?.onChanged) {
     const cleanup = api.context.onChanged((_event: unknown, data: unknown) => {
-      const { id } = data as { id: string; type: string };
+      // Race guard: if connectSsh/disconnectSsh is in flight, skip — they manage state directly
+      if (useStore.getState().isContextSwitching) return;
+
+      const payload = data as { id: string; type: string };
       const currentContextId = useStore.getState().activeContextId;
-      if (id !== currentContextId) {
-        // Main process switched context externally (e.g., SSH disconnect)
-        // Trigger renderer-side context switch to sync state
-        void useStore.getState().switchContext(id);
+      // 双重判断：id 不同（主要条件）+ type 合法（防御性，理论上 id 不会撞）
+      if (payload.id !== currentContextId && (payload.type === 'local' || payload.type === 'ssh')) {
+        void useStore.getState().switchContext(payload.id);
       }
     });
     if (typeof cleanup === "function") {
