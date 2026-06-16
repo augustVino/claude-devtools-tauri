@@ -291,17 +291,22 @@ pub async fn try_key_auth<H: client::Handler>(
         .to_str()
         .ok_or_else(|| AuthError::new("Invalid key path (non-UTF-8)"))?;
 
+    // Mask $HOME prefix for privacy-safe error messages forwarded to frontend.
+    // NOTE: fs operations (key_path.exists(), load_secret_key) still use the
+    // unmasked `key_path` / `key_path_str` — only log/error strings use masked.
+    let masked_path = mask_home_path(key_path);
+
     if !key_path.exists() {
         return Err(AuthError::new(format!(
             "Key file not found: {}",
-            key_path_str
+            masked_path
         )));
     }
 
     let secret_key = load_secret_key(key_path_str, None).map_err(|e| {
         AuthError::new(format!(
             "Cannot read private key at {}: {}",
-            key_path_str, e
+            masked_path, e
         ))
     })?;
 
@@ -311,7 +316,7 @@ pub async fn try_key_auth<H: client::Handler>(
         .map_err(|e| {
             AuthError::new(format!(
                 "Public key auth failed for {}: {}",
-                key_path_str, e
+                masked_path, e
             ))
         })?;
 
@@ -320,7 +325,7 @@ pub async fn try_key_auth<H: client::Handler>(
     } else {
         Err(AuthError::new(format!(
             "Key auth rejected for {}",
-            key_path_str
+            masked_path
         )))
     }
 }
@@ -350,16 +355,17 @@ pub async fn auth_auto<H: client::Handler>(
 
     // Step 1: identity files
     for key_path in identity_files {
+        let masked = mask_home_path(key_path);
         if !tried_paths.insert(key_path.clone()) {
-            log::debug!("Skipping duplicate identity file: {:?}", key_path);
+            log::debug!("Skipping duplicate identity file: {}", masked);
             continue;
         }
         match try_key_auth_with_timeout(session, username, key_path).await {
             Ok(()) => {
-                log::info!("Auto auth succeeded with identity file: {:?}", key_path);
+                log::info!("Auto auth succeeded with identity file: {}", masked);
                 return Ok(());
             }
-            Err(e) => log::debug!("Identity file {:?} failed: {}", key_path, e),
+            Err(e) => log::debug!("Identity file {} failed: {}", masked, e),
         }
     }
     if !identity_files.is_empty() {
@@ -409,7 +415,9 @@ async fn try_key_auth_with_timeout<H: client::Handler>(
 ) -> Result<(), AuthError> {
     tokio::time::timeout(AUTH_TIMEOUT, try_key_auth(session, username, key_path))
         .await
-        .map_err(|_| AuthError::new(format!("Key auth timed out for {:?}", key_path)))?
+        .map_err(|_| {
+            AuthError::new(format!("Key auth timed out for {}", mask_home_path(key_path)))
+        })?
 }
 
 // ---------------------------------------------------------------------------
