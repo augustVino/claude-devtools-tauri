@@ -714,10 +714,13 @@ export class HttpAPIClient implements ElectronAPI {
       return result.data ?? null;
     },
     // IPC signature: (event: unknown, status: SshConnectionStatus) => void
+    // Phase 3a: SSE payload is now wrapper { type: "ssh-status-changed", status: {...} }
+    // (aligned with Tauri's SshStatusChangedEvent). Extract data.status.
     onStatus: (callback): (() => void) =>
-      this.addEventListener("ssh:status", (data: unknown) =>
-        callback(null, data as SshConnectionStatus),
-      ),
+      this.addEventListener("ssh:status", (data: unknown) => {
+        const payload = data as { type: string; status: SshConnectionStatus };
+        callback(null, payload.status);
+      }),
   };
 
   // ---------------------------------------------------------------------------

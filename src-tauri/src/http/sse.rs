@@ -24,7 +24,13 @@ pub enum BackendEvent {
     NotificationUpdated(NotificationUpdatedPayload),
     NotificationClicked(DetectedError),
     ContextChanged(ContextInfo),
-    SshStatusChanged(SshConnectionStatus),
+    // Phase 3a: wrapper struct (not tuple variant) to force serde to produce
+    // { type: "ssh-status-changed", status: {...} } instead of flat
+    // { type: "ssh-status-changed", state, host, error, ... }.
+    // Aligns with Tauri's SshStatusChangedEvent shape for frontend consistency.
+    SshStatusChanged {
+        status: SshConnectionStatus,
+    },
 }
 
 impl BackendEvent {
@@ -37,7 +43,7 @@ impl BackendEvent {
             BackendEvent::NotificationUpdated(_) => "notification:updated",
             BackendEvent::NotificationClicked(_) => "notification:clicked",
             BackendEvent::ContextChanged(_) => "context:changed",
-            BackendEvent::SshStatusChanged(_) => "ssh:status",
+            BackendEvent::SshStatusChanged { .. } => "ssh:status",
         }
     }
 }
@@ -150,5 +156,58 @@ mod tests {
             .event_name(),
             "context:changed"
         );
+    }
+
+    use crate::types::ssh::SshConnectionStatus;
+
+    #[test]
+    fn test_ssh_status_changed_serializes_as_wrapper() {
+        let status = SshConnectionStatus::connected(
+            "example.com".to_string(),
+            "/home/user/.claude/projects".to_string(),
+        );
+        let event = BackendEvent::SshStatusChanged { status };
+
+        let json = serde_json::to_string(&event).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["type"], "ssh-status-changed");
+        assert!(v["status"].is_object());
+        assert_eq!(v["status"]["state"], "connected");
+        assert_eq!(v["status"]["host"], "example.com");
+        assert!(v["state"].is_null());
+        assert!(v["host"].is_null());
+    }
+
+    #[test]
+    fn test_ssh_status_changed_error_state_preserves_multiline_message() {
+        let error_msg = "Host unreachable.\n\nAuth chain:\n  • key — failed";
+        let status = SshConnectionStatus::error("example.com".to_string(), error_msg.to_string());
+        let event = BackendEvent::SshStatusChanged { status };
+
+        let json = serde_json::to_string(&event).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["type"], "ssh-status-changed");
+        assert_eq!(v["status"]["state"], "error");
+        assert_eq!(v["status"]["host"], "example.com");
+        assert_eq!(v["status"]["error"], error_msg);
+    }
+
+    #[test]
+    fn test_ssh_status_changed_round_trip() {
+        // BackendEvent only derives Serialize (several variant payloads are
+        // Serialize-only), so we round-trip via serde_json::Value instead of
+        // deserializing back into BackendEvent. This still verifies the
+        // serialized wrapper shape is stable and parseable.
+        let status = SshConnectionStatus::disconnected();
+        let event = BackendEvent::SshStatusChanged { status };
+
+        let json = serde_json::to_string(&event).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["type"], "ssh-status-changed");
+        assert!(v["status"].is_object());
+        assert_eq!(v["status"]["state"], "disconnected");
     }
 }

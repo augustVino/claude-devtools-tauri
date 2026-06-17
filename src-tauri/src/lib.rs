@@ -236,7 +236,7 @@ pub fn run() {
               let event = crate::types::ssh::SshStatusChangedEvent { status: status.clone() };
               let _ = app_handle_for_ssh.emit("ssh:status", event);
               // Bridge to SSE broadcaster for HTTP-only clients
-              ssh_broadcaster.send(crate::http::sse::BackendEvent::SshStatusChanged(status));
+              ssh_broadcaster.send(crate::http::sse::BackendEvent::SshStatusChanged { status });
             }
             Err(broadcast::error::RecvError::Closed) => break,
             Err(_) => continue,
