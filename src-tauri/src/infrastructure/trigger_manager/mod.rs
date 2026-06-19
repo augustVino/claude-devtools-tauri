@@ -4,8 +4,8 @@ pub(crate) mod apply_updates;
 pub(crate) mod defaults;
 pub(crate) mod validation;
 
-pub use defaults::default_triggers;
 pub use crate::types::config::{NotificationTrigger, TriggerValidationResult};
+pub use defaults::default_triggers;
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -20,10 +20,7 @@ pub struct TriggerManager {
 }
 
 impl TriggerManager {
-    pub fn new(
-        triggers: Vec<NotificationTrigger>,
-        on_save: Arc<dyn Fn() + Send + Sync>,
-    ) -> Self {
+    pub fn new(triggers: Vec<NotificationTrigger>, on_save: Arc<dyn Fn() + Send + Sync>) -> Self {
         Self { triggers, on_save }
     }
 
@@ -39,7 +36,11 @@ impl TriggerManager {
     /// 仅获取已启用的通知触发器。
     #[allow(dead_code)]
     pub fn get_enabled(&self) -> Vec<NotificationTrigger> {
-        self.triggers.iter().filter(|t| t.enabled).cloned().collect()
+        self.triggers
+            .iter()
+            .filter(|t| t.enabled)
+            .cloned()
+            .collect()
     }
 
     /// 按 ID 获取触发器。
@@ -109,10 +110,7 @@ impl TriggerManager {
 
     /// 删除通知触发器。内置触发器不可删除。
     #[allow(dead_code)]
-    pub fn remove(
-        &mut self,
-        trigger_id: &str,
-    ) -> Result<Vec<NotificationTrigger>, String> {
+    pub fn remove(&mut self, trigger_id: &str) -> Result<Vec<NotificationTrigger>, String> {
         let trigger = self
             .triggers
             .iter()
@@ -135,7 +133,10 @@ impl TriggerManager {
     /// 验证触发器配置，不修改状态。
     pub fn validate(&self, trigger: &NotificationTrigger) -> TriggerValidationResult {
         let errors = validate_trigger_internal(trigger);
-        TriggerValidationResult { valid: errors.is_empty(), errors }
+        TriggerValidationResult {
+            valid: errors.is_empty(),
+            errors,
+        }
     }
 
     /// Validate a trigger without requiring a TriggerManager instance.
@@ -146,11 +147,14 @@ impl TriggerManager {
     /// **[DEPRECATED since v1.0]** Prefer `validate()`. Kept for backward compatibility
     /// with `config/trigger_proxy.rs` (add_trigger validation). Both methods delegate to
     /// `validate_trigger_internal()` — behavior is identical.
-    #[deprecated(since = "1.0", note = "Use TriggerManager::validate() instead")]
+    #[deprecated(since = "1.0.0", note = "Use TriggerManager::validate() instead")]
     #[allow(deprecated, dead_code)]
     pub fn validate_trigger_only(trigger: &NotificationTrigger) -> TriggerValidationResult {
         let errors = validate_trigger_internal(trigger);
-        TriggerValidationResult { valid: errors.is_empty(), errors }
+        TriggerValidationResult {
+            valid: errors.is_empty(),
+            errors,
+        }
     }
 
     // =========================================================================
