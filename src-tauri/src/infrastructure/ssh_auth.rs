@@ -107,12 +107,26 @@ pub fn expand_tilde(path: &str) -> PathBuf {
     }
 }
 
+/// Resolve default private key path from a given home directory.
+///
+/// Extracted as a pure function for testability (no env mutation).
+/// Returns `AuthError` if `home` is `None` instead of panicking.
+fn build_default_key_path(home: Option<&std::path::Path>) -> Result<PathBuf, AuthError> {
+    let home = home.ok_or_else(|| {
+        AuthError::new(
+            "Cannot resolve default SSH key path: $HOME not set. \
+             Set $HOME environment variable, or specify config.private_key_path explicitly.",
+        )
+    })?;
+    Ok(home.join(".ssh").join("id_rsa"))
+}
+
 /// Get the default private key path (`~/.ssh/id_rsa`).
-fn default_key_path() -> PathBuf {
-    dirs::home_dir()
-        .expect("HOME directory not found")
-        .join(".ssh")
-        .join("id_rsa")
+///
+/// Wrapper around `build_default_key_path` reading $HOME via `dirs`.
+/// Returns `AuthError` in containerized/sandboxed environments without $HOME.
+fn default_key_path() -> Result<PathBuf, AuthError> {
+    build_default_key_path(dirs::home_dir().as_deref())
 }
 
 // ---------------------------------------------------------------------------
@@ -156,7 +170,7 @@ pub async fn auth_private_key<H: client::Handler>(
 ) -> Result<(), AuthError> {
     let resolved_path = match key_path {
         Some(p) => expand_tilde(p),
-        None => default_key_path(),
+        None => default_key_path()?,
     };
 
     let key_path_str = resolved_path
@@ -165,8 +179,12 @@ pub async fn auth_private_key<H: client::Handler>(
         .to_string();
 
     // Load the secret key (returns key::KeyPair)
-    let secret_key = load_secret_key(&key_path_str, None)
-        .map_err(|e| AuthError::new(format!("Cannot read private key at {}: {}", key_path_str, e)))?;
+    let secret_key = load_secret_key(&key_path_str, None).map_err(|e| {
+        AuthError::new(format!(
+            "Cannot read private key at {}: {}",
+            key_path_str, e
+        ))
+    })?;
 
     let success = tokio::time::timeout(AUTH_TIMEOUT, async {
         session
@@ -195,7 +213,12 @@ pub async fn auth_agent<H: client::Handler>(
 ) -> Result<(), AuthError> {
     // Outer 10s timeout — rarely triggers since per-candidate 3s limits
     // each attempt. If triggered, include partial errors from inner call.
-    match tokio::time::timeout(AUTH_TIMEOUT, do_auth_agent_multi(session, username, agent_sockets, trace)).await {
+    match tokio::time::timeout(
+        AUTH_TIMEOUT,
+        do_auth_agent_multi(session, username, agent_sockets, trace),
+    )
+    .await
+    {
         Ok(inner) => inner,
         Err(_) => Err(AuthError::new(format!(
             "SSH agent authentication timed out after {}s (tried {} candidates)",
@@ -235,7 +258,11 @@ async fn do_auth_agent_multi<H: client::Handler>(
 
         match attempt {
             Ok(Ok(())) => {
-                log::info!("Agent auth succeeded via [{}] {}", candidate.source, masked_path);
+                log::info!(
+                    "Agent auth succeeded via [{}] {}",
+                    candidate.source,
+                    masked_path
+                );
                 trace.record_attempt(source_label, AttemptOutcome::Used, attempt_ms);
                 return Ok(());
             }
@@ -244,20 +271,24 @@ async fn do_auth_agent_multi<H: client::Handler>(
                 log::debug!("[{}] {} failed: {}", candidate.source, masked_path, reason);
                 trace.record_attempt(
                     source_label,
-                    AttemptOutcome::Failed { reason: reason.clone() },
+                    AttemptOutcome::Failed {
+                        reason: reason.clone(),
+                    },
                     attempt_ms,
                 );
-                errors.push(format!("[{}] {}: {}", candidate.source, masked_path, reason));
+                errors.push(format!(
+                    "[{}] {}: {}",
+                    candidate.source, masked_path, reason
+                ));
             }
             Err(_) => {
                 let reason = format!("timed out after {}s", AGENT_CANDIDATE_TIMEOUT.as_secs());
-                log::debug!(
-                    "[{}] {} {}",
-                    candidate.source, masked_path, reason
-                );
+                log::debug!("[{}] {} {}", candidate.source, masked_path, reason);
                 trace.record_attempt(
                     source_label,
-                    AttemptOutcome::Failed { reason: reason.clone() },
+                    AttemptOutcome::Failed {
+                        reason: reason.clone(),
+                    },
                     attempt_ms,
                 );
                 errors.push(format!(
@@ -351,20 +382,14 @@ pub async fn try_key_auth<H: client::Handler>(
     }
 
     let secret_key = load_secret_key(key_path_str, None).map_err(|e| {
-        AuthError::new(format!(
-            "Cannot read private key at {}: {}",
-            masked_path, e
-        ))
+        AuthError::new(format!("Cannot read private key at {}: {}", masked_path, e))
     })?;
 
     let success = session
         .authenticate_publickey(username, Arc::new(secret_key))
         .await
         .map_err(|e| {
-            AuthError::new(format!(
-                "Public key auth failed for {}: {}",
-                masked_path, e
-            ))
+            AuthError::new(format!("Public key auth failed for {}: {}", masked_path, e))
         })?;
 
     if success {
@@ -408,7 +433,9 @@ pub async fn auth_auto<H: client::Handler>(
             log::debug!("Skipping duplicate identity file: {}", masked);
             trace.record_attempt(
                 masked.clone(),
-                AttemptOutcome::Skipped { reason: "duplicate path".to_string() },
+                AttemptOutcome::Skipped {
+                    reason: "duplicate path".to_string(),
+                },
                 0,
             );
             continue;
@@ -453,13 +480,18 @@ pub async fn auth_auto<H: client::Handler>(
         if !tried_paths.insert(key_path.clone()) {
             trace.record_attempt(
                 masked,
-                AttemptOutcome::Skipped { reason: "duplicate path".to_string() },
+                AttemptOutcome::Skipped {
+                    reason: "duplicate path".to_string(),
+                },
                 0,
             );
             continue;
         }
         let attempt_start = std::time::Instant::now();
-        if try_key_auth_with_timeout(session, username, &key_path).await.is_ok() {
+        if try_key_auth_with_timeout(session, username, &key_path)
+            .await
+            .is_ok()
+        {
             let ms = attempt_start.elapsed().as_millis() as u64;
             log::info!("Auto auth succeeded with default key: {}", key_name);
             trace.record_attempt(masked, AttemptOutcome::Used, ms);
@@ -468,7 +500,9 @@ pub async fn auth_auto<H: client::Handler>(
             let ms = attempt_start.elapsed().as_millis() as u64;
             trace.record_attempt(
                 masked,
-                AttemptOutcome::Failed { reason: "rejected".to_string() },
+                AttemptOutcome::Failed {
+                    reason: "rejected".to_string(),
+                },
                 ms,
             );
         }
@@ -480,7 +514,11 @@ pub async fn auth_auto<H: client::Handler>(
 
     Err(AuthError::new(format!(
         "Auto authentication failed (tried: {})",
-        if tried_steps.is_empty() { "no candidates available".to_string() } else { tried_steps.join(", ") }
+        if tried_steps.is_empty() {
+            "no candidates available".to_string()
+        } else {
+            tried_steps.join(", ")
+        }
     )))
 }
 
@@ -493,7 +531,10 @@ async fn try_key_auth_with_timeout<H: client::Handler>(
     tokio::time::timeout(AUTH_TIMEOUT, try_key_auth(session, username, key_path))
         .await
         .map_err(|_| {
-            AuthError::new(format!("Key auth timed out for {}", mask_home_path(key_path)))
+            AuthError::new(format!(
+                "Key auth timed out for {}",
+                mask_home_path(key_path)
+            ))
         })?
 }
 
@@ -605,7 +646,37 @@ mod tests {
     #[test]
     fn test_default_key_path() {
         let home = dirs::home_dir().unwrap();
-        assert_eq!(default_key_path(), home.join(".ssh").join("id_rsa"));
+        assert_eq!(
+            default_key_path().unwrap(),
+            home.join(".ssh").join("id_rsa")
+        );
+    }
+
+    #[test]
+    fn test_build_default_key_path_with_home() {
+        let home = std::path::Path::new("/fake/home");
+        let result = build_default_key_path(Some(home));
+        assert_eq!(
+            result.unwrap(),
+            std::path::PathBuf::from("/fake/home/.ssh/id_rsa")
+        );
+    }
+
+    #[test]
+    fn test_build_default_key_path_without_home_returns_err() {
+        let result = build_default_key_path(None);
+        assert!(result.is_err(), "should return AuthError when home is None");
+        let err_msg = result.unwrap_err().message;
+        assert!(
+            err_msg.contains("$HOME"),
+            "error should mention $HOME: {}",
+            err_msg
+        );
+        assert!(
+            err_msg.contains("private_key_path"),
+            "error should guide to config.private_key_path: {}",
+            err_msg
+        );
     }
 
     #[test]
@@ -637,7 +708,9 @@ mod tests {
         let mut trace = AuthTrace::new();
         trace.record_attempt(
             "~/.ssh/id_ed25519",
-            AttemptOutcome::Failed { reason: "rejected".to_string() },
+            AttemptOutcome::Failed {
+                reason: "rejected".to_string(),
+            },
             100,
         );
         let err = AuthError::with_trace("auth failed", trace);
@@ -655,8 +728,14 @@ mod tests {
         let cases: [(AgentSource, &str); 9] = [
             (AgentSource::IdentityAgent, "IdentityAgent"),
             (AgentSource::EnvSshAuthSock, "SSH_AUTH_SOCK"),
-            (AgentSource::OnePasswordAppStoreTSub, "1Password AppStore (t/agent.sock)"),
-            (AgentSource::OnePasswordAppStore, "1Password AppStore (agent.sock)"),
+            (
+                AgentSource::OnePasswordAppStoreTSub,
+                "1Password AppStore (t/agent.sock)",
+            ),
+            (
+                AgentSource::OnePasswordAppStore,
+                "1Password AppStore (agent.sock)",
+            ),
             (AgentSource::OnePasswordCli, "1Password CLI"),
             (AgentSource::Launchctl, "launchctl SSH_AUTH_SOCK"),
             (AgentSource::HomeSshAgentSock, "~/.ssh/agent.sock"),
@@ -664,8 +743,18 @@ mod tests {
             (AgentSource::GnomeKeyring, "gnome-keyring ssh"),
         ];
         for (variant, expected) in cases.iter() {
-            assert_eq!(variant.label(), *expected, "label mismatch for {:?}", variant);
-            assert_eq!(variant.to_string(), *expected, "Display mismatch for {:?}", variant);
+            assert_eq!(
+                variant.label(),
+                *expected,
+                "label mismatch for {:?}",
+                variant
+            );
+            assert_eq!(
+                variant.to_string(),
+                *expected,
+                "Display mismatch for {:?}",
+                variant
+            );
         }
     }
 
