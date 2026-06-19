@@ -20,9 +20,9 @@
 - **完成后**：CI 加 `cargo fmt --check` step + `.git-blame-ignore-revs` 忽略 fmt commit
 
 ### cargo fmt 局部命令陷阱（Task 3 implementer C1 暴露）
-- **位置**：`src-tauri/rustfmt.toml`（edition-2024）+ 全仓 async fn
+- **位置**：`src-tauri/Cargo.toml:11`（`edition = "2021"`）+ 无 workspace 级 `rustfmt.toml`
 - **现状**：
-  - `rustfmt <file>` 单独跑在 edition-2024 下失败（E0670: `async fn` not allowed in edition-2024 when calling bare path，rustfmt CLI 未透传 edition）
+  - `rustfmt <file>` 单独跑报 E0670（rustfmt 默认 edition 2015，不识别 async fn，未透传项目 edition）
   - `cargo fmt -p claude-devtools -- <file>` 的 `-p` 仍会格式化整个包（导致工作区污染）
   - 正确但受限做法：`cargo fmt -p claude-devtools -- src/path/to/file.rs`（仍可能影响包内其他文件）
 - **根因解决**：全量 fmt baseline 完成后（见上条），局部改动随提交自动 fmt，无需手动指定文件
