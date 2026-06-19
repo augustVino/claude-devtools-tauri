@@ -39,10 +39,18 @@
 
 ### eszett casefolding 测试被 ignore
 - **位置**：`src-tauri/src/discovery/session_searcher.rs:962`，函数 `test_search_eszett_casefolding_unsupported`
-- **根因**：pre-filter（`session_searcher.rs:440`）用 `to_lowercase().contains(query)` 短路；Rust `'ß'.to_lowercase() = "ß"`（无 SpecialCasing 展开）
+- **根因**：pre-filter（`session_searcher.rs:462`，`entries.iter().any(|e| e.text.to_lowercase().contains(query))`）用 `to_lowercase().contains(query)` 短路；Rust `'ß'.to_lowercase() = "ß"`（无 SpecialCasing 展开）
 - **推迟原因**：修复需在 pre-filter + collect_matches 两处加 casefolding，属业务逻辑改进，非 3e 工程基础设施
 - **恢复触发**：用户反馈搜索德语内容受影响，或主动实现 Unicode SpecialCasing 支持
 - **完成后**：移除 `#[ignore]`，测试重命名为 `test_search_eszett_casefolding_supported`
+
+### 前端测试覆盖率为 0（CI test 步骤为占位）
+- **位置**：`src/`（`find src -name "*.test.*" -o -name "*.spec.*"` 返回 0）+ `vite.config.ts:21` `passWithNoTests: true` + `.github/workflows/ci.yml:75-76` Frontend test 步骤
+- **现状**：vitest v4 无测试文件时默认 exit 1；`passWithNoTests: true` 让 CI 的 "Frontend test" 步骤 exit 0——**当前是虚假绿灯**（永远通过但不验证任何东西）
+- **推迟原因**：3e 第一批聚焦 CI 保护伞，不要求补前端测试
+- **风险**：未来维护者可能误以为前端有测试覆盖
+- **恢复触发**：3d Item 6（ConnectionStatusBadge 单测）或主动引入前端测试
+- **完成后**：补至少 1 个 smoke test 后，可选移除 `passWithNoTests`（或保留，因有测试后该选项无副作用）
 
 ### tailwind.config.js ESM/CJS 潜在冲突
 - **位置**：`tailwind.config.js`（CJS `module.exports`）vs `package.json: "type": "module"`
@@ -64,7 +72,7 @@
 - **CI reporter 优化**（eslint --format=github-actions 等）：YAGNI
 - **ROADMAP 转 GitHub issues 双轨**：ROADMAP.md 入库已够（grep 检索）
 - **CONTRIBUTING.md / RUNBOOK.md**：单人项目暂无需求
-- **eslint 所有规则降 warn**：项目实测无 `==` 违规，保留 error 维持质量门槛
+- **eslint 所有规则降 warn**：~~项目实测无 `==` 违规~~ **修正（深度 review）**：实测 `src/` 有 **30 处**宽松 `== null`/`!= null`（合法的 null|undefined 双判断惯用法），通过 `eqeqeq ['error', 'always', { null: 'ignore' }]` 豁免。保留 error 级 eqeqeq 维护其他场景的严格相等门槛；null:ignore 是有意设计非疏漏
 
 ## pnpm/Node 版本不一致
 - **位置**：`.github/workflows/release.yml:37,42`（pnpm 9 + Node 20）vs 本地 + CI（pnpm 10 + Node 22）

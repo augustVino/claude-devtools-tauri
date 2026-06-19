@@ -24,8 +24,9 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
 
   // 4. Renderer 代码（browser globals + 合并 rules，codex P1-12/P1-15）
-  //    v4: eqeqeq 加 { null: 'ignore' }（codex P0-2 防御性配置，
-  //    项目实测 0 处 == null，但 null|undefined 双判断是合法惯用法）
+  //    v4: eqeqeq 加 { null: 'ignore' }（codex P0-2 防御性配置）。
+  //    深度 review 修正：项目实测 src/ 有 30 处宽松 == null/!= null
+  //    （合法的 null|undefined 双判断惯用法），通过此选项豁免。
   {
     files: ['src/**/*.{ts,tsx}'],
     languageOptions: {
