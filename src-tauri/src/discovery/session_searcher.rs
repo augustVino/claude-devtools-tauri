@@ -955,9 +955,10 @@ mod tests {
 
     #[test]
     #[ignore = "Requires Unicode SpecialCasing casefolding (ß→ss expansion), \
-                not standard to_lowercase. Pre-filter at session_searcher.rs:440 \
+                not standard to_lowercase. Pre-filter \
+                `entries.iter().any(|e| e.text.to_lowercase().contains(query))` \
                 short-circuits before any char-mapping logic runs. \
-                Tracked in ROADMAP.md (es-SET casefolding gap)."]
+                Tracked in ROADMAP.md (eszett casefolding gap)."]
     fn test_search_eszett_casefolding_unsupported() {
         // 德语 ß 小写化为 "ss"（1 字符 → 2 字符），byte-offset 方案会在此 panic 或返回错误结果。
         // 修复后使用 char-index 映射，正确返回原始文本中的 "Straße"。
