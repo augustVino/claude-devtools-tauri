@@ -534,20 +534,20 @@ export const ChatHistory = ({ tabId }: ChatHistoryProps): React.ReactElement => 
         container
           .querySelectorAll<HTMLElement>('mark[data-search-result="current"]')
           .forEach((prev) => {
-            /* eslint-disable no-param-reassign -- Directly mutating DOM element style/attributes is necessary for search result highlighting */
+             
             prev.setAttribute('data-search-result', 'match');
             prev.style.backgroundColor = 'var(--highlight-bg-inactive)';
             prev.style.color = 'var(--highlight-text-inactive)';
             prev.style.boxShadow = '';
-            /* eslint-enable no-param-reassign -- Re-enable after DOM mutations */
+             
           });
       }
-      /* eslint-disable no-param-reassign -- Directly mutating DOM element style/attributes is necessary for current search result highlighting */
+       
       el.setAttribute('data-search-result', 'current');
       el.style.backgroundColor = 'var(--highlight-bg)';
       el.style.color = 'var(--highlight-text)';
       el.style.boxShadow = '0 0 0 1px var(--highlight-ring)';
-      /* eslint-enable no-param-reassign -- Re-enable after DOM mutations */
+       
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     };
 

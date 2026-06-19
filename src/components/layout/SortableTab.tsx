@@ -120,9 +120,9 @@ export const SortableTab = ({
   return (
     <div
       ref={handleRef}
-      // eslint-disable-next-line react/jsx-props-no-spreading -- @dnd-kit useSortable requires prop spreading
+      // @dnd-kit useSortable requires prop spreading
       {...attributes}
-      // eslint-disable-next-line react/jsx-props-no-spreading -- @dnd-kit useSortable requires prop spreading
+      // @dnd-kit useSortable requires prop spreading
       {...listeners}
       role="tab"
       tabIndex={0}

@@ -413,7 +413,7 @@ export const TokenUsageDisplay = ({
         {/* Popover - rendered via Portal to escape stacking context */}
         {showPopover &&
           createPortal(
-            // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/click-events-have-key-events -- tooltip uses mouse handlers for hover/drag behavior, not interactive
+            // tooltip uses mouse handlers for hover/drag behavior, not interactive
             <div
               ref={popoverRef}
               role="tooltip"

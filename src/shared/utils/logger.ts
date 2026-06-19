@@ -24,7 +24,7 @@ const LogLevel = {
 
 type LogLevelType = (typeof LogLevel)[keyof typeof LogLevel];
 
-let globalLevel: LogLevelType = import.meta.env.PROD ? LogLevel.ERROR : LogLevel.WARN;
+const globalLevel: LogLevelType = import.meta.env.PROD ? LogLevel.ERROR : LogLevel.WARN;
 
 function createLogger(namespace: string) {
   return {

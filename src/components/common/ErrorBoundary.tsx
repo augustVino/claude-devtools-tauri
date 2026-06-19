@@ -47,7 +47,7 @@ export class ErrorBoundary extends Component<Props, State> {
     });
   };
 
-  // eslint-disable-next-line sonarjs/function-return-type -- Error boundaries inherently return different content based on error state
+  // Error boundaries inherently return different content based on error state
   render(): ReactNode {
     const { hasError, error, errorInfo } = this.state;
     const { children, fallback } = this.props;

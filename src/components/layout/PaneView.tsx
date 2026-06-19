@@ -42,7 +42,7 @@ export const PaneView = ({ paneId }: PaneViewProps): React.JSX.Element => {
   };
 
   return (
-    // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- pane focus management requires mousedown
+    // pane focus management requires mousedown
     <div
       className="relative flex min-w-0 flex-col"
       style={{

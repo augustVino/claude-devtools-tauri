@@ -71,7 +71,7 @@ export class HttpAPIClient implements ElectronAPI {
     };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- event callbacks have varying signatures
+   
   private addEventListener(
     channel: string,
     callback: (...args: any[]) => void,
@@ -102,7 +102,7 @@ export class HttpAPIClient implements ElectronAPI {
    * serialization turns them into strings. This restores them so that
    * `.getTime()` and other Date methods work in the renderer.
    */
-  // eslint-disable-next-line security/detect-unsafe-regex -- anchored pattern with bounded quantifier; no backtracking risk
+  // anchored pattern with bounded quantifier; no backtracking risk
   private static readonly ISO_DATE_RE =
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z?$/;
 

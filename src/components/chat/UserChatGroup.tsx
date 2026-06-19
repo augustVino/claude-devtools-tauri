@@ -35,7 +35,7 @@ interface UserChatGroupProps {
  * Recursively walks React children and replaces text nodes containing @path
  * references with styled spans using validated path state.
  */
-// eslint-disable-next-line sonarjs/function-return-type -- React child manipulation inherently returns mixed node types
+// React child manipulation inherently returns mixed node types
 function highlightTextNode(text: string, validatedPaths: Record<string, boolean>): React.ReactNode {
   const pathPattern = /@[^\s,)}\]]+/g;
   const parts: React.ReactNode[] = [];
@@ -84,12 +84,12 @@ function highlightTextNode(text: string, validatedPaths: Record<string, boolean>
   return parts;
 }
 
-// eslint-disable-next-line sonarjs/function-return-type -- React child manipulation inherently returns mixed node types
+// React child manipulation inherently returns mixed node types
 function highlightPaths(
   children: React.ReactNode,
   validatedPaths: Record<string, boolean>
 ): React.ReactNode {
-  // eslint-disable-next-line sonarjs/function-return-type -- React child manipulation inherently returns mixed node types
+  // React child manipulation inherently returns mixed node types
   return React.Children.map(children, (child): React.ReactNode => {
     if (typeof child === 'string') {
       return highlightTextNode(child, validatedPaths);
@@ -120,7 +120,7 @@ function createUserMarkdownComponents(
   const userTextColor = 'var(--chat-user-text)';
 
   // Compose path highlighting with optional search highlighting
-  // eslint-disable-next-line sonarjs/function-return-type -- React child manipulation inherently returns mixed node types
+  // React child manipulation inherently returns mixed node types
   const hl = (children: React.ReactNode): React.ReactNode => {
     const withPaths = highlightPaths(children, validatedPaths);
     return searchCtx ? highlightSearchInChildren(withPaths, searchCtx) : withPaths;

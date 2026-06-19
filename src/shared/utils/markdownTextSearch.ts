@@ -25,7 +25,7 @@ import type { Root as MdastRoot } from 'mdast';
 // Parser singleton
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- inferred type used by MarkdownParser alias
+ 
 function createParser() {
   return unified().use(remarkParse).use(remarkGfm);
 }

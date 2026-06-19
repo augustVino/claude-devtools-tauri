@@ -368,7 +368,7 @@ export const ContextBadge = ({
       {/* Popover - rendered via Portal to escape stacking context */}
       {showPopover &&
         createPortal(
-          // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/click-events-have-key-events -- dialog uses stopPropagation only, not interactive
+          // dialog uses stopPropagation only, not interactive
           <div
             ref={popoverRef}
             role="dialog"

@@ -378,7 +378,7 @@ export const DateGroupedSessions = (): React.JSX.Element => {
         >
           {sessionSortMode === 'most-context' ? 'By Context' : 'Sessions'}
         </h2>
-        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- tooltip trigger via hover, not interactive */}
+        {/* tooltip trigger via hover, not interactive */}
         <span
           ref={countRef}
           className="text-xs"

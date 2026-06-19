@@ -54,7 +54,7 @@ const logger = createLogger('Util:groupTransformer');
  * Matches: /command-name [optional args]
  * Uses non-greedy matching and limited repetition to prevent ReDoS.
  */
-// eslint-disable-next-line security/detect-unsafe-regex -- Pattern is safe: limited to 1000 chars and used on bounded user input
+// Pattern is safe: limited to 1000 chars and used on bounded user input
 const COMMAND_PATTERN = /\/([a-z][a-z-]{0,50})(?:\s+(\S[^\n]{0,1000}))?$/gim;
 
 /**

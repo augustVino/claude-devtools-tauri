@@ -248,7 +248,7 @@ export const WorkspaceSection = (): React.JSX.Element => {
       </div>
 
       <div>
-        {/* eslint-disable-next-line jsx-a11y/label-has-associated-control -- SettingsSelect is a custom dropdown without a native control */}
+        {/* SettingsSelect is a custom dropdown without a native control */}
         <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>
           Authentication
         </label>

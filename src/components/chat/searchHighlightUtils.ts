@@ -69,7 +69,7 @@ export function createSearchContext(
  * Highlight search term matches in a text string.
  * Increments matchCounter for each match found.
  */
-// eslint-disable-next-line sonarjs/function-return-type -- mixed text/element return
+// mixed text/element return
 function highlightSearchText(text: string, ctx: SearchContext): React.ReactNode {
   const lowerText = text.toLowerCase();
   const parts: React.ReactNode[] = [];
@@ -117,12 +117,12 @@ function highlightSearchText(text: string, ctx: SearchContext): React.ReactNode 
  * Preserves the React element tree structure (markdown components, etc.)
  * while adding <mark> tags to text content.
  */
-// eslint-disable-next-line sonarjs/function-return-type -- React child manipulation inherently returns mixed node types
+// React child manipulation inherently returns mixed node types
 export function highlightSearchInChildren(
   children: React.ReactNode,
   ctx: SearchContext
 ): React.ReactNode {
-  // eslint-disable-next-line sonarjs/function-return-type -- React child manipulation inherently returns mixed node types
+  // React child manipulation inherently returns mixed node types
   return React.Children.map(children, (child): React.ReactNode => {
     if (typeof child === 'string') {
       return highlightSearchText(child, ctx);
