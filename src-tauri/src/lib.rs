@@ -205,6 +205,9 @@ pub fn run() {
 
             // 在包装为 Arc<RwLock<>> 之前获取 broadcast receiver（避免在 async 任务中持有读锁）
             let mut ssh_status_rx = ssh_manager_inner.subscribe();
+            // v3-M1: 第二个独立 receiver（health disconnect listener）—— broadcast 支持多订阅者，
+            // 在 Arc<RwLock<>> 包装前 subscribe 对齐既有 ssh_status_rx 模式
+            let health_disconnect_rx = ssh_manager_inner.subscribe();
 
             let ssh_manager = Arc::new(RwLock::new(ssh_manager_inner));
             app.manage(ssh_manager.clone());
@@ -220,6 +223,53 @@ pub fn run() {
                     app.handle().clone(), // H3: 构造时存储 AppHandle
                 ));
             app.manage(ssh_service.clone());
+
+            // Health disconnect listener（对齐 Electron client.on('end') → handleDisconnect 响应动作）
+            // 收到 Disconnected 时切回 local context + emit context:changed
+            {
+                // v5-M6: ssh_service 类型为 Arc<dyn SshService>，handle_remote_disconnect 已在 trait
+                // 加 default body，Arc::clone 后调用合法
+                let ssh_service_clone = Arc::clone(&ssh_service);
+                let app_handle_clone = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut rx = health_disconnect_rx;
+                    loop {
+                        match rx.recv().await {
+                            Ok(status) => {
+                                if matches!(
+                                    status.state,
+                                    crate::types::ssh::SshConnectionState::Disconnected
+                                ) {
+                                    // 注入 SSEBroadcaster（v4-M5: 对齐 lib.rs 既有 try_state 模式，
+                                    // 因 spawn 时序不假设 broadcaster 已 manage，必须用 try_state 防 panic）
+                                    let broadcaster = app_handle_clone
+                                        .try_state::<crate::http::sse::SSEBroadcaster>()
+                                        .map(|s| s.inner().clone());
+                                    if let Err(e) = ssh_service_clone
+                                        .handle_remote_disconnect(broadcaster.as_ref())
+                                        .await
+                                    {
+                                        log::error!(
+                                            "Health monitor disconnect handling failed: {}",
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                            Err(broadcast::error::RecvError::Closed) => break,
+                            Err(broadcast::error::RecvError::Lagged(n)) => {
+                                // v4-m2: 改进既有 ssh_status_rx 模式（既有 task 用 Err(_) => continue 通配，
+                                // 本处显式 Err(Lagged) 更严谨，便于日志区分 lag 与 closed）
+                                log::warn!(
+                                    "SSH health disconnect listener lagged by {} messages",
+                                    n
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                });
+            }
 
             // ConfigService (all dependencies available here)
             let config_service: Arc<dyn services::ConfigService> =

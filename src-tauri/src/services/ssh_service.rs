@@ -7,23 +7,23 @@
 //! 2. HTTP path（Batch 3）通过 HttpState 调用时，AppHandle 不方便作为参数传递
 //! 3. AppHandle 本身是 Clone 的轻量句柄，存储开销可忽略
 
+use async_trait::async_trait;
 use std::path::PathBuf;
 use std::sync::Arc;
-use async_trait::async_trait;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::RwLock;
 
 use crate::error::AppError;
 use crate::http::sse::{BackendEvent, SSEBroadcaster};
 use crate::infrastructure::{
-    ConfigManager, ContextManager, DataCache, NotificationManager, SshConnectionManager,
     context_manager::ContextInfo,
     service_context::{ContextType, ServiceContext, ServiceContextConfig},
+    ConfigManager, ContextManager, DataCache, NotificationManager, SshConnectionManager,
 };
+use crate::services::ssh_service_trait::{SshConnectResult, SshService};
 use crate::types::ssh::{
-    SshConnectionConfig, SshConnectionState, SshConnectionStatus, SshTestResult, SshConfigHostEntry,
+    SshConfigHostEntry, SshConnectionConfig, SshConnectionState, SshConnectionStatus, SshTestResult,
 };
-use crate::services::ssh_service_trait::{SshService, SshConnectResult};
 
 pub struct SshServiceImpl {
     ssh_manager: Arc<RwLock<SshConnectionManager>>,
@@ -46,7 +46,14 @@ impl SshServiceImpl {
         notification_manager: Arc<RwLock<NotificationManager>>,
         app_handle: AppHandle,
     ) -> Self {
-        Self { ssh_manager, context_manager, cache, config_manager, notification_manager, app_handle }
+        Self {
+            ssh_manager,
+            context_manager,
+            cache,
+            config_manager,
+            notification_manager,
+            app_handle,
+        }
     }
 
     /// 执行 watcher 生命周期操作（stop old + start new）。
@@ -77,7 +84,8 @@ impl SshServiceImpl {
                     self.app_handle.clone(),
                     self.config_manager.clone(),
                     self.notification_manager.clone(),
-                ).await;
+                )
+                .await;
             }
         }
     }
@@ -85,20 +93,28 @@ impl SshServiceImpl {
     /// 统一的事件发射逻辑（connect / disconnect 共享）。
     ///
     /// 约定：必须在 **write lock 已 drop 后** 调用。
-    fn emit_context_changed(&self, info: ContextInfo, broadcaster: Option<&SSEBroadcaster>) -> Result<(), AppError> {
-        // Tauri emit
-        self.app_handle.emit("context:changed", &info)
-            .map_err(|e| AppError::Internal(format!("emit failed: {e}")))?;
-        // Bridge to SSE
+    ///
+    /// **Best-effort**（v3-N5）：Tauri emit 失败（如前端无窗口、IPC 通道关闭）
+    /// 不再当致命错误。降级为 log::warn!，避免阻塞 SSH 连接断开导致资源泄漏。
+    fn emit_context_changed(&self, info: ContextInfo, broadcaster: Option<&SSEBroadcaster>) {
+        if let Err(e) = self.app_handle.emit("context:changed", &info) {
+            log::warn!("emit context:changed failed (non-fatal): {}", e);
+        }
         if let Some(bcast) = broadcaster {
             bcast.send(BackendEvent::ContextChanged(info));
         }
-        Ok(())
     }
 
     /// 步骤 1：建立 SSH 网络连接（纯网络操作）
-    async fn connect_ssh(&self, config: SshConnectionConfig) -> Result<SshConnectionStatus, AppError> {
-        self.ssh_manager.write().await.connect(config).await
+    async fn connect_ssh(
+        &self,
+        config: SshConnectionConfig,
+    ) -> Result<SshConnectionStatus, AppError> {
+        self.ssh_manager
+            .write()
+            .await
+            .connect(config)
+            .await
             .map_err(AppError::Ssh)
     }
 
@@ -112,7 +128,9 @@ impl SshServiceImpl {
         username: &str,
     ) -> Result<ServiceContext, AppError> {
         let host = status.host.clone().unwrap_or_default();
-        let remote_projects_path = status.remote_projects_path.clone()
+        let remote_projects_path = status
+            .remote_projects_path
+            .clone()
             .unwrap_or_else(|| format!("/home/{}/.claude/projects", username));
         let remote_todos_path = PathBuf::from(&remote_projects_path)
             .parent()
@@ -121,8 +139,9 @@ impl SshServiceImpl {
 
         let fs_provider: Arc<dyn crate::infrastructure::FsProvider> = {
             let mgr = self.ssh_manager.read().await;
-            mgr.get_provider().await
-                .ok_or_else(|| AppError::Internal("SSH provider not available after connect".into()))?
+            mgr.get_provider().await.ok_or_else(|| {
+                AppError::Internal("SSH provider not available after connect".into())
+            })?
         };
 
         Ok(ServiceContext::new(ServiceContextConfig {
@@ -133,6 +152,69 @@ impl SshServiceImpl {
             fs_provider,
             cache: Some(self.cache.clone()),
         }))
+    }
+
+    /// 切回 local context（从 disconnect 提取，供主动 disconnect 与 health monitor 断开复用）。
+    ///
+    /// 幂等（TOCTOU 安全）：读锁检查后，写锁内**再次检查** is_ssh_context_id，
+    /// 避免双重 switch（用户主动 disconnect + health monitor 并发触发时，
+    /// 第二次进入写锁块会因 destroy_context("local") 返回 Err 污染日志）。
+    ///
+    /// **destroy non-fatal**（v3-N6）：destroy_context 失败时降级为 warn。
+    /// destroy 失败仅两种情形（v4-m4）：
+    ///   - context_id == "local"：destroy_context 内部拒绝（不应发生，switch_to_local 后 previous_id 是 ssh-x）
+    ///   - contexts.remove 返回 None：HashMap 本就无该条目，**无实际残留**
+    /// 两种情形均不阻塞 SSH 连接断开。
+    async fn switch_to_local_context(&self) -> Result<Option<ContextInfo>, AppError> {
+        let is_ssh_active = {
+            let mgr = self.context_manager.read().await;
+            self.is_ssh_context_id(mgr.get_active_id())
+        };
+
+        if !is_ssh_active {
+            return Ok(None);
+        }
+
+        let info = {
+            let mut mgr = self.context_manager.write().await;
+
+            // TOCTOU 安全：写锁内再次检查（v2 H7）
+            // 读锁释放到写锁获取之间，其他 caller 可能已切回 local
+            if !self.is_ssh_context_id(mgr.get_active_id()) {
+                log::debug!(
+                    "switch_to_local_context: already local after acquiring write lock, skip"
+                );
+                return Ok(None);
+            }
+
+            let (result, actions) = mgr.switch_with_watcher_actions("local")?;
+            log::info!(
+                "SSH context switch to local: {} -> {}",
+                result.previous_id,
+                result.current_id
+            );
+
+            self.execute_watcher_lifecycle(&mut mgr, &actions).await;
+
+            // destroy non-fatal：失败降级 warn，不阻塞（v3-N6）
+            if let Err(e) = mgr.destroy_context(&result.previous_id).await {
+                log::warn!(
+                    "destroy_context({}) failed (non-fatal): {}",
+                    result.previous_id,
+                    e
+                );
+            }
+
+            let ctx_arc = mgr
+                .get(&result.current_id)
+                .ok_or_else(|| AppError::Internal("Local context not found after switch".into()))?;
+            let info = ContextInfo::from_context(&*ctx_arc.read().await);
+
+            drop(mgr);
+            info
+        };
+
+        Ok(Some(info))
     }
 }
 
@@ -185,41 +267,41 @@ impl SshService for SshServiceImpl {
                             should_start_new: result.previous_id != result.current_id,
                             new_context_id: result.current_id.clone(),
                         },
-                    ).await;
+                    )
+                    .await;
                 }
                 let _ = mgr.destroy_context(&old_ssh_id).await;
             }
 
             // 4. Register SSH context and switch
-            mgr.register_context(ctx).map_err(|e| AppError::Internal(e.to_string()))?;
+            mgr.register_context(ctx)
+                .map_err(|e| AppError::Internal(e.to_string()))?;
 
-            let ctx_id = self.ssh_context_id(
-                &status.host.clone().unwrap_or_default()
-            );
+            let ctx_id = self.ssh_context_id(&status.host.clone().unwrap_or_default());
             let (result, actions) = mgr.switch_with_watcher_actions(&ctx_id)?;
             log::info!(
                 "SSH connect: context switched {} -> {}",
-                result.previous_id, result.current_id
+                result.previous_id,
+                result.current_id
             );
 
             // Execute watcher lifecycle（仍持写锁）
-            self.execute_watcher_lifecycle(
-                &mut mgr, &actions,
-            ).await;
+            self.execute_watcher_lifecycle(&mut mgr, &actions).await;
 
             // 获取 ContextInfo 用于后续 emit（仍持写锁）
-            let ctx_arc = mgr.get(&result.current_id)
+            let ctx_arc = mgr
+                .get(&result.current_id)
                 .ok_or_else(|| AppError::Internal("SSH context not found after switch".into()))?;
             let info = ContextInfo::from_context(&*ctx_arc.read().await);
 
             // ★ 关键：在此 drop 写锁，之后的所有 I/O（emit/SSE）无锁执行
             drop(mgr);
 
-            info  // 返回 info 给外部使用
+            info // 返回 info 给外部使用
         };
 
         // Emit event + SSE（无锁状态，H2 统一策略）
-        self.emit_context_changed(info, broadcaster)?;
+        self.emit_context_changed(info, broadcaster);
 
         Ok(status)
     }
@@ -230,50 +312,39 @@ impl SshService for SshServiceImpl {
         &self,
         broadcaster: Option<&SSEBroadcaster>,
     ) -> Result<SshConnectionStatus, AppError> {
-        // Check if SSH context is currently active (read lock only)
-        let is_ssh_active = {
-            let mgr = self.context_manager.read().await;
-            self.is_ssh_context_id(mgr.get_active_id())
-        };
-
-        if is_ssh_active {
-            let info = {
-                let mut mgr = self.context_manager.write().await;
-
-                let (result, actions) = mgr.switch_with_watcher_actions("local")?;
-                log::info!(
-                    "SSH disconnect: context switched {} -> {}",
-                    result.previous_id, result.current_id
-                );
-
-                // Execute watcher lifecycle（仍持写锁）
-                self.execute_watcher_lifecycle(
-                    &mut mgr, &actions,
-                ).await;
-
-                // Destroy SSH context（需要 &mut self，必须持写锁）
-                mgr.destroy_context(&result.previous_id).await
-                    .map_err(|e| AppError::Internal(e.to_string()))?;
-
-                // 获取 ContextInfo
-                let ctx_arc = mgr.get(&result.current_id)
-                    .ok_or_else(|| AppError::Internal("Local context not found after switch".into()))?;
-                let info = ContextInfo::from_context(&*ctx_arc.read().await);
-
-                // ★ 关键：统一在 drop 锁后再 emit（H2 修复：原 disconnect 持锁穿过 emit）
-                drop(mgr);
-
-                info
-            };
-
-            // Emit event + SSE（无锁状态）
-            self.emit_context_changed(info, broadcaster)?;
+        // 复用提取的 context switch 逻辑（DRY + TOCTOU + non-fatal destroy）
+        if let Some(info) = self.switch_to_local_context().await? {
+            // emit non-fatal（v3-N5）：失败不阻塞 ssh_manager.disconnect()
+            self.emit_context_changed(info, broadcaster);
         }
 
         // Disconnect SSH connection (always execute — 幂等操作)
-        let status = self.ssh_manager.write().await.disconnect().await
+        let status = self
+            .ssh_manager
+            .write()
+            .await
+            .disconnect()
+            .await
             .map_err(AppError::Ssh)?;
         Ok(status)
+    }
+
+    /// 处理 health monitor 检测到的远程断开（对齐 Electron handleDisconnect 响应动作）。
+    ///
+    /// 与用户主动 disconnect 的区别：不调 ssh_manager.disconnect()（health monitor
+    /// 已 cleanup）；只做 context switch + emit。
+    ///
+    /// 检测机制（health monitor task + broadcast）保留 Tauri 增强，
+    /// 非 Electron 的 client.on('end') 事件——响应动作对齐即可。
+    async fn handle_remote_disconnect(
+        &self,
+        broadcaster: Option<&SSEBroadcaster>,
+    ) -> Result<(), AppError> {
+        if let Some(info) = self.switch_to_local_context().await? {
+            log::info!("SSH remote disconnect detected by health monitor, switched to local");
+            self.emit_context_changed(info, broadcaster);
+        }
+        Ok(())
     }
 
     // ── 只读查询 ──
@@ -283,7 +354,11 @@ impl SshService for SshServiceImpl {
     }
 
     async fn test(&self, config: &SshConnectionConfig) -> Result<SshTestResult, AppError> {
-        self.ssh_manager.read().await.test(config).await
+        self.ssh_manager
+            .read()
+            .await
+            .test(config)
+            .await
             .map_err(AppError::Ssh)
     }
 

@@ -37,6 +37,16 @@ pub trait SshService: Send + Sync {
         broadcaster: Option<&SSEBroadcaster>,
     ) -> Result<SshConnectionStatus, AppError>;
 
+    /// 处理 health monitor 检测到的远程断开（默认 no-op，SshServiceImpl 实现具体逻辑）。
+    ///
+    /// 默认实现返回 Ok(()) 以支持未来 mock impl 不需强制覆盖。
+    async fn handle_remote_disconnect(
+        &self,
+        _broadcaster: Option<&crate::http::sse::SSEBroadcaster>,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+
     // ── 只读查询 ──
     //
     // 【编译约束】以下方法虽然概念上是"只读"，但内部需要通过
@@ -69,5 +79,59 @@ pub trait SshService: Send + Sync {
     /// 判断 context ID 是否属于 SSH 上下文
     fn is_ssh_context_id(&self, id: &str) -> bool {
         id == "ssh" || id.starts_with("ssh-")
+    }
+}
+
+#[cfg(test)]
+mod tests_context_id {
+    use super::*;
+
+    /// 辅助：用最小 mock impl 触发 trait default method（is_ssh_context_id）
+    /// 无需 mock 任何 async method（is_ssh_context_id 是 sync default method）
+    struct DummySshService;
+
+    #[async_trait]
+    impl SshService for DummySshService {
+        async fn connect(
+            &self,
+            _: SshConnectionConfig,
+            _: Option<&SSEBroadcaster>,
+        ) -> Result<SshConnectResult, AppError> {
+            unreachable!("test only triggers default method")
+        }
+        async fn disconnect(
+            &self,
+            _: Option<&SSEBroadcaster>,
+        ) -> Result<SshConnectionStatus, AppError> {
+            unreachable!()
+        }
+        async fn get_active_state(&self) -> SshConnectionStatus {
+            unreachable!()
+        }
+        async fn test(&self, _: &SshConnectionConfig) -> Result<SshTestResult, AppError> {
+            unreachable!()
+        }
+        async fn get_config_hosts(&self) -> Vec<SshConfigHostEntry> {
+            unreachable!()
+        }
+        async fn resolve_host_config(&self, _: &str) -> Option<SshConfigHostEntry> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn test_is_ssh_context_id_matches_ssh_prefix() {
+        let dummy = DummySshService;
+        assert!(dummy.is_ssh_context_id("ssh"));
+        assert!(dummy.is_ssh_context_id("ssh-myserver"));
+        assert!(dummy.is_ssh_context_id("ssh-192.168.1.1"));
+    }
+
+    #[test]
+    fn test_is_ssh_context_id_rejects_local_and_others() {
+        let dummy = DummySshService;
+        assert!(!dummy.is_ssh_context_id("local"));
+        assert!(!dummy.is_ssh_context_id(""));
+        assert!(!dummy.is_ssh_context_id("sshlite")); // 前缀必须是 "ssh-" 或恰好 "ssh"
     }
 }
