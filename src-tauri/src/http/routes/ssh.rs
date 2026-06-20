@@ -25,45 +25,50 @@ pub struct ResolveHostRequest {
 }
 
 // ---------------------------------------------------------------------------
-// Direct Json<T> response routes (using AppError IntoResponse)
+// Wrapped { success, data } response routes
 // ---------------------------------------------------------------------------
+// Task 9: connect/disconnect/get_state/test 改用 success_json 包裹，对齐
+// Electron http/ssh.ts:40,53,70 的 {success, data} / {success, error} 契约。
+// 失败路径由 AppError IntoResponse 返回 {success:false, error}。
 
 /// POST /api/ssh/connect
 pub async fn ssh_connect(
     State(state): State<HttpState>,
     Json(body): Json<SshConnectionConfig>,
-) -> Result<Json<SshConnectionStatus>, AppError> {
+) -> Result<(axum::http::StatusCode, Json<serde_json::Value>), AppError> {
     let broadcaster = state.broadcaster.clone();
     // SshService::connect(config, broadcaster) — 无 AppHandle 参数
     // SshConnectResult 是 SshConnectionStatus 的类型别名
     let status = state.ssh_svc.connect(body, Some(&broadcaster)).await?;
-    Ok(Json(status))
+    Ok(success_json(status))
 }
 
 /// POST /api/ssh/disconnect
 pub async fn ssh_disconnect(
     State(state): State<HttpState>,
-) -> Result<Json<SshConnectionStatus>, AppError> {
+) -> Result<(axum::http::StatusCode, Json<serde_json::Value>), AppError> {
     let broadcaster = state.broadcaster.clone();
     // SshService::disconnect(broadcaster) — 仅 1 个参数
     let status = state.ssh_svc.disconnect(Some(&broadcaster)).await?;
-    Ok(Json(status))
+    Ok(success_json(status))
 }
 
 /// GET /api/ssh/state
-pub async fn ssh_get_state(State(state): State<HttpState>) -> Json<SshConnectionStatus> {
-    // get_active_state 是 async 方法，需 .await；返回值非 Result，直接包装
-    Json(state.ssh_svc.get_active_state().await)
+pub async fn ssh_get_state(
+    State(state): State<HttpState>,
+) -> (axum::http::StatusCode, Json<serde_json::Value>) {
+    // get_active_state 是 async 方法，需 .await；返回值非 Result，直接包裹
+    success_json(state.ssh_svc.get_active_state().await)
 }
 
 /// POST /api/ssh/test
 pub async fn ssh_test(
     State(state): State<HttpState>,
     Json(body): Json<SshConnectionConfig>,
-) -> Result<Json<SshTestResult>, AppError> {
+) -> Result<(axum::http::StatusCode, Json<serde_json::Value>), AppError> {
     // test 接收 &SshConnectionConfig（引用）
     let result = state.ssh_svc.test(&body).await?;
-    Ok(Json(result))
+    Ok(success_json(result))
 }
 
 // ---------------------------------------------------------------------------
@@ -152,4 +157,53 @@ pub fn routes() -> axum::Router<HttpState> {
             post(ssh_save_last_connection),
         )
         .route("/api/ssh/last-connection", get(ssh_get_last_connection))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+
+    /// Task 9: 直接调用 success_json 验证 SshConnectionStatus 包裹后的 JSON 结构。
+    ///
+    /// success_json 是 ssh.rs 4 个 handler（connect/disconnect/get_state/test）
+    /// 共用的包裹函数，直接断言它的输出结构即可守护契约。SshService 是 trait +
+    /// Arc<dyn>，完整 mock 需引入 mockall，不在本 Task 范围。
+    #[test]
+    fn test_success_json_wraps_data_field_for_ssh_status() {
+        let status = SshConnectionStatus {
+            state: crate::types::ssh::SshConnectionState::Disconnected,
+            host: None,
+            error: None,
+            remote_projects_path: None,
+        };
+        let (code, json) = super::super::success_json(status);
+        assert_eq!(code, StatusCode::OK);
+        // json 是 axum::Json<serde_json::Value>，通过 .0 取出内部 Value
+        let value = json.0;
+        assert_eq!(value["success"], serde_json::Value::Bool(true));
+        assert_eq!(value["data"]["state"], "disconnected");
+        assert!(value["data"]["host"].is_null());
+    }
+
+    /// Task 9: SshTestResult 包裹后应该是 {success:true, data:{success, error?}}
+    /// 嵌套结构。守护嵌套 success 字段的契约（前端 httpClient.test 依赖此结构）。
+    #[test]
+    fn test_success_json_wraps_data_field_for_ssh_test_result() {
+        let result = SshTestResult {
+            success: false,
+            error: Some("auth failed".to_string()),
+        };
+        let (code, json) = super::super::success_json(result);
+        assert_eq!(code, StatusCode::OK);
+        let value = json.0;
+        // 外层 success 是包裹标记（永远 true）
+        assert_eq!(value["success"], serde_json::Value::Bool(true));
+        // 内层 success 才是真实测试结果
+        assert_eq!(value["data"]["success"], serde_json::Value::Bool(false));
+        assert_eq!(
+            value["data"]["error"],
+            serde_json::Value::String("auth failed".to_string())
+        );
+    }
 }

@@ -46,10 +46,14 @@ async fn test_connect_and_disconnect() {
     let manager = SshConnectionManager::new();
 
     let config = test_config();
-    let status = manager.connect(config).await.unwrap();
-
-    // Should be Error since example.com is not reachable
-    assert!(matches!(status.state, SshConnectionState::Error));
+    // Task 8: connect now returns Err(String) on failure (not Ok(Error status)).
+    // connect→disconnect 流程：connect 失败 → 进入 Err 分支，断言 is_err。
+    let connect_result = manager.connect(config).await;
+    assert!(
+        connect_result.is_err(),
+        "connect failure must return Err (Task 8). Got: {:?}",
+        connect_result
+    );
 
     // Verify back to disconnected after disconnect
     let status = manager.disconnect().await.unwrap();
@@ -60,10 +64,38 @@ async fn test_connect_and_disconnect() {
     assert!(matches!(state.state, SshConnectionState::Disconnected));
 }
 
+/// Task 8: 验证 connect 失败返回 Err 而非 Ok(Error 状态)。
+///
+/// 独立测试（不依赖 test_connect_and_disconnect 的 connect→disconnect 流程），
+/// 直接断言 connect 对 unreachable host 返回 Err。
+#[tokio::test]
+async fn test_connect_returns_err_on_failure() {
+    let manager = SshConnectionManager::new();
+
+    // bad_config：故意用无效 host 触发 TCP probe 失败或 auth 失败
+    let bad_config = SshConnectionConfig {
+        host: "nonexistent.invalid.tld".into(), // DNS 解析失败
+        port: 22,
+        username: "nobody".into(),
+        auth_method: SshAuthMethod::Password,
+        password: Some("wrong".into()),
+        private_key_path: None,
+    };
+
+    let result = manager.connect(bad_config).await;
+    assert!(
+        result.is_err(),
+        "connect failure must return Err, not Ok(Error status). Got: {:?}",
+        result
+    );
+    let err_msg = result.unwrap_err();
+    assert!(!err_msg.is_empty(), "error message must be non-empty");
+}
+
 #[tokio::test]
 async fn test_connect_auto_disconnects_existing() {
     // Since real SSH connections will fail (no server), we verify
-    // the state machine by checking that connect produces an Error
+    // the state machine by checking that connect returns Err
     // (expected for unreachable hosts) and the manager remains clean.
     let manager = SshConnectionManager::new();
 
@@ -76,9 +108,9 @@ async fn test_connect_auto_disconnects_existing() {
         password: None,
         private_key_path: None,
     };
-    let status1 = manager.connect(config1).await.unwrap();
-    // Will be Error since first.com is not reachable
-    assert!(matches!(status1.state, SshConnectionState::Error));
+    // Task 8: connect now returns Err(String) on failure
+    let result1 = manager.connect(config1).await;
+    assert!(result1.is_err());
 
     // Second connection attempt (will also fail)
     let config2 = SshConnectionConfig {
@@ -89,8 +121,8 @@ async fn test_connect_auto_disconnects_existing() {
         password: None,
         private_key_path: None,
     };
-    let status2 = manager.connect(config2).await.unwrap();
-    assert!(matches!(status2.state, SshConnectionState::Error));
+    let result2 = manager.connect(config2).await;
+    assert!(result2.is_err());
 
     // Active state should reflect no active connection
     let state = manager.get_active_state().await;
@@ -116,9 +148,9 @@ async fn test_connect_validates_host() {
         password: None,
         private_key_path: None,
     };
-    let status = manager.connect(config).await.unwrap();
-    assert!(matches!(status.state, SshConnectionState::Error));
-    assert!(status.error.as_ref().unwrap().contains("Host"));
+    // Task 8: empty host validation now surfaces as Err(String)
+    let err = manager.connect(config).await.unwrap_err();
+    assert!(err.contains("Host"), "expected Host validation error, got: {}", err);
 }
 
 #[tokio::test]
@@ -136,9 +168,10 @@ async fn test_connect_validates_username() {
         password: None,
         private_key_path: None,
     };
-    let status = manager.connect(config).await.unwrap();
+    // Task 8: unreachable host returns Err(String), not Ok(Error status)
+    let result = manager.connect(config).await;
     // Username is auto-filled, so we get past validation but fail at SSH connect
-    assert!(matches!(status.state, SshConnectionState::Error));
+    assert!(result.is_err());
 }
 
 #[tokio::test]
@@ -193,7 +226,9 @@ async fn test_subscribe_receives_events() {
     let mut rx = manager.subscribe();
 
     let config = test_config();
-    let _ = manager.connect(config).await.unwrap();
+    // Task 8: connect returns Err on failure, but Error status is still broadcast
+    // via event_sender (for SSE/async notifications). Discard the Err result.
+    let _ = manager.connect(config).await;
 
     // Should receive "connecting" and "error" events (since no real SSH server)
     let mut received_states: Vec<SshConnectionState> = Vec::new();

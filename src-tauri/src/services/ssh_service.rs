@@ -22,7 +22,7 @@ use crate::infrastructure::{
 };
 use crate::services::ssh_service_trait::{SshConnectResult, SshService};
 use crate::types::ssh::{
-    SshConfigHostEntry, SshConnectionConfig, SshConnectionState, SshConnectionStatus, SshTestResult,
+    SshConfigHostEntry, SshConnectionConfig, SshConnectionStatus, SshTestResult,
 };
 
 pub struct SshServiceImpl {
@@ -229,13 +229,11 @@ impl SshService for SshServiceImpl {
     ) -> Result<SshConnectResult, AppError> {
         let username = config.username.clone();
 
-        // 1. Establish SSH connection
+        // 1. Establish SSH connection.
+        // Task 8: SshConnectionManager::connect 失败时返回 Err(String)，
+        // connect_ssh 已把它包装为 AppError::Ssh，这里通过 `?` 传播。
+        // 因此到达此行时 status.state 只可能是 Connected，无需再检查 Error 早期返回。
         let status = self.connect_ssh(config).await?;
-
-        // If connection failed, return early without switching context
-        if matches!(status.state, SshConnectionState::Error) {
-            return Ok(status);
-        }
 
         // 2. Build SSH ServiceContext
         let ctx = self.build_ssh_context(&status, &username).await?;

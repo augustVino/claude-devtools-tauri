@@ -115,9 +115,13 @@ impl SshConnectionManager {
                 let bundle = match connect_flow::build_connected_bundle(request, raw).await {
                     Ok(b) => b,
                     Err(e) => {
+                        // Task 8: 失败时 broadcast Error 状态（用于 SSE 异步推送），
+                        // 同步返回 Err(String) 让调用链（commands → Tauri invoke reject；
+                        // http::routes → AppError IntoResponse {success:false,error}）感知失败。
+                        // request_host 是 String，move 进 SshConnectionStatus::error（后续不再使用）。
                         let status = SshConnectionStatus::error(request_host, e.clone());
-                        let _ = self.event_sender.send(status.clone());
-                        return Ok(status);
+                        let _ = self.event_sender.send(status);
+                        return Err(e);
                     }
                 };
 
@@ -233,12 +237,14 @@ impl SshConnectionManager {
                 Ok(bundle.status)
             }
             Err(auth_err) => {
+                // Task 8: 失败时 broadcast Error 状态（用于 SSE 异步推送），
+                // 同步返回 Err(String) 让调用链感知失败。
                 // AuthError Display impl renders enriched multi-section message
                 // (root + auth chain + timing) when trace is non-empty.
                 let error_status =
                     SshConnectionStatus::error(request.config.host.clone(), auth_err.to_string());
-                let _ = self.event_sender.send(error_status.clone());
-                Ok(error_status)
+                let _ = self.event_sender.send(error_status);
+                Err(auth_err.to_string())
             }
         }
     }

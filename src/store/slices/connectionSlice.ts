@@ -122,7 +122,16 @@ export const createConnectionSlice: StateCreator<AppState, [], [], ConnectionSli
         void api.ssh.saveLastConnection(saved);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      // Task 8: Tauri invoke reject 时 err 是 string（commands::ssh_connect 的
+      // into_tauri_string()）；HTTP fetch 抛错时 err 是 Error。两个分支都要处理。
+      // 注意：保留原 connectedHost 行为（不清空）—— 与 Electron ipc/ssh.ts 失败时
+      // resolve {success:false} 等价，UI 仍显示用户输入的 host。
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'string'
+            ? err
+            : String(err);
       set({
         connectionState: 'error',
         connectionError: message,

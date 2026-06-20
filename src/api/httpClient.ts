@@ -681,15 +681,60 @@ export class HttpAPIClient implements ElectronAPI {
   // ---------------------------------------------------------------------------
 
   ssh: SshAPI = {
-    connect: (config: SshConnectionConfig): Promise<SshConnectionStatus> =>
-      this.post("/api/ssh/connect", config),
-    disconnect: (): Promise<SshConnectionStatus> =>
-      this.post("/api/ssh/disconnect"),
-    getState: (): Promise<SshConnectionStatus> => this.get("/api/ssh/state"),
-    test: (
+    // Task 8/9: HTTP /api/ssh/{connect,disconnect,state,test} 响应已包裹为
+    // {success, data}。httpClient 负责拆包：失败时抛错（对齐 Tauri invoke reject），
+    // 成功时返回 r.data（对外签名仍是 Promise<SshConnectionStatus>）。
+    connect: async (config: SshConnectionConfig): Promise<SshConnectionStatus> => {
+      const r = await this.post<{
+        success: boolean;
+        data?: SshConnectionStatus;
+        error?: string;
+      }>("/api/ssh/connect", config);
+      if (!r.success) {
+        throw new Error(r.error ?? "SSH connect failed");
+      }
+      return r.data!;
+    },
+    disconnect: async (): Promise<SshConnectionStatus> => {
+      const r = await this.post<{
+        success: boolean;
+        data?: SshConnectionStatus;
+        error?: string;
+      }>("/api/ssh/disconnect");
+      if (!r.success) {
+        throw new Error(r.error ?? "SSH disconnect failed");
+      }
+      return r.data!;
+    },
+    getState: async (): Promise<SshConnectionStatus> => {
+      const r = await this.get<{
+        success: boolean;
+        data?: SshConnectionStatus;
+        error?: string;
+      }>("/api/ssh/state");
+      if (!r.success) {
+        throw new Error(r.error ?? "SSH getState failed");
+      }
+      return r.data!;
+    },
+    test: async (
       config: SshConnectionConfig,
-    ): Promise<{ success: boolean; error?: string }> =>
-      this.post("/api/ssh/test", config),
+    ): Promise<{ success: boolean; error?: string }> => {
+      // Task 9: SshTestResult 自身有 {success, error} 字段，success_json 包裹后
+      // 结构是 {success:true, data:{success, error?}}。显式从 r.data 取真实测试结果，
+      // 不依赖外层 r.success（永远 true）。
+      const r = await this.post<{
+        success: boolean;
+        data?: { success: boolean; error?: string };
+        error?: string;
+      }>("/api/ssh/test", config);
+      if (!r.success) {
+        // 来自 AppError IntoResponse 的服务端错误（service.test 抛 Err 的极少数情况）
+        return { success: false, error: r.error };
+      }
+      // 正常路径：r.data 是真实测试结果
+      return r.data ?? { success: true };
+    },
     getConfigHosts: async (): Promise<SshConfigHostEntry[]> => {
       const result = await this.get<{
         success: boolean;
