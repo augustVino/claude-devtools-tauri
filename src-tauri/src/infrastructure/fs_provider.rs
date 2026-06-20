@@ -79,6 +79,12 @@ pub trait FsProvider: Send + Sync + std::fmt::Debug {
     /// 列出目录内容。
     fn read_dir(&self, path: &Path) -> Result<Vec<FsDirent>, String>;
 
+    /// 确保目录存在（递归创建）。SSH 模式默认 no-op（远端目录由 Claude Code CLI 管理）。
+    /// 仅 LocalFsProvider 覆盖为实际的 `create_dir_all`。
+    fn ensure_dir(&self, _path: &Path) -> Result<(), String> {
+        Ok(())
+    }
+
     /// 检查路径是否存在（兼容旧接口，优先使用 exists）。
     #[allow(dead_code)]
     fn has(&self, path: &Path) -> bool {
@@ -179,6 +185,11 @@ impl FsProvider for LocalFsProvider {
             is_file: metadata.is_file(),
             is_directory: metadata.is_dir(),
         })
+    }
+
+    fn ensure_dir(&self, path: &Path) -> Result<(), String> {
+        fs::create_dir_all(path)
+            .map_err(|e| format!("Failed to create dir {}: {}", path.display(), e))
     }
 
     fn read_dir(&self, path: &Path) -> Result<Vec<FsDirent>, String> {

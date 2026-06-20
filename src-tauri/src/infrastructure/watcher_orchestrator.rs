@@ -159,7 +159,7 @@ impl WatcherOrchestrator {
             tauri::async_runtime::spawn(async move {
                 let mut watcher = file_watcher.lock().await;
                 if !fs_provider.exists(&projects_dir).unwrap_or(false) {
-                    if let Err(e) = tokio::fs::create_dir_all(&projects_dir).await {
+                    if let Err(e) = fs_provider.ensure_dir(&projects_dir) {
                         log::error!("Failed to create projects directory: {}", e);
                         return;
                     }
@@ -216,6 +216,7 @@ impl WatcherOrchestrator {
         {
             let cancel = cancel_token.clone();
             let file_watcher_for_error = self.file_watcher.clone();
+            let error_fs_provider = self.fs_provider.clone();
 
             tauri::async_runtime::spawn(async move {
                 // 订阅主 watcher 的事件
@@ -237,7 +238,7 @@ impl WatcherOrchestrator {
                                         .map(|s| s.to_string_lossy().to_string())
                                         .unwrap_or_default();
                                     let project_id = event.project_id.clone().unwrap_or_default();
-                                    let messages = crate::parsing::jsonl_parser::parse_jsonl_file(path).await;
+                                    let messages = crate::parsing::jsonl_parser::parse_jsonl_file_with_provider(path, error_fs_provider.as_ref()).await;
                                     if messages.is_empty() {
                                         continue;
                                     }
@@ -272,7 +273,7 @@ impl WatcherOrchestrator {
             tauri::async_runtime::spawn(async move {
                 let mut todo_watcher_guard = todo_watcher.lock().await;
                 if !todo_fs_provider.exists(&todos_dir).unwrap_or(false) {
-                    if let Err(e) = tokio::fs::create_dir_all(&todos_dir).await {
+                    if let Err(e) = todo_fs_provider.ensure_dir(&todos_dir) {
                         log::error!("Failed to create todos directory: {}", e);
                         return;
                     }
