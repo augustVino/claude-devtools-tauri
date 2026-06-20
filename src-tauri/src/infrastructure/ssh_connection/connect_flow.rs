@@ -22,6 +22,31 @@ use super::{ConnectRequest, ConnectedBundle, RawConnection, SshClientHandler};
 /// Connection timeout (10 seconds).
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Merge resolved `ssh -G` values into final_config (pure function for testing).
+///
+/// 对齐 Electron `resolveTarget` 的字段合并逻辑（SshConnectionManager.ts:433-436）。
+/// - hostname: 仅当 resolved 非空且与 final_config.host 不同时覆盖
+/// - port: 仅当非 fallback（ssh -G 真实解析成功）时覆盖；fallback 路径
+///   保留 final_config.port（保护 ssh_config_merge 已填的 entry.port）
+/// - username: 仅当 final_config.username 为空时填
+pub(super) fn merge_resolved_into_config(
+    final_config: &mut crate::types::ssh::SshConnectionConfig,
+    resolved: &super::host_resolver::ResolvedHost,
+) {
+    if !resolved.hostname.is_empty() && resolved.hostname != final_config.host {
+        final_config.host = resolved.hostname.clone();
+    }
+    // 用显式 was_fallback 标志判断（不用 hostname 比较，避免巧合相等误判）
+    if !resolved.was_fallback {
+        final_config.port = resolved.port;
+    }
+    if let Some(ref user) = resolved.user {
+        if final_config.username.is_empty() {
+            final_config.username = user.clone();
+        }
+    }
+}
+
 /// 核心：TCP 连接 + Agent 发现 + 认证 + SFTP 打开。
 ///
 /// 自由函数（非 &self 方法），仅依赖传入参数，不访问 manager 状态。
@@ -51,17 +76,7 @@ pub(super) async fn establish_raw_connection(
     trace.timings.resolve_ms = resolve_start.elapsed().as_millis() as u64;
 
     let mut final_config = merged_config.clone();
-    if !resolved.hostname.is_empty() && resolved.hostname != final_config.host {
-        final_config.host = resolved.hostname.clone();
-    }
-    if resolved.port != 22 && final_config.port == 22 {
-        final_config.port = resolved.port;
-    }
-    if let Some(ref user) = resolved.user {
-        if final_config.username.is_empty() {
-            final_config.username = user.clone();
-        }
-    }
+    merge_resolved_into_config(&mut final_config, &resolved);
 
     // Phase 1.6 (phase 3a new): TCP pre-probe (timed).
     // 区分 "host unreachable"（per-app VPN 拦截）与 "auth rejected"，
@@ -263,5 +278,97 @@ mod tests_align_electron {
     fn test_pick_status_host_preserves_dotted_alias() {
         let request = make_request("my-server.example.com");
         assert_eq!(pick_status_host(&request), "my-server.example.com");
+    }
+
+    #[test]
+    fn test_merge_resolved_port_overrides_config_port_unconditionally() {
+        // Electron 对齐：非 fallback 路径下 resolved.port 总是覆盖 config.port
+        // 参考 SshConnectionManager.ts:435 `port: resolved?.port ?? config.port`
+        let mut config = make_request("myserver").config;
+        config.port = 2222; // 用户显式指定（或 ssh_config_merge 填充）
+        let resolved = super::super::host_resolver::ResolvedHost {
+            hostname: "1.2.3.4".to_string(), // 非 fallback
+            port: 22, // ssh -G 返回 22
+            user: None,
+            identity_files: vec![],
+            identity_agent: None,
+            was_fallback: false, // ssh -G 真实解析成功
+        };
+        merge_resolved_into_config(&mut config, &resolved);
+        assert_eq!(config.port, 22, "resolved.port must override (Electron parity)");
+        assert_eq!(config.host, "1.2.3.4");
+    }
+
+    #[test]
+    fn test_merge_resolved_custom_port_when_config_default() {
+        let mut config = make_request("myserver").config;
+        let resolved = super::super::host_resolver::ResolvedHost {
+            hostname: "1.2.3.4".to_string(),
+            port: 2222,
+            user: Some("deploy".to_string()),
+            identity_files: vec![],
+            identity_agent: None,
+            was_fallback: false,
+        };
+        merge_resolved_into_config(&mut config, &resolved);
+        assert_eq!(config.port, 2222);
+        assert_eq!(config.host, "1.2.3.4");
+        assert_eq!(config.username, "deploy");
+    }
+
+    #[test]
+    fn test_merge_resolved_skips_empty_hostname() {
+        let mut config = make_request("myserver").config;
+        let original_host = config.host.clone();
+        let resolved = super::super::host_resolver::ResolvedHost {
+            hostname: String::new(),
+            port: 22,
+            user: None,
+            identity_files: vec![],
+            identity_agent: None,
+            was_fallback: false,
+        };
+        merge_resolved_into_config(&mut config, &resolved);
+        assert_eq!(config.host, original_host, "empty hostname must not overwrite");
+    }
+
+    #[test]
+    fn test_merge_resolved_preserves_merged_port_on_fallback() {
+        // 修正 codex 第二轮 C2 + 自我审查缺陷：
+        // fallback 路径下保留 ssh_config_merge 已填的 port
+        let mut config = make_request("myalias").config;
+        config.port = 2222; // 模拟 ssh_config_merge 已填的 entry.port
+        let resolved = super::super::host_resolver::ResolvedHost {
+            hostname: "myalias".to_string(), // fallback 时 hostname == input_host
+            port: 22, // fallback port
+            user: None,
+            identity_files: vec![],
+            identity_agent: None,
+            was_fallback: true, // 显式标记 fallback
+        };
+        merge_resolved_into_config(&mut config, &resolved);
+        assert_eq!(config.port, 2222, "fallback path must preserve merged_config.port");
+    }
+
+    #[test]
+    fn test_merge_resolved_overrides_port_when_ssh_g_succeeds_with_same_hostname() {
+        // 关键回归测试：用户输入 IP `1.2.3.4`，ssh -G 真实解析成功返回相同 hostname
+        // 此时 was_fallback=false（不能用 hostname 比较判断），应该正常覆盖 port
+        let mut config = make_request("1.2.3.4").config;
+        config.port = 2222; // ssh_config 给该 IP 定义了 Port 2222
+        let resolved = super::super::host_resolver::ResolvedHost {
+            hostname: "1.2.3.4".to_string(), // 与 input 相同（但非 fallback！）
+            port: 22, // ssh -G 真实返回 22
+            user: None,
+            identity_files: vec![],
+            identity_agent: None,
+            was_fallback: false, // 真实解析成功
+        };
+        merge_resolved_into_config(&mut config, &resolved);
+        // 关键：ssh -G 真实解析的 22 应该覆盖 ssh_config 的 2222
+        assert_eq!(
+            config.port, 22,
+            "real ssh -G must override ssh_config port even when hostname equals input"
+        );
     }
 }

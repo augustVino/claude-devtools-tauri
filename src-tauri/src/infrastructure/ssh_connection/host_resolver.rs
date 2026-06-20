@@ -20,6 +20,10 @@ pub(super) struct ResolvedHost {
     pub user: Option<String>,
     pub identity_files: Vec<PathBuf>,
     pub identity_agent: Option<PathBuf>,
+    /// true 表示 ssh -G 失败回退（hostname=input_host, port=22）。
+    /// false 表示 ssh -G 真实解析成功。
+    /// 用于 merge_resolved_into_config 判断是否跳过 port 覆盖（保护 ssh_config port）。
+    pub was_fallback: bool,
 }
 
 impl ResolvedHost {
@@ -30,6 +34,7 @@ impl ResolvedHost {
             user: None,
             identity_files: Vec::new(),
             identity_agent: None,
+            was_fallback: true,
         }
     }
 }
@@ -77,6 +82,7 @@ pub(super) fn parse_ssh_g_output(stdout: &str) -> ResolvedHost {
         user,
         identity_files,
         identity_agent,
+        was_fallback: false,
     }
 }
 
