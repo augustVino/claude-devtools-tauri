@@ -14,8 +14,9 @@ use tokio::sync::RwLock;
 use crate::analysis::ChunkBuilder;
 use crate::discovery::subagent_resolver::SubagentResolver;
 use crate::error::AppError;
+use crate::infrastructure::fs_provider::FsProvider;
 use crate::infrastructure::{ConfigManager, ContextManager, DataCache};
-use crate::parsing::{parse_session_file, ParsedSession};
+use crate::parsing::{parse_session_file_with_provider, ParsedSession};
 use crate::types::chunks::{
     ConversationGroup, Process, SessionDetail, SessionDetailResponse, SessionDetailUnchanged,
 };
@@ -88,6 +89,26 @@ impl SessionServiceImpl {
         Ok(ctx.projects_dir.clone())
     }
 
+    /// 从 active context 取 fs_provider。
+    ///
+    /// 所有路径存在性检查必须通过此 provider 走（对齐 Electron fsProvider.exists），
+    /// 不能用 `Path::exists()`（本地 fs，SSH 模式下永远 false）。
+    async fn fs_provider(&self) -> Result<Arc<dyn FsProvider>, AppError> {
+        let active_arc = {
+            let mgr = self.context_manager.read().await;
+            mgr.get_active()
+                .ok_or_else(|| AppError::Internal("No active ServiceContext".into()))?
+        };
+        let ctx = active_arc.read().await;
+        Ok(ctx.fs_provider.clone())
+    }
+
+    /// 通过 fs_provider 检查路径是否存在（SSH-aware）。
+    async fn path_exists(&self, path: &Path) -> Result<bool, AppError> {
+        let fs_provider = self.fs_provider().await?;
+        Ok(fs_provider.exists(path).unwrap_or(false))
+    }
+
     /// 构建项目目录路径。
     async fn project_dir(&self, project_id: &str) -> Result<PathBuf, AppError> {
         let name = extract_base_dir(project_id);
@@ -143,14 +164,16 @@ impl SessionServiceImpl {
             Some(n) => n.to_string_lossy().to_string(),
             None => return Ok(None),
         };
-        let metadata = match path.metadata() {
-            Ok(m) => m,
+        // SSH-aware: 通过 fs_provider 获取元数据（不能用 path.metadata() 本地 fs）。
+        let fs_provider = self.fs_provider().await?;
+        let stat = match fs_provider.stat(path) {
+            Ok(s) => s,
             Err(_) => return Ok(None),
         };
 
-        let mtime_ms = crate::utils::time::time_to_ms(metadata.modified().ok());
+        let mtime_ms = stat.mtime_ms;
 
-        let parsed = parse_session_file(path).await;
+        let parsed = parse_session_file_with_provider(path, fs_provider.as_ref()).await;
 
         // Note: Electron does NOT check isMeta for title extraction — it processes all type='user' entries.
         // Slash commands are meta messages (isMeta: true) — we must still detect them as command fallback titles.
@@ -220,14 +243,9 @@ impl SessionServiceImpl {
 
         // createdAt: use first message timestamp from JSONL, fallback to file birth time.
         // This matches Electron's buildSessionMetadata() behavior for date grouping.
-        let birthtime_ms = metadata
-            .created()
-            .map(|t| {
-                t.duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64
-            })
-            .unwrap_or(0);
+        // Note: FsStatResult 不暴露 created()（SSH SFTP 通常不返回 birthtime），
+        // 用 mtime 作为 fallback（对齐 Electron SessionMetadata.birthtimeMs 行为）。
+        let birthtime_ms = stat.birthtime_ms;
         let created_at = first_timestamp
             .as_ref()
             .and_then(|ts| {
@@ -298,7 +316,7 @@ impl SessionServiceImpl {
     pub async fn get_sessions(&self, project_id: &str) -> Result<Vec<Session>, AppError> {
         let project_dir = self.project_dir(project_id).await?;
 
-        if !project_dir.exists() {
+        if !self.path_exists(&project_dir).await? {
             return Ok(Vec::new());
         }
 
@@ -450,11 +468,12 @@ impl SessionServiceImpl {
     ) -> Result<Option<SessionDetail>, AppError> {
         // 始终重新解析，不使用 slim 缓存
         let session_path = self.session_path(project_id, session_id).await?;
-        if !session_path.exists() {
+        let fs_provider = self.fs_provider().await?;
+        if !fs_provider.exists(&session_path).unwrap_or(false) {
             return Ok(None);
         }
 
-        let parsed = parse_session_file(&session_path).await;
+        let parsed = parse_session_file_with_provider(&session_path, fs_provider.as_ref()).await;
         let session = self
             .build_session_metadata(&session_path, project_id)
             .await?
@@ -481,7 +500,7 @@ impl SessionServiceImpl {
         known_fingerprint: Option<&str>,
     ) -> Result<Option<SessionDetailResponse>, AppError> {
         let session_path = self.session_path(project_id, session_id).await?;
-        if !session_path.exists() {
+        if !self.path_exists(&session_path).await? {
             return Ok(None);
         }
 
@@ -520,7 +539,7 @@ impl SessionServiceImpl {
             )?)));
         }
 
-        let parsed = parse_session_file(&session_path).await;
+        let parsed = parse_session_file_with_provider(&session_path, fs_provider.as_ref()).await;
         let session = self
             .build_session_metadata(&session_path, project_id)
             .await?
@@ -555,11 +574,12 @@ impl SessionServiceImpl {
         session_id: &str,
     ) -> Result<Option<SessionMetrics>, AppError> {
         let session_path = self.session_path(project_id, session_id).await?;
-        if !session_path.exists() {
+        let fs_provider = self.fs_provider().await?;
+        if !fs_provider.exists(&session_path).unwrap_or(false) {
             return Ok(None);
         }
 
-        let parsed = parse_session_file(&session_path).await;
+        let parsed = parse_session_file_with_provider(&session_path, fs_provider.as_ref()).await;
         Ok(Some(parsed.metrics))
     }
 
@@ -576,11 +596,12 @@ impl SessionServiceImpl {
         session_id: &str,
     ) -> Result<Vec<ConversationGroup>, AppError> {
         let session_path = self.session_path(project_id, session_id).await?;
-        if !session_path.exists() {
+        let fs_provider = self.fs_provider().await?;
+        if !fs_provider.exists(&session_path).unwrap_or(false) {
             return Ok(vec![]);
         }
 
-        let parsed = parse_session_file(&session_path).await;
+        let parsed = parse_session_file_with_provider(&session_path, fs_provider.as_ref()).await;
         let subagents = self
             .resolve_subagents(project_id, session_id, &parsed)
             .await?;
@@ -598,11 +619,12 @@ impl SessionServiceImpl {
         session_id: &str,
     ) -> Result<Option<crate::analysis::waterfall_builder::WaterfallData>, AppError> {
         let session_path = self.session_path(project_id, session_id).await?;
-        if !session_path.exists() {
+        let fs_provider = self.fs_provider().await?;
+        if !fs_provider.exists(&session_path).unwrap_or(false) {
             return Ok(None);
         }
 
-        let parsed = parse_session_file(&session_path).await;
+        let parsed = parse_session_file_with_provider(&session_path, fs_provider.as_ref()).await;
         let session = self
             .build_session_metadata(&session_path, project_id)
             .await?
