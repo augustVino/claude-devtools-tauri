@@ -92,8 +92,12 @@ impl FileWatcher {
 
     /// 实际的轮询逻辑。
     ///
-    /// 注意：SSH 轮询只做 2 层 readdir（projects/ → projectId/），
-    /// 与 Electron 行为一致。不递归进入 subagents/ 子目录。
+    /// 支持两种目录布局：
+    /// - **projects 两层**：`projects/{projectId}/{sessionId}.jsonl`
+    /// - **todos 平铺**：`todos/{sessionId}.json`
+    ///
+    /// 顶层若含 `.json` 文件即视为平铺模式；否则按两层模式枚举 `.jsonl`。
+    /// 不递归进入 subagents/ 子目录，与 Electron 行为一致。
     async fn do_poll(
         fs_provider: &Arc<dyn FsProvider>,
         projects_path: &Path,
@@ -105,50 +109,73 @@ impl FileWatcher {
         let mut seen_files = HashSet::new();
         let mut pending_events: Vec<(std::path::PathBuf, FileChangeType)> = Vec::new();
 
-        // 读取项目目录列表
-        let project_dirs = fs_provider
+        let top_entries = fs_provider
             .read_dir(projects_path)
             .map_err(|e| format!("SSH read_dir failed: {}", e))?;
 
-        for dir in &project_dirs {
-            if !dir.is_directory {
-                continue;
-            }
-            let project_path = projects_path.join(&dir.name);
+        // 平铺模式：顶层含 .json 文件 → todos 目录
+        let has_top_json = top_entries
+            .iter()
+            .any(|e| e.is_file && e.name.ends_with(".json"));
 
-            let entries = match fs_provider.read_dir(&project_path) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-
-            for entry in &entries {
-                if !entry.is_file || !entry.name.ends_with(".jsonl") {
+        // 枚举要观察的 (path, size) 列表
+        let file_entries: Vec<(std::path::PathBuf, u64)> = if has_top_json {
+            // todos 平铺模式：直接枚举 .json
+            top_entries
+                .iter()
+                .filter(|e| e.is_file && e.name.ends_with(".json"))
+                .map(|e| {
+                    let full = projects_path.join(&e.name);
+                    let size = e
+                        .size
+                        .or_else(|| fs_provider.stat(&full).ok().map(|s| s.size))
+                        .unwrap_or(0);
+                    (full, size)
+                })
+                .collect()
+        } else {
+            // projects 两层模式：枚举 project_dir/*.jsonl
+            let mut acc = Vec::new();
+            for dir in &top_entries {
+                if !dir.is_directory {
                     continue;
                 }
-                let full_path = project_path.join(&entry.name);
-                let path_str = full_path.to_string_lossy().to_string();
-                seen_files.insert(path_str.clone());
-
-                let observed_size = entry
-                    .size
-                    .or_else(|| fs_provider.stat(&full_path).ok().map(|s| s.size))
-                    .unwrap_or(0);
-
-                match state.polled_file_sizes.get(&path_str) {
-                    None => {
-                        state
-                            .polled_file_sizes
-                            .insert(path_str.clone(), observed_size);
-                        if primed {
-                            pending_events.push((full_path, FileChangeType::Add));
-                        }
+                let project_path = projects_path.join(&dir.name);
+                let entries = match fs_provider.read_dir(&project_path) {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                for entry in &entries {
+                    if !entry.is_file || !entry.name.ends_with(".jsonl") {
+                        continue;
                     }
-                    Some(&last_size) if observed_size != last_size => {
-                        state.polled_file_sizes.insert(path_str, observed_size);
-                        pending_events.push((full_path, FileChangeType::Change));
-                    }
-                    _ => {} // 无变化
+                    let full_path = project_path.join(&entry.name);
+                    let size = entry
+                        .size
+                        .or_else(|| fs_provider.stat(&full_path).ok().map(|s| s.size))
+                        .unwrap_or(0);
+                    acc.push((full_path, size));
                 }
+            }
+            acc
+        };
+
+        // 统一 size 差异检测
+        for (full_path, observed_size) in file_entries {
+            let path_str = full_path.to_string_lossy().to_string();
+            seen_files.insert(path_str.clone());
+            match state.polled_file_sizes.get(&path_str) {
+                None => {
+                    state.polled_file_sizes.insert(path_str.clone(), observed_size);
+                    if primed {
+                        pending_events.push((full_path, FileChangeType::Add));
+                    }
+                }
+                Some(&last_size) if observed_size != last_size => {
+                    state.polled_file_sizes.insert(path_str, observed_size);
+                    pending_events.push((full_path, FileChangeType::Change));
+                }
+                _ => {}
             }
         }
 
@@ -181,6 +208,10 @@ impl FileWatcher {
     }
 
     /// 构造并发送 FileChangeEvent。
+    ///
+    /// 支持两种相对路径布局：
+    /// - **todos 平铺**：`["{sessionId}.json"]`（1 段 + `.json` 后缀）
+    /// - **projects 两层**：`["projectId", "sessionId.jsonl"]`（含可选 subagents）
     pub(crate) fn emit_event(
         sender: &broadcast::Sender<FileChangeEvent>,
         file_path: &Path,
@@ -195,7 +226,19 @@ impl FileWatcher {
             .components()
             .filter_map(|c| c.as_os_str().to_str())
             .collect();
-        let (project_id, session_id, is_subagent) = Self::parse_path_parts(&parts);
+
+        let (project_id, session_id, is_subagent) = if parts.len() == 1
+            && parts[0].ends_with(".json")
+        {
+            // todos 平铺模式：sessionId = 文件名去后缀，无 project_id
+            let sid = std::path::Path::new(parts[0])
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            (None, Some(sid), false)
+        } else {
+            Self::parse_path_parts(&parts)
+        };
 
         let event = FileChangeEvent {
             event_type,

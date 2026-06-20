@@ -671,3 +671,191 @@ async fn test_context_switch_local_to_ssh_to_local() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+// ── SSH todos 平铺目录 polling 测试（Task 3） ──────────────────
+
+/// 辅助：等待并排空 baseline 事件（替代 `tokio::time::sleep`，消除 flaky）。
+/// 在 TEST_POLL_INTERVAL_MS=50ms 下用 500ms timeout 拿基线事件再 drain，
+/// 至少跑过 1 个完整 poll 周期。
+async fn drain_baseline(rx: &mut tokio::sync::broadcast::Receiver<FileChangeEvent>) {
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        rx.recv(),
+    )
+    .await;
+    while rx.try_recv().is_ok() {}
+}
+
+#[tokio::test]
+async fn test_ssh_poll_todos_flat_directory_detects_new_json() {
+    let provider = Arc::new(MockFsProvider::new("ssh"));
+    provider.set_entries(
+        "/todos",
+        vec![MockDirent {
+            name: "session-existing.json".into(),
+            is_file: true,
+            is_directory: false,
+            size: Some(500),
+        }],
+    );
+    let mut watcher = FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
+    let mut rx = watcher.receiver();
+
+    watcher
+        .start_ssh_polling(std::path::Path::new("/todos"))
+        .await
+        .unwrap();
+    drain_baseline(&mut rx).await;
+
+    // 添加新 todo 文件
+    provider.set_entries(
+        "/todos",
+        vec![
+            MockDirent {
+                name: "session-existing.json".into(),
+                is_file: true,
+                is_directory: false,
+                size: Some(500),
+            },
+            MockDirent {
+                name: "session-new.json".into(),
+                is_file: true,
+                is_directory: false,
+                size: Some(200),
+            },
+        ],
+    );
+
+    let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+        .await
+        .expect("timeout waiting for poll event")
+        .expect("Should detect new .json file in flat todos dir");
+    assert!(
+        event.path.ends_with("session-new.json"),
+        "event path = {}",
+        event.path
+    );
+    // 注：session_id 字段由 emit_event 设置；不依赖下游 watcher_orchestrator 的逻辑
+    assert_eq!(event.session_id.as_deref(), Some("session-new"));
+    assert!(event.project_id.is_none());
+    assert!(!event.is_subagent);
+    watcher.stop().await;
+}
+
+#[tokio::test]
+async fn test_ssh_poll_todos_detects_size_change() {
+    let provider = Arc::new(MockFsProvider::new("ssh"));
+    provider.set_entries(
+        "/todos",
+        vec![MockDirent {
+            name: "sess.json".into(),
+            is_file: true,
+            is_directory: false,
+            size: Some(100),
+        }],
+    );
+    let mut watcher = FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
+    let mut rx = watcher.receiver();
+
+    watcher
+        .start_ssh_polling(std::path::Path::new("/todos"))
+        .await
+        .unwrap();
+    drain_baseline(&mut rx).await;
+
+    provider.set_entries(
+        "/todos",
+        vec![MockDirent {
+            name: "sess.json".into(),
+            is_file: true,
+            is_directory: false,
+            size: Some(500),
+        }],
+    );
+
+    let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+        .await
+        .expect("timeout")
+        .expect("Should detect size change");
+    assert_eq!(event.event_type, FileChangeType::Change);
+    assert_eq!(event.session_id.as_deref(), Some("sess"));
+    watcher.stop().await;
+}
+
+#[tokio::test]
+async fn test_ssh_poll_projects_two_level_still_works() {
+    // 回归测试：确认 projects 两层模式未被破坏
+    let provider = Arc::new(MockFsProvider::new("ssh"));
+    provider.set_entries(
+        "/projects",
+        vec![MockDirent {
+            name: "proj1".into(),
+            is_file: false,
+            is_directory: true,
+            size: None,
+        }],
+    );
+    provider.set_entries(
+        "/projects/proj1",
+        vec![MockDirent {
+            name: "session.jsonl".into(),
+            is_file: true,
+            is_directory: false,
+            size: Some(100),
+        }],
+    );
+    let mut watcher = FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
+    let mut rx = watcher.receiver();
+
+    watcher
+        .start_ssh_polling(std::path::Path::new("/projects"))
+        .await
+        .unwrap();
+    drain_baseline(&mut rx).await;
+
+    provider.set_entries(
+        "/projects/proj1",
+        vec![MockDirent {
+            name: "session.jsonl".into(),
+            is_file: true,
+            is_directory: false,
+            size: Some(300),
+        }],
+    );
+
+    let event = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+        .await
+        .expect("timeout")
+        .expect("Should detect projects size change");
+    assert!(event.path.ends_with("session.jsonl"));
+    assert_eq!(event.project_id.as_deref(), Some("proj1"));
+    assert_eq!(event.session_id.as_deref(), Some("session"));
+    watcher.stop().await;
+}
+
+/// 直接测试 emit_event 纯函数，避免 polling 异步循环自证
+/// （修正 codex TDD "循环自证" 问题：把 emit_event 当独立可测函数覆盖）。
+#[test]
+fn test_emit_event_todos_flat_path() {
+    use tokio::sync::broadcast;
+    let (tx, mut rx) = broadcast::channel::<FileChangeEvent>(10);
+    let path = std::path::Path::new("/todos/sess-abc.json");
+    let base = std::path::Path::new("/todos");
+    FileWatcher::emit_event(&tx, path, base, FileChangeType::Add);
+    let event = rx.try_recv().expect("should emit");
+    assert_eq!(event.session_id.as_deref(), Some("sess-abc"));
+    assert!(event.project_id.is_none());
+    assert!(!event.is_subagent);
+}
+
+#[test]
+fn test_emit_event_projects_two_level_path() {
+    use tokio::sync::broadcast;
+    let (tx, mut rx) = broadcast::channel::<FileChangeEvent>(10);
+    let path = std::path::Path::new("/projects/proj1/sess.jsonl");
+    let base = std::path::Path::new("/projects");
+    FileWatcher::emit_event(&tx, path, base, FileChangeType::Change);
+    let event = rx.try_recv().expect("should emit");
+    assert_eq!(event.project_id.as_deref(), Some("proj1"));
+    assert_eq!(event.session_id.as_deref(), Some("sess"));
+}
