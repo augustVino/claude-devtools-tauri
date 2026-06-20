@@ -160,20 +160,32 @@ impl SessionServiceImpl {
         path: &Path,
         project_id: &str,
     ) -> Result<Option<Session>, AppError> {
-        let filename = match path.file_stem() {
-            Some(n) => n.to_string_lossy().to_string(),
-            None => return Ok(None),
-        };
         // SSH-aware: 通过 fs_provider 获取元数据（不能用 path.metadata() 本地 fs）。
         let fs_provider = self.fs_provider().await?;
         let stat = match fs_provider.stat(path) {
             Ok(s) => s,
             Err(_) => return Ok(None),
         };
-
-        let mtime_ms = stat.mtime_ms;
-
         let parsed = parse_session_file_with_provider(path, fs_provider.as_ref()).await;
+        Ok(Self::build_session_metadata_inner(
+            path,
+            project_id,
+            &parsed,
+            stat.mtime_ms,
+            stat.birthtime_ms,
+        ))
+    }
+
+    /// 纯函数：从已 parse 的 ParsedSession 构建 Session 元数据。
+    /// 调用方持有 parsed 时复用，避免重复 parse_session_file_with_provider（SSH 上每次 read 全文 ~秒级）。
+    fn build_session_metadata_inner(
+        path: &Path,
+        project_id: &str,
+        parsed: &ParsedSession,
+        mtime_ms: u64,
+        birthtime_ms: u64,
+    ) -> Option<Session> {
+        let filename = path.file_stem()?.to_string_lossy().to_string();
 
         // Note: Electron does NOT check isMeta for title extraction — it processes all type='user' entries.
         // Slash commands are meta messages (isMeta: true) — we must still detect them as command fallback titles.
@@ -239,13 +251,9 @@ impl SessionServiceImpl {
 
         // Prefer cwd from session file over lossy decode_path (handles dashes in project names)
         let project_path =
-            Self::extract_cwd_from_messages(&parsed).unwrap_or_else(|| decode_path(project_id));
+            Self::extract_cwd_from_messages(parsed).unwrap_or_else(|| decode_path(project_id));
 
         // createdAt: use first message timestamp from JSONL, fallback to file birth time.
-        // This matches Electron's buildSessionMetadata() behavior for date grouping.
-        // Note: FsStatResult 不暴露 created()（SSH SFTP 通常不返回 birthtime），
-        // 用 mtime 作为 fallback（对齐 Electron SessionMetadata.birthtimeMs 行为）。
-        let birthtime_ms = stat.birthtime_ms;
         let created_at = first_timestamp
             .as_ref()
             .and_then(|ts| {
@@ -256,7 +264,7 @@ impl SessionServiceImpl {
             })
             .unwrap_or(birthtime_ms);
 
-        Ok(Some(Session {
+        Some(Session {
             id: filename,
             project_id: project_id.to_string(),
             project_path,
@@ -273,7 +281,7 @@ impl SessionServiceImpl {
             context_consumption: None,
             compaction_count: None,
             phase_breakdown: None,
-        }))
+        })
     }
 
     /// 构建回退 Session（文件不存在时使用）。
@@ -474,10 +482,16 @@ impl SessionServiceImpl {
         }
 
         let parsed = parse_session_file_with_provider(&session_path, fs_provider.as_ref()).await;
-        let session = self
-            .build_session_metadata(&session_path, project_id)
-            .await?
-            .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
+        // 复用 parsed 避免重复读全文（SSH 上每次 read ~秒级）
+        let stat = fs_provider.stat(&session_path).ok();
+        let session = Self::build_session_metadata_inner(
+            &session_path,
+            project_id,
+            &parsed,
+            stat.as_ref().map(|s| s.mtime_ms).unwrap_or(0),
+            stat.as_ref().map(|s| s.birthtime_ms).unwrap_or(0),
+        )
+        .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
 
         let subagents = self
             .resolve_subagents(project_id, session_id, &parsed)
@@ -540,10 +554,16 @@ impl SessionServiceImpl {
         }
 
         let parsed = parse_session_file_with_provider(&session_path, fs_provider.as_ref()).await;
-        let session = self
-            .build_session_metadata(&session_path, project_id)
-            .await?
-            .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
+        // 复用 parsed：build_session_metadata_inner 不再二次 parse（避免 SSH 上重复读全文）
+        let stat = fs_provider.stat(&session_path).ok();
+        let session = Self::build_session_metadata_inner(
+            &session_path,
+            project_id,
+            &parsed,
+            stat.as_ref().map(|s| s.mtime_ms).unwrap_or(0),
+            stat.as_ref().map(|s| s.birthtime_ms).unwrap_or(0),
+        )
+        .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
 
         let subagents = self
             .resolve_subagents(project_id, session_id, &parsed)
@@ -625,10 +645,16 @@ impl SessionServiceImpl {
         }
 
         let parsed = parse_session_file_with_provider(&session_path, fs_provider.as_ref()).await;
-        let session = self
-            .build_session_metadata(&session_path, project_id)
-            .await?
-            .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
+        // 复用 parsed 避免重复读全文
+        let stat = fs_provider.stat(&session_path).ok();
+        let session = Self::build_session_metadata_inner(
+            &session_path,
+            project_id,
+            &parsed,
+            stat.as_ref().map(|s| s.mtime_ms).unwrap_or(0),
+            stat.as_ref().map(|s| s.birthtime_ms).unwrap_or(0),
+        )
+        .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
 
         let subagents = self
             .resolve_subagents(project_id, session_id, &parsed)
