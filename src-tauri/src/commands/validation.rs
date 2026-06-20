@@ -16,9 +16,12 @@ pub struct PathValidationResult {
     pub resolved_path: Option<String>,
 }
 
-/// Validate a filesystem path.
+/// Validate a filesystem path. SSH-aware via active context fs_provider.
 #[tauri::command]
-pub async fn validate_path(path: String) -> Result<PathValidationResult, String> {
+pub async fn validate_path(
+    context_manager: tauri::State<'_, std::sync::Arc<tokio::sync::RwLock<crate::infrastructure::ContextManager>>>,
+    path: String,
+) -> Result<PathValidationResult, String> {
     let expanded = if path.starts_with('~') {
         if let Some(home) = dirs::home_dir() {
             let remainder = path[1..].trim_start_matches('/');
@@ -32,7 +35,16 @@ pub async fn validate_path(path: String) -> Result<PathValidationResult, String>
 
     let p = Path::new(&expanded);
 
-    if !p.exists() {
+    let fs_provider = {
+        let mgr = context_manager.read().await;
+        let active = mgr
+            .get_active()
+            .ok_or_else(|| "No active ServiceContext".to_string())?;
+        let ctx = active.read().await;
+        ctx.fs_provider.clone()
+    };
+
+    if !fs_provider.exists(p).unwrap_or(false) {
         return Ok(PathValidationResult {
             valid: false,
             error: Some(format!("Path does not exist: {}", expanded)),

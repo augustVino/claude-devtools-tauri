@@ -9,6 +9,8 @@ use std::path::Path;
 use crate::http::path_validation::is_path_contained;
 use crate::http::state::HttpState;
 
+use super::error_json;
+
 /// 路径验证结果（匹配 httpClient.ts 的返回类型）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,7 +31,7 @@ pub struct ValidatePathRequest {
 ///
 /// POST /api/validate/path
 pub async fn validate_path(
-    State(_state): State<HttpState>,
+    State(state): State<HttpState>,
     Json(body): Json<ValidatePathRequest>,
 ) -> Result<Json<PathValidationResult>, (StatusCode, Json<super::ErrorResponse>)> {
     // 组合 projectPath + relativePath 得到完整路径
@@ -60,16 +62,29 @@ pub async fn validate_path(
         }));
     }
 
-    if !expanded.exists() {
-        return Ok(Json(PathValidationResult {
-            exists: false,
-            is_directory: None,
-        }));
-    }
+    // SSH-aware: 通过 fs_provider 检查存在性和类型
+    let fs_provider = {
+        let mgr = state.context_manager.read().await;
+        let active = mgr
+            .get_active()
+            .ok_or_else(|| error_json("No active ServiceContext".to_string()))?;
+        let ctx = active.read().await;
+        ctx.fs_provider.clone()
+    };
+
+    let stat = match fs_provider.stat(&expanded) {
+        Ok(s) => s,
+        Err(_) => {
+            return Ok(Json(PathValidationResult {
+                exists: false,
+                is_directory: None,
+            }))
+        }
+    };
 
     Ok(Json(PathValidationResult {
         exists: true,
-        is_directory: Some(expanded.is_dir()),
+        is_directory: Some(stat.is_directory),
     }))
 }
 
@@ -94,11 +109,19 @@ pub struct ValidateMentionsRequest {
 ///
 /// POST /api/validate/mentions
 pub async fn validate_mentions(
-    State(_state): State<HttpState>,
+    State(state): State<HttpState>,
     Json(body): Json<ValidateMentionsRequest>,
 ) -> Result<Json<std::collections::HashMap<String, bool>>, (StatusCode, Json<super::ErrorResponse>)>
 {
     let base = Path::new(&body.project_path);
+    let fs_provider = {
+        let mgr = state.context_manager.read().await;
+        let active = mgr
+            .get_active()
+            .ok_or_else(|| error_json("No active ServiceContext".to_string()))?;
+        let ctx = active.read().await;
+        ctx.fs_provider.clone()
+    };
     let mut results = std::collections::HashMap::new();
 
     for mention in &body.mentions {
@@ -115,7 +138,9 @@ pub async fn validate_mentions(
             continue;
         }
 
-        results.insert(format!("@{}", mention.value), full_path.exists());
+        // SSH-aware: fs_provider.exists 替代本地 full_path.exists()
+        let exists = fs_provider.exists(&full_path).unwrap_or(false);
+        results.insert(format!("@{}", mention.value), exists);
     }
 
     Ok(Json(results))
