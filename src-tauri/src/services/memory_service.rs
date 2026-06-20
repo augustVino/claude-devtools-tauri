@@ -201,3 +201,198 @@ impl MemoryService for MemoryServiceImpl {
         app_opener::open_with(opener_id, &path, is_directory).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infrastructure::fs_provider::{FsDirent, FsStatResult};
+    use crate::infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
+    use std::collections::HashMap;
+    use std::sync::Mutex as StdMutex;
+
+    // ── InMemoryFsProvider（SSH-aware 单测 mock） ───────────────
+
+    #[derive(Debug, Clone)]
+    struct InMemoryFsProvider {
+        provider_type_str: &'static str,
+        files: Arc<StdMutex<HashMap<String, String>>>,
+        dirs: Arc<StdMutex<HashMap<String, Vec<String>>>>,
+        exists_calls: Arc<StdMutex<Vec<String>>>,
+    }
+
+    impl InMemoryFsProvider {
+        fn new(provider_type_str: &'static str) -> Self {
+            Self {
+                provider_type_str,
+                files: Arc::new(StdMutex::new(HashMap::new())),
+                dirs: Arc::new(StdMutex::new(HashMap::new())),
+                exists_calls: Arc::new(StdMutex::new(Vec::new())),
+            }
+        }
+
+        fn set_file(&self, path: &str, content: &str) {
+            self.files
+                .lock()
+                .unwrap()
+                .insert(path.to_string(), content.to_string());
+        }
+
+        fn set_dir(&self, path: &str, file_names: Vec<&str>) {
+            self.dirs.lock().unwrap().insert(
+                path.to_string(),
+                file_names.into_iter().map(String::from).collect(),
+            );
+        }
+
+        fn exists_call_count(&self) -> usize {
+            self.exists_calls.lock().unwrap().len()
+        }
+    }
+
+    impl FsProvider for InMemoryFsProvider {
+        fn provider_type(&self) -> &'static str {
+            self.provider_type_str
+        }
+        fn exists(&self, path: &Path) -> Result<bool, String> {
+            self.exists_calls
+                .lock()
+                .unwrap()
+                .push(path.to_string_lossy().to_string());
+            let key = path.to_string_lossy().to_string();
+            Ok(self.files.lock().unwrap().contains_key(&key)
+                || self.dirs.lock().unwrap().contains_key(&key))
+        }
+        fn read_file(&self, path: &Path) -> Result<String, String> {
+            self.files
+                .lock()
+                .unwrap()
+                .get(&path.to_string_lossy().to_string())
+                .cloned()
+                .ok_or_else(|| format!("not found: {}", path.display()))
+        }
+        fn read_file_head(&self, path: &Path, _max_lines: usize) -> Result<String, String> {
+            self.read_file(path)
+        }
+        fn read_file_range(
+            &self,
+            _path: &Path,
+            _offset: u64,
+            _length: Option<u64>,
+        ) -> Result<Vec<u8>, String> {
+            Ok(Vec::new())
+        }
+        fn stat(&self, _path: &Path) -> Result<FsStatResult, String> {
+            Ok(FsStatResult {
+                size: 0,
+                mtime_ms: 0,
+                birthtime_ms: 0,
+                is_file: true,
+                is_directory: false,
+            })
+        }
+        fn read_dir(&self, path: &Path) -> Result<Vec<FsDirent>, String> {
+            let key = path.to_string_lossy().to_string();
+            let names = self.dirs.lock().unwrap().get(&key).cloned();
+            Ok(names
+                .unwrap_or_default()
+                .into_iter()
+                .map(|name| FsDirent {
+                    name,
+                    is_file: true,
+                    is_directory: false,
+                    size: Some(0),
+                    mtime_ms: Some(0),
+                    birthtime_ms: Some(0),
+                })
+                .collect())
+        }
+    }
+
+    fn make_ssh_context(
+        provider: InMemoryFsProvider,
+    ) -> Arc<RwLock<ContextManager>> {
+        let mut mgr = ContextManager::new();
+        mgr.register_context(ServiceContext::new(ServiceContextConfig {
+            id: "ssh-test".to_string(),
+            context_type: ContextType::Ssh,
+            projects_dir: PathBuf::from("/projects"),
+            todos_dir: PathBuf::from("/todos"),
+            fs_provider: Arc::new(provider),
+            cache: None,
+        }))
+        .unwrap();
+        let _ = mgr.switch("ssh-test");
+        Arc::new(RwLock::new(mgr))
+    }
+
+    /// SSH 模式下 has_memory / read_index / read_file 必须通过 fs_provider 读取。
+    #[tokio::test]
+    async fn test_memory_service_uses_fs_provider_in_ssh_mode() {
+        let provider = InMemoryFsProvider::new("ssh");
+        provider.set_dir("/projects/proj/memory", vec!["MEMORY.md", "layer1.md"]);
+        provider.set_file(
+            "/projects/proj/memory/MEMORY.md",
+            "# Memory\n## layer1.md\n",
+        );
+        provider.set_file("/projects/proj/memory/layer1.md", "layer content");
+
+        let svc = MemoryServiceImpl::new(make_ssh_context(provider.clone()));
+
+        // has_memory
+        let has = svc.has_memory("proj").await.unwrap();
+        assert!(has, "SSH mode should detect memory via fs_provider");
+        assert!(
+            provider.exists_call_count() >= 1,
+            "must check existence via fs_provider"
+        );
+
+        // read_index
+        let idx = svc.read_index("proj").await.unwrap().unwrap();
+        assert!(
+            idx.raw_markdown.contains("# Memory"),
+            "SSH mode should read MEMORY.md content via fs_provider"
+        );
+
+        // read_file
+        let f = svc.read_file("proj", "layer1.md").await.unwrap();
+        assert_eq!(f.content, "layer content");
+        assert_eq!(f.file_name, "layer1.md");
+    }
+
+    /// assert_safe_name 必须拒绝 `..`、`/`、`\` 和非 .md 后缀（TOCTOU 防护）。
+    #[tokio::test]
+    async fn test_memory_service_rejects_unsafe_name() {
+        let provider = InMemoryFsProvider::new("local");
+        let svc = MemoryServiceImpl::new(make_ssh_context(provider));
+
+        let cases: &[(&str, &str)] = &[
+            ("../etc/passwd", ".."),
+            ("sub/dir/secret.md", "/"),
+            ("back\\slash.md", "\\"),
+            ("no_extension", ".md"),
+            ("", "empty"),
+        ];
+
+        for (input, _hint) in cases {
+            let result = svc.read_file("proj", input).await;
+            assert!(
+                matches!(result, Err(AppError::InvalidInput(_))),
+                "input {input:?} should be rejected as unsafe name"
+            );
+        }
+    }
+
+    /// 空 memory 目录返回 has_memory=false、read_index 仍可解析（空 index）。
+    #[tokio::test]
+    async fn test_memory_service_handles_missing_dir_in_ssh_mode() {
+        let provider = InMemoryFsProvider::new("ssh");
+        // 不设置任何 dir/file，模拟 memory 目录不存在
+        let svc = MemoryServiceImpl::new(make_ssh_context(provider));
+
+        let has = svc.has_memory("proj").await.unwrap();
+        assert!(!has, "missing memory dir should return false");
+
+        let idx = svc.read_index("proj").await.unwrap();
+        assert!(idx.is_none(), "missing memory dir should return None");
+    }
+}
