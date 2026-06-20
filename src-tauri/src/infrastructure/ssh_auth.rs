@@ -12,7 +12,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use russh::client;
-use russh::keys::load_secret_key;
+// russh 0.46 通过 `pub use russh_keys as keys` 重导出 russh_keys 模块。
+// KeyIsEncrypted 实际定义在 russh_keys::Error，可访问路径：russh::keys::Error::KeyIsEncrypted
+use russh::keys::Error as RusshKeyError;
 use russh_keys::agent::client::AgentClient;
 
 use crate::infrastructure::ssh_connection::agent_discovery::{mask_home_path, AgentCandidate};
@@ -172,19 +174,29 @@ pub async fn auth_private_key<H: client::Handler>(
         Some(p) => expand_tilde(p),
         None => default_key_path()?,
     };
-
     let key_path_str = resolved_path
         .to_str()
         .ok_or_else(|| AuthError::new("Invalid key path (non-UTF-8)"))?
         .to_string();
+    let masked = mask_home_path(&resolved_path);
 
-    // Load the secret key (returns key::KeyPair)
-    let secret_key = load_secret_key(&key_path_str, None).map_err(|e| {
-        AuthError::new(format!(
-            "Cannot read private key at {}: {}",
-            key_path_str, e
-        ))
-    })?;
+    // 用户显式选 PrivateKey 方法时，加密 key 给清晰错误（不静默跳过）
+    let secret_key = match russh::keys::load_secret_key(&key_path_str, None) {
+        Ok(k) => k,
+        Err(RusshKeyError::KeyIsEncrypted) => {
+            return Err(AuthError::new(format!(
+                "Private key {} is encrypted — passphrases are not supported in the app. \
+                 Either decrypt the key or use ssh-agent.",
+                masked
+            )));
+        }
+        Err(e) => {
+            return Err(AuthError::new(format!(
+                "Cannot read private key at {}: {}",
+                masked, e
+            )));
+        }
+    };
 
     let success = tokio::time::timeout(AUTH_TIMEOUT, async {
         session
@@ -356,6 +368,36 @@ async fn try_agent_candidate<H: client::Handler>(
     Err(last_err)
 }
 
+/// 加载私钥，区分"加密"与"读取失败"两类。
+///
+/// 对齐 Electron `tryLoadKey` + `isEncryptedPrivateKey`
+/// (SshConnectionManager.ts:843-911)：加密 key 返回 `Ok(None)`（跳过），
+/// 上层 `auth_auto` 链中记录原因到 trace 并继续其他候选；
+/// 其他错误（文件不存在、损坏、不支持格式）返回 `Err(AuthError)`。
+fn try_load_unencrypted_key(
+    key_path: &Path,
+    masked_path: &str,
+) -> Result<Option<russh::keys::key::KeyPair>, AuthError> {
+    let key_path_str = key_path
+        .to_str()
+        .ok_or_else(|| AuthError::new("Invalid key path (non-UTF-8)"))?;
+
+    match russh::keys::load_secret_key(key_path_str, None) {
+        Ok(key) => Ok(Some(key)),
+        Err(RusshKeyError::KeyIsEncrypted) => {
+            log::info!(
+                "Skipping encrypted private key {}: passphrases not supported, use ssh-agent",
+                masked_path
+            );
+            Ok(None)
+        }
+        Err(e) => Err(AuthError::new(format!(
+            "Cannot read private key at {}: {}",
+            masked_path, e
+        ))),
+    }
+}
+
 /// Try authenticating with a single key file.
 ///
 /// Returns `Ok(())` on success, `Err` with a description on failure.
@@ -365,13 +407,6 @@ pub async fn try_key_auth<H: client::Handler>(
     username: &str,
     key_path: &Path,
 ) -> Result<(), AuthError> {
-    let key_path_str = key_path
-        .to_str()
-        .ok_or_else(|| AuthError::new("Invalid key path (non-UTF-8)"))?;
-
-    // Mask $HOME prefix for privacy-safe error messages forwarded to frontend.
-    // NOTE: fs operations (key_path.exists(), load_secret_key) still use the
-    // unmasked `key_path` / `key_path_str` — only log/error strings use masked.
     let masked_path = mask_home_path(key_path);
 
     if !key_path.exists() {
@@ -381,9 +416,17 @@ pub async fn try_key_auth<H: client::Handler>(
         )));
     }
 
-    let secret_key = load_secret_key(key_path_str, None).map_err(|e| {
-        AuthError::new(format!("Cannot read private key at {}: {}", masked_path, e))
-    })?;
+    // 加密 key 跳过（对齐 Electron）。
+    // 返回含 "skipped — passphrases" 字符串的 Err，触发 auth_auto 链中
+    // Task 2 预埋的字符串匹配分支（IdentityFile / DefaultKey arm），
+    // 将该 attempt 记录为 AttemptOutcome::Skipped 而非 Failed。
+    let secret_key =
+        try_load_unencrypted_key(key_path, &masked_path)?.ok_or_else(|| {
+            AuthError::new(format!(
+                "Encrypted private key {} skipped — passphrases not supported, use ssh-agent",
+                masked_path
+            ))
+        })?;
 
     let success = session
         .authenticate_publickey(username, Arc::new(secret_key))
@@ -875,5 +918,79 @@ mod tests {
         assert!(!steps
             .iter()
             .any(|s| matches!(s, super::AuthStep::Agent)));
+    }
+
+    /// 测试辅助：用 ssh-keygen 生成真实加密 OpenSSH new-format 私钥。
+    ///
+    /// 修正 codex 第三轮 C1：之前用 `openssl genpkey` 有两个致命错误：
+    /// 1. `genpkey` 参数是 `-pass` 不是 `-passout`（实测 `-passout` 报 "Multiple cipher or unknown options"）
+    /// 2. 即使参数正确，生成的 PKCS#8 加密格式在 russh-keys 0.46 中走 `decode_pkcs8`
+    ///    （pkcs8.rs:9-21），password=None 时直接当明文 PrivateKeyInfo 解析 → 抛 `Pkcs8::Error`
+    ///    而非 `KeyIsEncrypted`（后者只在 `format/openssh.rs:53` 和 `format/pkcs5.rs:33` 返回）。
+    ///
+    /// 正确方案：用 `ssh-keygen -t ed25519 -N password`（默认 OpenSSH new format，
+    /// `BEGIN OPENSSH PRIVATE KEY`），russh-keys `decode_openssh` 解析时遇到
+    /// `KeypairData::Encrypted(_)` 直接返回 `KeyIsEncrypted`（openssh.rs:53）。
+    ///
+    /// 不要加 `-m PEM`：那会强制 PKCS#1 RSA 格式，不走 OpenSSH 解析路径。
+    fn write_encrypted_key_fixture(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+        let key_path = dir.join("enc_openssh");
+        let status = std::process::Command::new("ssh-keygen")
+            .args([
+                "-t",
+                "ed25519",
+                "-N",
+                "test-password", // passphrase
+                "-f",
+            ])
+            .arg(&key_path)
+            .arg("-q")
+            .arg("-C")
+            .arg("")
+            .status()
+            .ok()?;
+        if status.success() && key_path.exists() {
+            Some(key_path)
+        } else {
+            None
+        }
+    }
+
+    #[test]
+    fn test_try_load_unencrypted_key_returns_none_for_encrypted_key() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let key_path = match write_encrypted_key_fixture(dir.path()) {
+            Some(p) => p,
+            None => {
+                // CI 无 ssh-keygen 时跳过 — 但显式 WARNING 避免静默 skip
+                // （修正 codex 第三轮 M1：fail-loud 提示）
+                eprintln!(
+                    "WARNING: ssh-keygen not available or failed, \
+                     skipping encrypted key test. \
+                     If this happens in CI, install openssh-client."
+                );
+                return;
+            }
+        };
+
+        let result = try_load_unencrypted_key(&key_path, "enc_openssh");
+        assert!(
+            result.is_ok(),
+            "encrypted OpenSSH key should be skipped (Ok(None)), not error. Got: {:?}",
+            result
+        );
+        assert!(
+            result.unwrap().is_none(),
+            "encrypted OpenSSH key returns Ok(None) for skip"
+        );
+    }
+
+    #[test]
+    fn test_try_load_unencrypted_key_errors_for_missing_file() {
+        let result = try_load_unencrypted_key(
+            std::path::Path::new("/nonexistent/key_xyz_123_nonexistent"),
+            "/nonexistent/key_xyz_123_nonexistent",
+        );
+        assert!(result.is_err(), "missing file should error, not skip");
     }
 }
