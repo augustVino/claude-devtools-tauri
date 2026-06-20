@@ -8,8 +8,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use crate::infrastructure::fs_provider::{FsProvider, LocalFsProvider};
 
 /// Information about a CLAUDE.md file.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -29,28 +31,46 @@ pub struct ClaudeMdReadResult {
 }
 
 /// ClaudeMdReader reads CLAUDE.md files and calculates token counts.
+///
+/// 对齐 Electron `ClaudeMdReader.ts`：所有读取通过 fsProvider 多态，
+/// SSH 模式下能读取远程 CLAUDE.md（避免前端 token 估算为 0）。
 pub struct ClaudeMdReader {
     claude_base_path: PathBuf,
     home_dir: PathBuf,
+    fs_provider: Arc<dyn FsProvider>,
 }
 
 impl ClaudeMdReader {
-    /// Create a new ClaudeMdReader instance.
+    /// Create a new ClaudeMdReader instance with default local fs.
     pub fn new() -> Self {
         let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
         let claude_base_path = home_dir.join(".claude");
         Self {
             claude_base_path,
             home_dir,
+            fs_provider: Arc::new(LocalFsProvider::new()),
         }
     }
 
-    /// Create with custom paths (for testing).
+    /// Create with custom paths (for testing, local fs).
     #[allow(dead_code)]
     pub fn with_paths(claude_base_path: PathBuf, home_dir: PathBuf) -> Self {
         Self {
             claude_base_path,
             home_dir,
+            fs_provider: Arc::new(LocalFsProvider::new()),
+        }
+    }
+
+    /// Create with explicit fs_provider (SSH-aware entry).
+    /// paths 默认从本地 home 推导，对齐 Electron `ClaudeMdReader.ts` 默认参数行为。
+    pub fn with_fs_provider(fs_provider: Arc<dyn FsProvider>) -> Self {
+        let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
+        let claude_base_path = home_dir.join(".claude");
+        Self {
+            claude_base_path,
+            home_dir,
+            fs_provider,
         }
     }
 
@@ -73,7 +93,7 @@ impl ClaudeMdReader {
     pub fn read_claude_md_file(&self, file_path: &str) -> ClaudeMdFileInfo {
         let expanded_path = self.expand_tilde(file_path);
 
-        match fs::read_to_string(&expanded_path) {
+        match self.fs_provider.read_file(&expanded_path) {
             Ok(content) => {
                 let char_count = content.len();
                 let estimated_tokens = Self::estimate_tokens(&content);
@@ -97,7 +117,12 @@ impl ClaudeMdReader {
     pub fn read_directory_md_files(&self, dir_path: &str) -> ClaudeMdFileInfo {
         let expanded_path = self.expand_tilde(dir_path);
 
-        if !expanded_path.exists() || !expanded_path.is_dir() {
+        let exists_and_dir = self
+            .fs_provider
+            .stat(&expanded_path)
+            .map(|s| s.is_directory)
+            .unwrap_or(false);
+        if !exists_and_dir {
             return ClaudeMdFileInfo {
                 path: expanded_path.to_string_lossy().to_string(),
                 exists: false,
@@ -121,7 +146,7 @@ impl ClaudeMdReader {
         let mut all_content = Vec::new();
 
         for file_path in &md_files {
-            if let Ok(content) = fs::read_to_string(file_path) {
+            if let Ok(content) = self.fs_provider.read_file(file_path) {
                 total_char_count += content.len();
                 all_content.push(content);
             }
@@ -142,12 +167,12 @@ impl ClaudeMdReader {
     fn collect_md_files(&self, dir: &Path) -> Vec<PathBuf> {
         let mut md_files = Vec::new();
 
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file() && path.extension().map_or(false, |ext| ext == "md") {
+        if let Ok(entries) = self.fs_provider.read_dir(dir) {
+            for entry in entries {
+                let path = dir.join(&entry.name);
+                if entry.is_file && path.extension().map_or(false, |ext| ext == "md") {
                     md_files.push(path);
-                } else if path.is_dir() {
+                } else if entry.is_directory {
                     md_files.extend(self.collect_md_files(&path));
                 }
             }
@@ -184,7 +209,7 @@ impl ClaudeMdReader {
             .join("memory")
             .join("MEMORY.md");
 
-        match fs::read_to_string(&memory_path) {
+        match self.fs_provider.read_file(&memory_path) {
             Ok(content) => {
                 // Only first 200 lines, matching Claude Code behavior
                 let lines: Vec<&str> = content.lines().take(200).collect();
@@ -407,5 +432,139 @@ mod tests {
         // Check project file was found
         assert!(result.files.get("project").unwrap().exists);
         assert!(result.files.get("user").unwrap().exists);
+    }
+
+    // ── SSH-aware provider 测试 ─────────────────────────────────
+
+    use crate::infrastructure::fs_provider::{FsDirent, FsStatResult};
+    use std::collections::HashMap as StdHashMap;
+    use std::sync::Mutex as StdMutex;
+
+    #[derive(Debug, Clone)]
+    struct InMemoryFsProvider {
+        provider_type_str: &'static str,
+        files: Arc<StdMutex<StdHashMap<String, String>>>,
+        dirs: Arc<StdMutex<StdHashMap<String, Vec<String>>>>,
+        read_calls: Arc<StdMutex<Vec<String>>>,
+    }
+
+    impl InMemoryFsProvider {
+        fn new(provider_type_str: &'static str) -> Self {
+            Self {
+                provider_type_str,
+                files: Arc::new(StdMutex::new(StdHashMap::new())),
+                dirs: Arc::new(StdMutex::new(StdHashMap::new())),
+                read_calls: Arc::new(StdMutex::new(Vec::new())),
+            }
+        }
+
+        fn set_file(&self, path: &str, content: &str) {
+            self.files
+                .lock()
+                .unwrap()
+                .insert(path.to_string(), content.to_string());
+        }
+
+        fn read_call_count(&self) -> usize {
+            self.read_calls.lock().unwrap().len()
+        }
+    }
+
+    impl FsProvider for InMemoryFsProvider {
+        fn provider_type(&self) -> &'static str {
+            self.provider_type_str
+        }
+        fn exists(&self, path: &Path) -> Result<bool, String> {
+            let key = path.to_string_lossy().to_string();
+            Ok(self.files.lock().unwrap().contains_key(&key)
+                || self.dirs.lock().unwrap().contains_key(&key))
+        }
+        fn read_file(&self, path: &Path) -> Result<String, String> {
+            self.read_calls
+                .lock()
+                .unwrap()
+                .push(path.to_string_lossy().to_string());
+            self.files
+                .lock()
+                .unwrap()
+                .get(&path.to_string_lossy().to_string())
+                .cloned()
+                .ok_or_else(|| format!("not found: {}", path.display()))
+        }
+        fn read_file_head(&self, path: &Path, _max_lines: usize) -> Result<String, String> {
+            self.read_file(path)
+        }
+        fn read_file_range(
+            &self,
+            _path: &Path,
+            _offset: u64,
+            _length: Option<u64>,
+        ) -> Result<Vec<u8>, String> {
+            Ok(Vec::new())
+        }
+        fn stat(&self, path: &Path) -> Result<FsStatResult, String> {
+            let key = path.to_string_lossy().to_string();
+            let is_dir = self.dirs.lock().unwrap().contains_key(&key);
+            let is_file = self.files.lock().unwrap().contains_key(&key);
+            Ok(FsStatResult {
+                size: 0,
+                mtime_ms: 0,
+                birthtime_ms: 0,
+                is_file,
+                is_directory: is_dir,
+            })
+        }
+        fn read_dir(&self, path: &Path) -> Result<Vec<FsDirent>, String> {
+            let key = path.to_string_lossy().to_string();
+            let names = self.dirs.lock().unwrap().get(&key).cloned();
+            Ok(names
+                .unwrap_or_default()
+                .into_iter()
+                .map(|name| FsDirent {
+                    name,
+                    is_file: true,
+                    is_directory: false,
+                    size: Some(0),
+                    mtime_ms: Some(0),
+                    birthtime_ms: Some(0),
+                })
+                .collect())
+        }
+    }
+
+    /// SSH 模式下 read_claude_md_file 必须通过 fs_provider 读取远程内容。
+    #[test]
+    fn test_claude_md_reader_uses_fs_provider_in_ssh_mode() {
+        let provider = InMemoryFsProvider::new("ssh");
+        provider.set_file("/remote/CLAUDE.md", "# Remote CLAUDE.md\nSSH content");
+
+        let reader = ClaudeMdReader::with_fs_provider(Arc::new(provider.clone()));
+        let info = reader.read_claude_md_file("/remote/CLAUDE.md");
+
+        assert!(info.exists, "SSH mode should read file via fs_provider");
+        assert_eq!(info.char_count, "# Remote CLAUDE.md\nSSH content".len());
+        assert!(
+            provider.read_call_count() >= 1,
+            "must call fs_provider.read_file under SSH"
+        );
+    }
+
+    /// SSH 模式下 read_directory_md_files 必须通过 fs_provider 列目录 + 读文件。
+    #[test]
+    fn test_claude_md_reader_read_directory_uses_fs_provider_in_ssh_mode() {
+        let provider = InMemoryFsProvider::new("ssh");
+        // stat 报告 dir 存在
+        provider
+            .dirs
+            .lock()
+            .unwrap()
+            .insert("/remote/rules".to_string(), vec!["a.md".to_string()]);
+        provider.set_file("/remote/rules/a.md", "rule A");
+
+        let reader = ClaudeMdReader::with_fs_provider(Arc::new(provider.clone()));
+        let info = reader.read_directory_md_files("/remote/rules");
+
+        assert!(info.exists, "SSH mode should aggregate dir contents via fs_provider");
+        assert_eq!(info.char_count, "rule A".len());
     }
 }

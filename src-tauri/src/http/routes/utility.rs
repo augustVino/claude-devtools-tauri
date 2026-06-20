@@ -29,19 +29,27 @@ pub struct ReadClaudeMdRequest {
     pub project_root: String,
 }
 
-/// 读取项目所有 CLAUDE.md 文件。
+/// 读取项目所有 CLAUDE.md 文件。SSH-aware via active context fs_provider.
 ///
 /// POST /api/read-claude-md
 pub async fn read_claude_md(
-    State(_state): State<HttpState>,
+    State(state): State<HttpState>,
     Json(body): Json<ReadClaudeMdRequest>,
 ) -> Result<
     Json<std::collections::HashMap<String, ClaudeMdFileInfo>>,
     (StatusCode, Json<super::ErrorResponse>),
 > {
     let project_root = body.project_root;
+    let fs_provider = {
+        let mgr = state.context_manager.read().await;
+        let active = mgr.get_active().ok_or_else(|| {
+            error_json("No active ServiceContext".to_string())
+        })?;
+        let ctx = active.read().await;
+        ctx.fs_provider.clone()
+    };
     let result = tokio::task::spawn_blocking(move || {
-        let reader = ClaudeMdReader::new();
+        let reader = ClaudeMdReader::with_fs_provider(fs_provider);
         reader.read_all_claude_md_files(&project_root).files
     })
     .await
@@ -57,16 +65,24 @@ pub struct ReadDirectoryClaudeMdRequest {
     pub dir_path: String,
 }
 
-/// 读取指定目录的 CLAUDE.md 文件。
+/// 读取指定目录的 CLAUDE.md 文件。SSH-aware via active context fs_provider.
 ///
 /// POST /api/read-directory-claude-md
 pub async fn read_directory_claude_md(
-    State(_state): State<HttpState>,
+    State(state): State<HttpState>,
     Json(body): Json<ReadDirectoryClaudeMdRequest>,
 ) -> Result<Json<ClaudeMdFileInfo>, (StatusCode, Json<super::ErrorResponse>)> {
     let directory = body.dir_path;
+    let fs_provider = {
+        let mgr = state.context_manager.read().await;
+        let active = mgr.get_active().ok_or_else(|| {
+            error_json("No active ServiceContext".to_string())
+        })?;
+        let ctx = active.read().await;
+        ctx.fs_provider.clone()
+    };
     let result = tokio::task::spawn_blocking(move || {
-        let reader = ClaudeMdReader::new();
+        let reader = ClaudeMdReader::with_fs_provider(fs_provider);
         reader.read_directory_claude_md(&directory)
     })
     .await
@@ -175,15 +191,26 @@ pub struct ReadAgentConfigsRequest {
 ///
 /// POST /api/read-agent-configs
 pub async fn read_agent_configs(
-    State(_state): State<HttpState>,
+    State(state): State<HttpState>,
     Json(body): Json<ReadAgentConfigsRequest>,
 ) -> Result<
     Json<std::collections::HashMap<String, AgentConfig>>,
     (StatusCode, Json<super::ErrorResponse>),
 > {
     let project_root = body.project_root;
+    let fs_provider = {
+        let mgr = state.context_manager.read().await;
+        let active = mgr.get_active().ok_or_else(|| {
+            error_json("No active ServiceContext".to_string())
+        })?;
+        let ctx = active.read().await;
+        ctx.fs_provider.clone()
+    };
     let result = tokio::task::spawn_blocking(move || {
-        let configs = crate::parsing::agent_config_reader::read_agent_configs(&project_root);
+        let configs = crate::parsing::agent_config_reader::read_agent_configs_with_provider(
+            &project_root,
+            fs_provider.as_ref(),
+        );
         configs
             .into_iter()
             .map(|(name, config)| {

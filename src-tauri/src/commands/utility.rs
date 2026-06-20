@@ -276,21 +276,41 @@ pub async fn set_zoom_factor(
 // =============================================================================
 
 /// Read all CLAUDE.md files for a project.
-/// Note: ClaudeMdReader methods are synchronous.
+/// SSH-aware: 从 active ServiceContext 取 fs_provider，使远程 CLAUDE.md 可读。
 /// Returns flat HashMap to match Electron IPC (which unwraps ClaudeMdReadResult.files).
 #[tauri::command]
-pub fn read_claude_md_files(
+pub async fn read_claude_md_files(
+    context_manager: tauri::State<'_, std::sync::Arc<tokio::sync::RwLock<crate::infrastructure::ContextManager>>>,
     project_root: String,
-) -> std::collections::HashMap<String, ClaudeMdFileInfo> {
-    let reader = ClaudeMdReader::new();
-    reader.read_all_claude_md_files(&project_root).files
+) -> Result<std::collections::HashMap<String, ClaudeMdFileInfo>, String> {
+    let fs_provider = {
+        let mgr = context_manager.read().await;
+        let active = mgr
+            .get_active()
+            .ok_or_else(|| "No active ServiceContext".to_string())?;
+        let ctx = active.read().await;
+        ctx.fs_provider.clone()
+    };
+    let reader = ClaudeMdReader::with_fs_provider(fs_provider);
+    Ok(reader.read_all_claude_md_files(&project_root).files)
 }
 
-/// Read a specific directory's CLAUDE.md file.
+/// Read a specific directory's CLAUDE.md file. SSH-aware via active context.
 #[tauri::command]
-pub fn read_directory_claude_md(directory: String) -> ClaudeMdFileInfo {
-    let reader = ClaudeMdReader::new();
-    reader.read_directory_claude_md(&directory)
+pub async fn read_directory_claude_md(
+    context_manager: tauri::State<'_, std::sync::Arc<tokio::sync::RwLock<crate::infrastructure::ContextManager>>>,
+    directory: String,
+) -> Result<ClaudeMdFileInfo, String> {
+    let fs_provider = {
+        let mgr = context_manager.read().await;
+        let active = mgr
+            .get_active()
+            .ok_or_else(|| "No active ServiceContext".to_string())?;
+        let ctx = active.read().await;
+        ctx.fs_provider.clone()
+    };
+    let reader = ClaudeMdReader::with_fs_provider(fs_provider);
+    Ok(reader.read_directory_claude_md(&directory))
 }
 
 /// Mentioned file info for context injection (matches Electron MentionedFileInfo).
@@ -352,12 +372,24 @@ pub struct AgentConfig {
     pub color: Option<String>,
 }
 
-/// Read agent configurations from .claude/agents/ directory.
+/// Read agent configurations from .claude/agents/ directory. SSH-aware via active context.
 /// Returns a map from agent name to AgentConfig (matches Electron HTTP API behavior).
 #[tauri::command]
-pub fn read_agent_configs(project_root: String) -> std::collections::HashMap<String, AgentConfig> {
-    let configs = crate::parsing::agent_config_reader::read_agent_configs(&project_root);
-    configs
+pub async fn read_agent_configs(
+    context_manager: tauri::State<'_, std::sync::Arc<tokio::sync::RwLock<crate::infrastructure::ContextManager>>>,
+    project_root: String,
+) -> Result<std::collections::HashMap<String, AgentConfig>, String> {
+    let fs_provider = {
+        let mgr = context_manager.read().await;
+        let active = mgr
+            .get_active()
+            .ok_or_else(|| "No active ServiceContext".to_string())?;
+        let ctx = active.read().await;
+        ctx.fs_provider.clone()
+    };
+    let configs =
+        crate::parsing::agent_config_reader::read_agent_configs_with_provider(&project_root, fs_provider.as_ref());
+    Ok(configs
         .into_iter()
         .map(|(name, config)| {
             (
@@ -368,7 +400,7 @@ pub fn read_agent_configs(project_root: String) -> std::collections::HashMap<Str
                 },
             )
         })
-        .collect()
+        .collect())
 }
 
 /// Write text content to a file at the given path.

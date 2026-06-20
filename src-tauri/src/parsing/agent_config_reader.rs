@@ -5,8 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
+
+use crate::infrastructure::fs_provider::{FsProvider, LocalFsProvider};
 
 /// Agent configuration extracted from .md file frontmatter.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -67,24 +68,34 @@ fn parse_frontmatter(content: &str) -> HashMap<String, String> {
 
 /// Read agent config files from a project's `.claude/agents/` directory.
 /// Returns a map of agent name → config (with optional color).
+///
+/// Legacy entry: uses local fs. SSH 模式必须用 `read_agent_configs_with_provider`，
+/// 否则远程 .claude/agents/*.md 读不到。
 pub fn read_agent_configs(project_root: &str) -> HashMap<String, AgentConfig> {
+    read_agent_configs_with_provider(project_root, &LocalFsProvider::new())
+}
+
+/// SSH-aware entry: reads via the given FsProvider.
+pub fn read_agent_configs_with_provider(
+    project_root: &str,
+    fs_provider: &dyn FsProvider,
+) -> HashMap<String, AgentConfig> {
     let agents_dir = Path::new(project_root).join(".claude").join("agents");
     let mut result = HashMap::new();
 
-    let entries = match fs::read_dir(&agents_dir) {
+    let entries = match fs_provider.read_dir(&agents_dir) {
         Ok(entries) => entries,
         Err(_) => return result, // Directory doesn't exist — normal for projects without custom agents
     };
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-        if !filename.ends_with(".md") {
+    for entry in entries {
+        if !entry.is_file || !entry.name.ends_with(".md") {
             continue;
         }
+        let path = agents_dir.join(&entry.name);
+        let filename = &entry.name;
 
-        if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(content) = fs_provider.read_file(&path) {
             let frontmatter = parse_frontmatter(&content);
             let name = frontmatter
                 .get("name")
@@ -198,5 +209,111 @@ Content
 
         assert_eq!(result.len(), 1);
         assert_eq!(result.get("my-agent").unwrap().name, "my-agent");
+    }
+
+    // ── SSH-aware provider 测试 ─────────────────────────────────
+
+    use crate::infrastructure::fs_provider::{FsDirent, FsStatResult};
+    use std::sync::Arc;
+    use std::sync::Mutex as StdMutex;
+
+    #[derive(Debug, Clone)]
+    struct InMemoryFsProvider {
+        provider_type_str: &'static str,
+        files: Arc<StdMutex<HashMap<String, String>>>,
+        dirs: Arc<StdMutex<HashMap<String, Vec<String>>>>,
+    }
+
+    impl InMemoryFsProvider {
+        fn new(provider_type_str: &'static str) -> Self {
+            Self {
+                provider_type_str,
+                files: Arc::new(StdMutex::new(HashMap::new())),
+                dirs: Arc::new(StdMutex::new(HashMap::new())),
+            }
+        }
+
+        fn set_file(&self, path: &str, content: &str) {
+            self.files
+                .lock()
+                .unwrap()
+                .insert(path.to_string(), content.to_string());
+        }
+
+        fn set_dir(&self, path: &str, file_names: Vec<&str>) {
+            self.dirs.lock().unwrap().insert(
+                path.to_string(),
+                file_names.into_iter().map(String::from).collect(),
+            );
+        }
+    }
+
+    impl crate::infrastructure::fs_provider::FsProvider for InMemoryFsProvider {
+        fn provider_type(&self) -> &'static str {
+            self.provider_type_str
+        }
+        fn exists(&self, _path: &Path) -> Result<bool, String> {
+            Ok(true)
+        }
+        fn read_file(&self, path: &Path) -> Result<String, String> {
+            self.files
+                .lock()
+                .unwrap()
+                .get(&path.to_string_lossy().to_string())
+                .cloned()
+                .ok_or_else(|| format!("not found: {}", path.display()))
+        }
+        fn read_file_head(&self, path: &Path, _max_lines: usize) -> Result<String, String> {
+            self.read_file(path)
+        }
+        fn read_file_range(
+            &self,
+            _path: &Path,
+            _offset: u64,
+            _length: Option<u64>,
+        ) -> Result<Vec<u8>, String> {
+            Ok(Vec::new())
+        }
+        fn stat(&self, _path: &Path) -> Result<FsStatResult, String> {
+            Ok(FsStatResult {
+                size: 0,
+                mtime_ms: 0,
+                birthtime_ms: 0,
+                is_file: true,
+                is_directory: false,
+            })
+        }
+        fn read_dir(&self, path: &Path) -> Result<Vec<FsDirent>, String> {
+            let key = path.to_string_lossy().to_string();
+            let names = self.dirs.lock().unwrap().get(&key).cloned();
+            Ok(names
+                .unwrap_or_default()
+                .into_iter()
+                .map(|name| FsDirent {
+                    name,
+                    is_file: true,
+                    is_directory: false,
+                    size: Some(0),
+                    mtime_ms: Some(0),
+                    birthtime_ms: Some(0),
+                })
+                .collect())
+        }
+    }
+
+    /// SSH 模式下 read_agent_configs_with_provider 必须通过 fs_provider 列目录 + 读 .md。
+    #[test]
+    fn test_agent_config_reader_uses_fs_provider_in_ssh_mode() {
+        let provider = InMemoryFsProvider::new("ssh");
+        provider.set_dir("/remote/.claude/agents", vec!["coder.md"]);
+        provider.set_file(
+            "/remote/.claude/agents/coder.md",
+            "---\nname: coder\ncolor: blue\n---\n# Coder",
+        );
+
+        let result = read_agent_configs_with_provider("/remote", &provider);
+
+        assert_eq!(result.len(), 1, "SSH mode should read agent configs via fs_provider");
+        assert_eq!(result.get("coder").unwrap().color, Some("blue".to_string()));
     }
 }
