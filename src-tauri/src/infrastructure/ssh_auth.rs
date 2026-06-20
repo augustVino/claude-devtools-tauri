@@ -21,8 +21,11 @@ use crate::infrastructure::ssh_connection::agent_discovery::{mask_home_path, Age
 use crate::infrastructure::ssh_connection::auth_trace::{AttemptOutcome, AuthTrace};
 use crate::types::ssh::SshAuthMethod;
 
-/// Default authentication timeout (covers all candidates combined).
-const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
+/// Default authentication timeout (15 seconds, covers all candidates combined).
+/// 对齐 Electron SSH2_READY_TIMEOUT_MS=22s 量级（含 headroom）。
+/// 与 connect_flow::CONNECT_TIMEOUT=15s 配合，外层 CONNECT_CHAIN_TIMEOUT=25s 包整链。
+/// `pub(crate)` so connect_flow can include in outer race error message.
+pub(crate) const AUTH_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Per-candidate timeout — prevents dead socket from blocking entire chain.
 const AGENT_CANDIDATE_TIMEOUT: Duration = Duration::from_secs(3);

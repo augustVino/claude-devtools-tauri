@@ -19,8 +19,19 @@ use super::auth_trace::AuthTrace;
 use super::tcp_probe;
 use super::{ConnectRequest, ConnectedBundle, RawConnection, SshClientHandler};
 
-/// Connection timeout (10 seconds).
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Connection timeout (15 seconds) — covers TCP + SSH handshake only.
+/// Auth 和 SFTP open 有各自的独立 timeout（ssh_auth::AUTH_TIMEOUT / SFTP_OPEN_TIMEOUT）。
+/// 对齐 Electron SSH2_READY_TIMEOUT_MS=22s（含 headroom），慢速 VPN/高延迟 host 不再过早 timeout。
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Outer hard-cap timeout (25 seconds) for the whole connect chain
+/// (handshake + multi-candidate auth + SFTP open).
+/// 对齐 Electron CONNECT_TIMEOUT_MS=25s outer race（SshConnectionManager.ts:82）。
+/// 注意：与 Electron `client.end()` 严格等价的"主动 disconnect"在 russh 0.46 下不可行
+/// （`Handle::disconnect(&self)` 与 SFTP open 的 `&mut self` 借用冲突，且 Handle 不 Clone）。
+/// timeout 触发时整个 connect future 被 drop，session Handle 经 Drop 释放；
+/// socket 不立即关闭，依赖 OS TCP keepalive 最终清理。工程妥协，注释标注。
+const CONNECT_CHAIN_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// Merge resolved `ssh -G` values into final_config (pure function for testing).
 ///
@@ -96,82 +107,112 @@ pub(super) async fn establish_raw_connection(
         return Err(AuthError::with_trace(root_msg, trace));
     }
 
-    // Phase 2: TCP + SSH handshake (timed; None if error during handshake)
-    let handshake_start = Instant::now();
-    let addr = (final_config.host.as_str(), final_config.port);
-    let russh_config = Arc::new(russh::client::Config::default());
-    let session = match tokio::time::timeout(
-        CONNECT_TIMEOUT,
-        russh::client::connect(russh_config, addr, SshClientHandler),
-    )
-    .await
-    {
-        Ok(Ok(h)) => {
-            trace.timings.tcp_handshake_ms = Some(handshake_start.elapsed().as_millis() as u64);
-            h
-        }
-        Ok(Err(e)) => {
-            let root_msg = format!(
-                "SSH connection to {}:{} failed: {}",
-                final_config.host, final_config.port, e
-            );
-            return Err(AuthError::with_trace(root_msg, trace));
-        }
+    // Phase 2-5 wrapped in CONNECT_CHAIN_TIMEOUT outer race (25s hard cap).
+    // 对齐 Electron SshConnectionManager.ts:370-403 outer race 语义：
+    // 内层 CONNECT_TIMEOUT/AUTH_TIMEOUT/SFTP_OPEN_TIMEOUT 各阶段独立，
+    // outer race 包整链防止 worst-case 累积超过 25s。
+    //
+    // block 返回 Result<_, String>（不 take trace ownership），外层统一包装 trace，
+    // 这样 timeout 分支也能复用 trace。
+    //
+    // 注意：timeout 触发时整个 future 被 drop，session Handle 经 Drop 释放。
+    // russh 0.46 的 Handle::drop 不主动 disconnect（仅 log），socket 不立即关闭，
+    // 依赖 OS TCP keepalive 最终清理。非严格等价 Electron client.end()，工程妥协。
+    let chain_result =
+        tokio::time::timeout(CONNECT_CHAIN_TIMEOUT, async {
+            // Phase 2: TCP + SSH handshake (timed; None if error during handshake)
+            let handshake_start = Instant::now();
+            let addr = (final_config.host.as_str(), final_config.port);
+            let russh_config = Arc::new(russh::client::Config::default());
+            let session = match tokio::time::timeout(
+                CONNECT_TIMEOUT,
+                russh::client::connect(russh_config, addr, SshClientHandler),
+            )
+            .await
+            {
+                Ok(Ok(h)) => {
+                    trace.timings.tcp_handshake_ms =
+                        Some(handshake_start.elapsed().as_millis() as u64);
+                    h
+                }
+                Ok(Err(e)) => {
+                    return Err(format!(
+                        "SSH connection to {}:{} failed: {}",
+                        final_config.host, final_config.port, e
+                    ));
+                }
+                Err(_) => {
+                    return Err(format!(
+                        "SSH connection to {}:{} timed out after {}s",
+                        final_config.host,
+                        final_config.port,
+                        CONNECT_TIMEOUT.as_secs()
+                    ));
+                }
+            };
+
+            // Phase 3 (phase 2 new): multi-candidate agent discovery
+            let agent_sockets = super::agent_discovery::discover_agent_sockets(
+                resolved.identity_agent.as_deref().and_then(|p| p.to_str()),
+            )
+            .await;
+
+            // Phase 4: Authenticate (pass trace for attempt collection)
+            let mut session_mut = session;
+            if let Err(auth_err) = ssh_auth::authenticate(
+                &mut session_mut,
+                &final_config.username,
+                &final_config.auth_method,
+                final_config.password.as_deref(),
+                final_config.private_key_path.as_deref(),
+                &resolved.identity_files,
+                &agent_sockets,
+                &mut trace,
+            )
+            .await
+            {
+                return Err(format!("authentication failed: {}", auth_err.message));
+            }
+
+            // Phase 5: Open SFTP (8s timeout + IPv6-aware diagnostic)
+            let sftp = match open_sftp_subsystem_static(
+                &mut session_mut,
+                &final_config.username,
+                &final_config.host,
+            )
+            .await
+            {
+                Ok(s) => s,
+                Err(msg) => return Err(msg),
+            };
+
+            Ok((session_mut, sftp))
+        })
+        .await;
+
+    match chain_result {
+        Ok(Ok((session_mut, sftp))) => Ok(RawConnection {
+            merged_config: final_config,
+            original_host: request.original_host.clone(),
+            session: session_mut,
+            sftp,
+        }),
+        Ok(Err(root_msg)) => Err(AuthError::with_trace(root_msg, trace)),
         Err(_) => {
+            // outer race timeout (25s) — 对齐 Electron enrichAuthError 风格
             let root_msg = format!(
-                "SSH connection to {}:{} timed out after {}s",
+                "SSH connection chain to {}:{} timed out after {}s (handshake + auth + SFTP). \
+                 Inner timeouts: connect={}s, auth={}s, sftp_open={}s.",
                 final_config.host,
                 final_config.port,
-                CONNECT_TIMEOUT.as_secs()
+                CONNECT_CHAIN_TIMEOUT.as_secs(),
+                CONNECT_TIMEOUT.as_secs(),
+                ssh_auth::AUTH_TIMEOUT.as_secs(),
+                ssh_auth::SFTP_OPEN_TIMEOUT.as_secs(),
             );
-            return Err(AuthError::with_trace(root_msg, trace));
+            Err(AuthError::with_trace(root_msg, trace))
         }
-    };
-
-    // Phase 3 (phase 2 new): multi-candidate agent discovery
-    let agent_sockets = super::agent_discovery::discover_agent_sockets(
-        resolved.identity_agent.as_deref().and_then(|p| p.to_str()),
-    )
-    .await;
-
-    // Phase 4: Authenticate (pass trace for attempt collection)
-    let mut session_mut = session;
-    if let Err(auth_err) = ssh_auth::authenticate(
-        &mut session_mut,
-        &final_config.username,
-        &final_config.auth_method,
-        final_config.password.as_deref(),
-        final_config.private_key_path.as_deref(),
-        &resolved.identity_files,
-        &agent_sockets,
-        &mut trace,
-    )
-    .await
-    {
-        return Err(AuthError::with_trace(
-            format!("authentication failed: {}", auth_err.message),
-            trace,
-        ));
     }
-
-    // Phase 5: Open SFTP (8s timeout + IPv6-aware diagnostic)
-    let sftp = match open_sftp_subsystem_static(
-        &mut session_mut,
-        &final_config.username,
-        &final_config.host,
-    )
-    .await
-    {
-        Ok(s) => s,
-        Err(msg) => return Err(AuthError::with_trace(msg, trace)),
-    };
-
-    Ok(RawConnection {
-        merged_config: final_config,
-        original_host: request.original_host.clone(),
-        session: session_mut,
-        sftp,
-    })
 }
 
 /// 从 RawConnection 构建 ConnectedBundle（仅 connect() 调用路径）。
