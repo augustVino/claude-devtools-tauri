@@ -63,12 +63,13 @@ impl SubagentService for SubagentServiceImpl {
             .join("subagents")
             .join(format!("agent-{subagent_id}.jsonl"));
 
-        if !subagent_path.exists() {
+        if !fs_provider.exists(&subagent_path).unwrap_or(false) {
             return Ok(None);
         }
 
         // 3. Parse JSONL
-        let messages = crate::parsing::jsonl_parser::parse_jsonl_file(&subagent_path).await;
+        let messages =
+            crate::parsing::jsonl_parser::parse_jsonl_file_with_provider(&subagent_path, fs_provider.as_ref()).await;
         if messages.is_empty() {
             return Ok(None);
         }
@@ -106,11 +107,94 @@ impl SubagentService for SubagentServiceImpl {
 mod tests {
     use super::*;
     use crate::infrastructure::context_manager::ContextManager;
+    use crate::infrastructure::fs_provider::{FsDirent, FsProvider, FsStatResult};
+    use crate::infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
+    use std::collections::HashMap;
+    use std::path::Path;
     use std::path::PathBuf;
+    use std::sync::Mutex as StdMutex;
 
     /// 构造空 ContextManager（无任何 context 注册），用于测试无 active context 场景。
     fn make_empty_context_manager() -> Arc<RwLock<ContextManager>> {
         Arc::new(RwLock::new(ContextManager::new()))
+    }
+
+    // ── InMemoryFsProvider（SSH-aware 单测 mock） ───────────────
+
+    #[derive(Debug, Clone)]
+    struct InMemoryFsProvider {
+        provider_type_str: &'static str,
+        files: Arc<StdMutex<HashMap<String, String>>>,
+        exists_calls: Arc<StdMutex<Vec<String>>>,
+    }
+
+    impl InMemoryFsProvider {
+        fn new(provider_type_str: &'static str) -> Self {
+            Self {
+                provider_type_str,
+                files: Arc::new(StdMutex::new(HashMap::new())),
+                exists_calls: Arc::new(StdMutex::new(Vec::new())),
+            }
+        }
+
+        fn set_file(&self, path: &str, content: &str) {
+            self.files
+                .lock()
+                .unwrap()
+                .insert(path.to_string(), content.to_string());
+        }
+
+        fn exists_call_count(&self) -> usize {
+            self.exists_calls.lock().unwrap().len()
+        }
+    }
+
+    impl FsProvider for InMemoryFsProvider {
+        fn provider_type(&self) -> &'static str {
+            self.provider_type_str
+        }
+        fn exists(&self, path: &Path) -> Result<bool, String> {
+            self.exists_calls
+                .lock()
+                .unwrap()
+                .push(path.to_string_lossy().to_string());
+            Ok(self
+                .files
+                .lock()
+                .unwrap()
+                .contains_key(&path.to_string_lossy().to_string()))
+        }
+        fn read_file(&self, path: &Path) -> Result<String, String> {
+            self.files
+                .lock()
+                .unwrap()
+                .get(&path.to_string_lossy().to_string())
+                .cloned()
+                .ok_or_else(|| format!("not found: {}", path.display()))
+        }
+        fn read_file_head(&self, path: &Path, _max_lines: usize) -> Result<String, String> {
+            self.read_file(path)
+        }
+        fn read_file_range(
+            &self,
+            _path: &Path,
+            _offset: u64,
+            _length: Option<u64>,
+        ) -> Result<Vec<u8>, String> {
+            Ok(Vec::new())
+        }
+        fn stat(&self, _path: &Path) -> Result<FsStatResult, String> {
+            Ok(FsStatResult {
+                size: 0,
+                mtime_ms: 0,
+                birthtime_ms: 0,
+                is_file: true,
+                is_directory: false,
+            })
+        }
+        fn read_dir(&self, _path: &Path) -> Result<Vec<FsDirent>, String> {
+            Ok(Vec::new())
+        }
     }
 
     /// 构造含 local context 的 ContextManager，用于 ServiceImpl 测试。
@@ -142,6 +226,47 @@ mod tests {
         let result = svc.get_subagent_detail("proj", "sess", "sub").await;
         assert!(
             matches!(result, Err(AppError::Internal(msg)) if msg.contains("No active ServiceContext"))
+        );
+    }
+
+    /// SSH 模式下 get_subagent_detail 必须通过 fs_provider 读取（不能用 Path::exists
+    /// 或 tokio::fs），否则远程 subagent 文件永远读不到。对齐 Electron SubagentLocator
+    /// 全程 fsProvider 多态。
+    #[tokio::test]
+    async fn test_get_subagent_detail_uses_fs_provider_in_ssh_mode() {
+        let provider = InMemoryFsProvider::new("ssh");
+        let subagent_path =
+            "/projects/proj/sess/subagents/agent-sub.jsonl";
+        provider.set_file(
+            subagent_path,
+            r#"{"type":"user","uuid":"u1","message":{"role":"user","content":"hi"}}"#,
+        );
+
+        let mut mgr = ContextManager::new();
+        mgr.register_context(ServiceContext::new(ServiceContextConfig {
+            id: "ssh-test".to_string(),
+            context_type: ContextType::Ssh,
+            projects_dir: PathBuf::from("/projects"),
+            todos_dir: PathBuf::from("/todos"),
+            fs_provider: Arc::new(provider.clone()),
+            cache: None,
+        }))
+        .unwrap();
+        let _ = mgr.switch("ssh-test");
+
+        let svc = SubagentServiceImpl::new(Arc::new(RwLock::new(mgr)));
+        let result = svc.get_subagent_detail("proj", "sess", "sub").await;
+
+        assert!(result.is_ok(), "should not error in SSH mode");
+        // exists_calls 必须被触发（证明走了 fs_provider.exists 而非本地 Path::exists）
+        assert!(
+            provider.exists_call_count() >= 1,
+            "SSH mode must check existence via fs_provider, not Path::exists"
+        );
+        // subagent 文件存在 → 返回 Some(detail)
+        assert!(
+            result.unwrap().is_some(),
+            "SSH mode should read subagent detail via fs_provider"
         );
     }
 }
