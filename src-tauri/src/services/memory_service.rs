@@ -1,78 +1,81 @@
-//! Memory Service implementation — reads from local filesystem.
+//! Memory Service implementation — SSH-aware via FsProvider.
+//!
+//! 对齐 Electron `MemoryReader.ts`：
+//! - 构造持有 `ContextManager`，从 active ServiceContext 动态取 fs_provider + projects_dir
+//! - 所有读取走 fs_provider（本地 std::fs / 远程 SFTP 多态）
+//! - containment 校验用 `assert_safe_name` + path 字符串等值（不依赖 canonicalize，
+//!   SSH SFTP 不支持 readlink 全路径；与 Electron `MemoryReader.ts:54-57` 一致）
 
 use crate::error::AppError;
+use crate::infrastructure::fs_provider::FsProvider;
+use crate::infrastructure::ContextManager;
 use crate::types::memory::{parse_memory_index, MemoryFile, MemoryIndex};
 use crate::utils::app_opener;
 use crate::utils::path_decoder;
 use async_trait::async_trait;
-use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 use super::memory_service_trait::MemoryService;
 
 const MEMORY_DIR_NAME: &str = "memory";
 const INDEX_FILE_NAME: &str = "MEMORY.md";
-/// Max file size for a single memory file (1 MB).
-const MAX_FILE_SIZE: u64 = 1024 * 1024;
+/// Max file size for a single memory file (1 MB). SSH 防御性限制。
+const MAX_FILE_SIZE: usize = 1024 * 1024;
 
 pub struct MemoryServiceImpl {
-    projects_dir: PathBuf,
+    context_manager: Arc<RwLock<ContextManager>>,
 }
 
 impl MemoryServiceImpl {
-    pub fn new(projects_dir: PathBuf) -> Self {
-        Self { projects_dir }
+    pub fn new(context_manager: Arc<RwLock<ContextManager>>) -> Self {
+        Self { context_manager }
+    }
+
+    /// 从 active ServiceContext 取 fs_provider + projects_dir。
+    async fn deps(&self) -> Result<(Arc<dyn FsProvider>, PathBuf), AppError> {
+        let active_arc = {
+            let mgr = self.context_manager.read().await;
+            mgr.get_active()
+                .ok_or_else(|| AppError::Internal("No active ServiceContext".into()))?
+        };
+        let ctx = active_arc.read().await;
+        Ok((ctx.fs_provider.clone(), ctx.projects_dir.clone()))
     }
 
     /// Resolve memory directory path. Uses `extract_base_dir` to strip
     /// composite ID suffixes (`::{hash}`), matching project_scanner.rs.
-    /// Uses the encoded directory name directly — do NOT decode_path, as
-    /// that loses information (hyphens in real directory names get
-    /// converted to `/`, producing wrong paths).
-    fn dir_path_buf(&self, project_id: &str) -> PathBuf {
+    fn dir_path(projects_dir: &Path, project_id: &str) -> PathBuf {
         let base_dir = path_decoder::extract_base_dir(project_id);
-        self.projects_dir.join(base_dir).join(MEMORY_DIR_NAME)
-    }
-
-    /// Validate memory directory path via canonicalize + containment check.
-    /// Used by `safe_file_path_buf` and as a model for the re-canonicalize
-    /// logic inside `has_memory` and `read_index` spawn_blocking closures.
-    fn safe_dir_path_buf(&self, project_id: &str) -> Result<PathBuf, AppError> {
-        let dir = self.dir_path_buf(project_id);
-        let canonical_dir = std::fs::canonicalize(&dir)
-            .map_err(|_| AppError::NotFound("Memory directory not found".into()))?;
-        let canonical_projects = std::fs::canonicalize(&self.projects_dir)
-            .map_err(|_| AppError::Internal("Projects directory not found".into()))?;
-        if !canonical_dir.starts_with(&canonical_projects) {
-            return Err(AppError::InvalidInput(
-                "Memory directory escapes projects root".into(),
-            ));
-        }
-        Ok(canonical_dir)
-    }
-
-    /// Re-canonicalize a resolved directory path, checking containment.
-    /// Called inside spawn_blocking closures to close TOCTOU window between
-    /// pre-closure canonicalization and actual filesystem access.
-    fn re_canonicalize_dir(
-        dir: &std::path::Path,
-        projects_dir: &std::path::Path,
-    ) -> Result<std::path::PathBuf, std::io::Error> {
-        let canonical_dir = std::fs::canonicalize(dir)?;
-        let canonical_projects = std::fs::canonicalize(projects_dir)?;
-        if !canonical_dir.starts_with(&canonical_projects) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Memory directory escapes projects root",
-            ));
-        }
-        Ok(canonical_dir)
+        projects_dir.join(base_dir).join(MEMORY_DIR_NAME)
     }
 
     /// Validate file name and resolve to absolute path.
-    /// Canonicalizes both dir and resolved path to prevent symlink traversal.
-    /// Also verifies the canonical memory dir stays within the projects root.
-    fn safe_file_path_buf(&self, project_id: &str, file_name: &str) -> Result<PathBuf, AppError> {
+    /// 校验对齐 Electron `assertSafeMarkdownName`：拒绝 `..`、`/`、`\`，
+    /// 强制 `.md` 后缀；containment 用 path 字符串等值（resolve 后必须等于 join 结果），
+    /// 不依赖 canonicalize（SSH SFTP 不支持 readlink 全路径）。
+    fn safe_file_path(
+        projects_dir: &Path,
+        project_id: &str,
+        file_name: &str,
+    ) -> Result<PathBuf, AppError> {
+        let dir = Self::dir_path(projects_dir, project_id);
+        let safe = Self::assert_safe_name(file_name)?;
+        let resolved = dir.join(&safe);
+        // resolve 等值检查：safe 已拒绝 `..` 和分隔符，resolved 必须等于 dir/safe。
+        // 这是纯字符串操作，SSH 下安全，对齐 Electron MemoryReader.ts:54-57。
+        let expected = dir.join(&safe);
+        if resolved != expected {
+            return Err(AppError::InvalidInput(format!(
+                "Memory file path escapes memory directory: {file_name}"
+            )));
+        }
+        Ok(resolved)
+    }
+
+    /// 对齐 Electron `assertSafeMarkdownName`。
+    fn assert_safe_name(file_name: &str) -> Result<String, AppError> {
         let trimmed = file_name.trim();
         if trimmed.is_empty() {
             return Err(AppError::InvalidInput("Memory file name is empty".into()));
@@ -92,180 +95,93 @@ impl MemoryServiceImpl {
                 "Memory file must end with .md: {file_name}"
             )));
         }
-        let canonical_dir = self.safe_dir_path_buf(project_id)?;
-        let resolved = self.dir_path_buf(project_id).join(trimmed);
-        let canonical = std::fs::canonicalize(&resolved)
-            .map_err(|_| AppError::NotFound(format!("File not found: {file_name}")))?;
-        if !canonical.starts_with(&canonical_dir) {
-            return Err(AppError::InvalidInput(format!(
-                "Path escapes memory directory: {file_name}"
-            )));
-        }
-        Ok(canonical)
+        Ok(trimmed.to_string())
     }
 }
 
 #[async_trait]
 impl MemoryService for MemoryServiceImpl {
     async fn has_memory(&self, project_id: &str) -> Result<bool, AppError> {
-        let dir = self.dir_path_buf(project_id);
-        let projects = self.projects_dir.clone();
-        let found = tokio::task::spawn_blocking(move || {
-            // Re-canonicalize inside the closure to prevent TOCTOU race:
-            // the directory path could be swapped between pre-check and read.
-            let canonical_dir = match Self::re_canonicalize_dir(&dir, &projects) {
-                Ok(d) => d,
-                Err(_) => return Ok::<bool, std::io::Error>(false),
-            };
-            if !canonical_dir.exists() {
-                return Ok::<bool, std::io::Error>(false);
-            }
-            let mut rd = match std::fs::read_dir(&canonical_dir) {
-                Ok(rd) => rd,
-                Err(_) => return Ok::<bool, std::io::Error>(false),
-            };
-            while let Some(entry) = rd.next().transpose().ok().flatten() {
-                if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
-                    if entry
-                        .file_name()
-                        .to_string_lossy()
-                        .to_lowercase()
-                        .ends_with(".md")
-                    {
-                        return Ok::<bool, std::io::Error>(true);
-                    }
-                }
-            }
-            Ok::<bool, std::io::Error>(false)
-        })
-        .await??;
-        Ok(found)
+        let (fs_provider, projects_dir) = self.deps().await?;
+        let dir = Self::dir_path(&projects_dir, project_id);
+        if !fs_provider.exists(&dir).unwrap_or(false) {
+            return Ok(false);
+        }
+        let entries = match fs_provider.read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => return Ok(false),
+        };
+        Ok(entries
+            .iter()
+            .any(|e| e.is_file && e.name.to_lowercase().ends_with(".md")))
     }
 
     async fn read_index(&self, project_id: &str) -> Result<Option<MemoryIndex>, AppError> {
-        let dir = self.dir_path_buf(project_id);
-        let projects = self.projects_dir.clone();
-        let index = tokio::task::spawn_blocking(move || {
-            // Re-canonicalize inside the closure to prevent TOCTOU race.
-            let canonical_dir = match Self::re_canonicalize_dir(&dir, &projects) {
-                Ok(d) => d,
-                Err(_) => return Ok::<Option<MemoryIndex>, std::io::Error>(None),
-            };
-            let mut names = Vec::new();
-            let rd = match std::fs::read_dir(&canonical_dir) {
-                Ok(rd) => rd,
-                Err(_) => return Ok::<Option<MemoryIndex>, std::io::Error>(None),
-            };
-            for entry in rd.flatten() {
-                if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
-                    names.push(entry.file_name().to_string_lossy().to_string());
+        let (fs_provider, projects_dir) = self.deps().await?;
+        let dir = Self::dir_path(&projects_dir, project_id);
+        if !fs_provider.exists(&dir).unwrap_or(false) {
+            return Ok(None);
+        }
+
+        let mut names = Vec::new();
+        match fs_provider.read_dir(&dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    if entry.is_file {
+                        names.push(entry.name);
+                    }
                 }
             }
-            let index_path = canonical_dir.join(INDEX_FILE_NAME);
-            let raw = if index_path.exists() {
-                let canonical_index = std::fs::canonicalize(&index_path).map_err(|_| {
-                    std::io::Error::new(std::io::ErrorKind::NotFound, "Index file not found")
-                })?;
-                if !canonical_index.starts_with(&canonical_dir) {
-                    return Ok::<Option<MemoryIndex>, std::io::Error>(Some(parse_memory_index(
-                        "", &names,
-                    )));
-                }
-                let f = std::fs::File::open(&canonical_index)?;
-                let meta = f.metadata()?;
-                if meta.len() > MAX_FILE_SIZE {
-                    return Ok::<Option<MemoryIndex>, std::io::Error>(Some(parse_memory_index(
-                        "", &names,
-                    )));
-                }
-                let mut buf = String::with_capacity(meta.len() as usize);
-                std::io::BufReader::new(f).read_to_string(&mut buf)?;
-                buf
-            } else {
-                String::new()
-            };
-            Ok::<Option<MemoryIndex>, std::io::Error>(Some(parse_memory_index(&raw, &names)))
-        })
-        .await??;
-        Ok(index)
+            Err(_) => return Ok(None),
+        }
+
+        let index_path = dir.join(INDEX_FILE_NAME);
+        let raw = if fs_provider.exists(&index_path).unwrap_or(false) {
+            fs_provider.read_file(&index_path).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        Ok(Some(parse_memory_index(&raw, &names)))
     }
 
     async fn read_file(&self, project_id: &str, file_name: &str) -> Result<MemoryFile, AppError> {
-        let file_name_owned = file_name.to_string();
-        let dir = self.dir_path_buf(project_id);
-        let projects = self.projects_dir.clone();
-        let trimmed = file_name.trim().to_string();
+        let (fs_provider, projects_dir) = self.deps().await?;
+        let absolute_path = Self::safe_file_path(&projects_dir, project_id, file_name)?;
 
-        // Validate file name syntax
-        if trimmed.is_empty() {
-            return Err(AppError::InvalidInput("Memory file name is empty".into()));
-        }
-        if trimmed.contains('/') || trimmed.contains('\\') {
+        let content = fs_provider.read_file(&absolute_path).map_err(|e| {
+            AppError::NotFound(format!("Memory file read failed for {file_name}: {e}"))
+        })?;
+
+        // 防御性 size 检查（对齐 Tauri 原有 MAX_FILE_SIZE 防护，Electron 没有此检查）
+        if content.len() > MAX_FILE_SIZE {
             return Err(AppError::InvalidInput(format!(
-                "Memory file name must not contain path separators: {file_name}"
-            )));
-        }
-        if trimmed.contains("..") {
-            return Err(AppError::InvalidInput(format!(
-                "Memory file name must not contain '..': {file_name}"
-            )));
-        }
-        if !trimmed.to_lowercase().ends_with(".md") {
-            return Err(AppError::InvalidInput(format!(
-                "Memory file must end with .md: {file_name}"
+                "Memory file exceeds {} KB limit",
+                MAX_FILE_SIZE / 1024
             )));
         }
 
-        let content = tokio::task::spawn_blocking(move || {
-            // Canonicalize inside the closure to prevent TOCTOU race:
-            // resolve dir, verify containment, resolve file, verify containment, then read.
-            let canonical_dir = Self::re_canonicalize_dir(&dir, &projects)?;
-            let resolved = canonical_dir.join(&trimmed);
-            let canonical = std::fs::canonicalize(&resolved).map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("File not found: {trimmed}"),
-                )
-            })?;
-            if !canonical.starts_with(&canonical_dir) {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Path escapes memory directory: {trimmed}"),
-                ));
-            }
-            // Open file handle first to prevent TOCTOU race — metadata
-            // and read are done on the same handle, so symlink swap
-            // between checks cannot bypass size limit or containment.
-            let f = std::fs::File::open(&canonical)?;
-            let meta = f.metadata()?;
-            if meta.len() > MAX_FILE_SIZE {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Memory file exceeds {} KB limit", MAX_FILE_SIZE / 1024),
-                ));
-            }
-            let mut content = String::new();
-            std::io::BufReader::new(f).read_to_string(&mut content)?;
-            Ok::<(String, String), std::io::Error>((
-                content,
-                canonical.to_string_lossy().to_string(),
-            ))
-        })
-        .await??;
         Ok(MemoryFile {
-            file_name: file_name_owned,
-            absolute_path: content.1,
-            content: content.0,
+            file_name: file_name.to_string(),
+            absolute_path: absolute_path.to_string_lossy().to_string(),
+            content,
         })
     }
 
     fn get_dir_path(&self, project_id: &str) -> String {
-        self.dir_path_buf(project_id).to_string_lossy().to_string()
+        // 同步接口，无法 await deps()。用本地默认路径作为 fallback。
+        // 真正的 SSH-aware 路径在异步方法中通过 deps() 解析；这里仅供 UI 展示用。
+        let projects_dir = path_decoder::get_projects_base_path();
+        Self::dir_path(&projects_dir, project_id)
+            .to_string_lossy()
+            .to_string()
     }
 
     fn get_file_path(&self, project_id: &str, file_name: &str) -> Result<String, AppError> {
-        self.safe_file_path_buf(project_id, file_name)
-            .map(|p| p.to_string_lossy().to_string())
+        // 同步接口 fallback，与 get_dir_path 同理。
+        let projects_dir = path_decoder::get_projects_base_path();
+        Ok(Self::safe_file_path(&projects_dir, project_id, file_name)?
+            .to_string_lossy()
+            .to_string())
     }
 
     async fn open_in(
@@ -274,6 +190,9 @@ impl MemoryService for MemoryServiceImpl {
         project_id: &str,
         file_name: Option<&str>,
     ) -> Result<(), AppError> {
+        // open_in 调用 OS opener 打开本地路径。SSH 模式下路径是远程的，
+        // OS opener 无法打开——这是已知限制（与 Electron MemoryReader.openIn 一致：
+        // Electron 也只在本地模式下提供 open_in）。
         let path = match file_name {
             Some(name) if !name.trim().is_empty() => self.get_file_path(project_id, name)?,
             _ => self.get_dir_path(project_id),

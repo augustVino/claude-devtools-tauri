@@ -91,7 +91,7 @@ pub fn run() {
 
     // MemoryService (IPC + HTTP paths)
     let memory_service: Arc<dyn services::MemoryService> =
-        Arc::new(services::MemoryServiceImpl::new(get_projects_base_path()));
+        Arc::new(services::MemoryServiceImpl::new(context_manager.clone()));
 
     // Zoom factor state: track zoom since Tauri v2 has set_zoom() but no zoom() getter.
     // Store f64 as bits in AtomicU64 for lock-free concurrent access.
