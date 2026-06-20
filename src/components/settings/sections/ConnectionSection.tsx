@@ -126,10 +126,13 @@ export const ConnectionSection = (): React.JSX.Element => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Filter config hosts based on input
+  // Filter config hosts based on input. 对齐 Electron ConnectionSection.tsx:125-137：
+  // 输入与某 alias 完全相等时短路返回全部，避免选中后列表收窄到单行。
   const filteredHosts = useMemo(() => {
-    if (!host.trim()) return sshConfigHosts;
-    const lower = host.toLowerCase();
+    const lower = host.trim().toLowerCase();
+    if (!lower) return sshConfigHosts;
+    const exactMatch = sshConfigHosts.some((entry) => entry.alias.toLowerCase() === lower);
+    if (exactMatch) return sshConfigHosts;
     return sshConfigHosts.filter(
       (entry) =>
         entry.alias.toLowerCase().includes(lower) || entry.hostName?.toLowerCase().includes(lower)
