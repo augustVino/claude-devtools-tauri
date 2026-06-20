@@ -323,3 +323,37 @@ fn test_ssh_client_handler_is_clone() {
     let handler = SshClientHandler;
     let _handler2 = handler.clone();
 }
+
+#[test]
+fn test_merge_with_ssh_config_does_not_overwrite_explicit_host_when_parser_present() {
+    // 真红灯测试：parser 含 HostName，但用户传入的 host 是 alias
+    // 旧实现会强制覆盖 config.host = entry.host_name（错）
+    // 新实现应保留 alias，让 connect_flow 的 ssh -G 接管 hostname 合并
+    use crate::infrastructure::ssh_config_parser::SshConfigParser;
+    let cfg_text = "Host myalias\n    HostName real.example.com\n    User deploy\n    Port 2222\n";
+    let parser = SshConfigParser::from_str(cfg_text).expect("parser should build");
+
+    let config = SshConnectionConfig {
+        host: "myalias".into(), // 用户传 alias，不是 HostName
+        port: 22,
+        username: String::new(),
+        auth_method: SshAuthMethod::Auto,
+        password: None,
+        private_key_path: None,
+    };
+    let merged =
+        super::ssh_config_merge::merge_with_ssh_config_static(config.clone(), Some(&parser));
+
+    // 关键断言：alias 必须保留，host_name 不应污染
+    assert_eq!(
+        merged.host, "myalias",
+        "alias must be preserved; HostName should be applied by ssh -G merge in connect_flow"
+    );
+    // username 仍可以从 entry 填充（fill-empty 语义不变）
+    assert_eq!(merged.username, "deploy");
+    // port 块保留：fallback 路径需要 ssh_config port 兜底
+    assert_eq!(
+        merged.port, 2222,
+        "ssh_config port must still be applied for fallback path"
+    );
+}
