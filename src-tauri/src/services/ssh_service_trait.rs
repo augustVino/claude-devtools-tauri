@@ -42,7 +42,7 @@ pub trait SshService: Send + Sync {
     /// 默认实现返回 Ok(()) 以支持未来 mock impl 不需强制覆盖。
     async fn handle_remote_disconnect(
         &self,
-        _broadcaster: Option<&crate::http::sse::SSEBroadcaster>,
+        _broadcaster: Option<&SSEBroadcaster>,
     ) -> Result<(), AppError> {
         Ok(())
     }

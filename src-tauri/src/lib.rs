@@ -236,6 +236,9 @@ pub fn run() {
                     loop {
                         match rx.recv().await {
                             Ok(status) => {
+                                // 重复的 Disconnected 事件是预期的（用户主动 disconnect 与 health monitor
+                                // 并发触发时会各发一次）。switch_to_local_context 写锁内的 TOCTOU 再检查
+                                // 保证第二次调用是安全 no-op（已在 local 时返回 Ok(None)），无需去重。
                                 if matches!(
                                     status.state,
                                     crate::types::ssh::SshConnectionState::Disconnected
