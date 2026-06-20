@@ -97,7 +97,7 @@ impl FileWatcher {
     /// - **todos 平铺**：`todos/{sessionId}.json`
     ///
     /// 顶层若含 `.json` 文件即视为平铺模式；否则按两层模式枚举 `.jsonl`。
-    /// 不递归进入 subagents/ 子目录，与 Electron 行为一致。
+    /// 不递归进入 subagents/ 子目录。
     async fn do_poll(
         fs_provider: &Arc<dyn FsProvider>,
         projects_path: &Path,

@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn test_matches_ignore_patterns_skips_invalid() {
-        // 无效的 pattern 被静默跳过（与 Electron 行为一致）
+        // 无效的 pattern 被静默跳过
         let patterns = vec![r"(?P<bad".to_string(), "valid".to_string()];
         assert!(matches_ignore_patterns("valid match", &patterns));
     }

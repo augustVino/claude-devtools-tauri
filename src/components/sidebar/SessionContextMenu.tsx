@@ -9,7 +9,16 @@ import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@renderer/store';
 import { MAX_PANES } from '@renderer/types/panes';
 import { formatShortcut } from '@renderer/utils/stringUtils';
-import { Check, ClipboardCopy, Eye, EyeOff, Pin, PinOff, Terminal, Trash2 } from 'lucide-react';
+import {
+  Check,
+  ClipboardCopy,
+  Eye,
+  EyeOff,
+  Pin,
+  PinOff,
+  Terminal,
+  Trash2,
+} from 'lucide-react';
 
 interface SessionContextMenuProps {
   x: number;
@@ -89,11 +98,13 @@ export const SessionContextMenu = ({
 
   const handleDelete = async () => {
     onClose();
-    const { confirm } = await import('@renderer/components/common/ConfirmDialog');
+    const { confirm } = await import(
+      '@renderer/components/common/ConfirmDialog'
+    );
     // SSH 模式下后端只清缓存，文件保留（与 Electron 一致：Electron 不支持远程删除）。
     const isSsh = useStore.getState().connectionMode === 'ssh';
     const message = isSsh
-      ? 'SSH 模式下删除仅清除本地缓存和固定/隐藏标记，远程文件不会被删除（与 Electron 行为一致）。是否继续？'
+      ? 'SSH 模式下删除仅清除本地缓存和固定/隐藏标记，远程文件不会被删除。是否继续？'
       : '确定要删除此 session 吗？此操作不可撤销，将删除所有关联文件。';
     const confirmed = await confirm({
       title: '删除 Session',
@@ -121,26 +132,46 @@ export const SessionContextMenu = ({
         color: 'var(--color-text)',
       }}
     >
-      <MenuItem label="Open in Current Pane" onClick={handleClick(onOpenInCurrentPane)} />
-      <MenuItem label="Open in New Tab" shortcut={`${formatShortcut('')}Click`} onClick={handleClick(onOpenInNewTab)} />
-      <div className="mx-2 my-1 border-t" style={{ borderColor: 'var(--color-border)' }} />
+      <MenuItem
+        label="Open in Current Pane"
+        onClick={handleClick(onOpenInCurrentPane)}
+      />
+      <MenuItem
+        label="Open in New Tab"
+        shortcut={`${formatShortcut('')}Click`}
+        onClick={handleClick(onOpenInNewTab)}
+      />
+      <div
+        className="mx-2 my-1 border-t"
+        style={{ borderColor: 'var(--color-border)' }}
+      />
       <MenuItem
         label="Split Right and Open"
         onClick={handleClick(onSplitRightAndOpen)}
         disabled={atMaxPanes}
       />
-      <div className="mx-2 my-1 border-t" style={{ borderColor: 'var(--color-border)' }} />
+      <div
+        className="mx-2 my-1 border-t"
+        style={{ borderColor: 'var(--color-border)' }}
+      />
       <MenuItem
         label={isPinned ? 'Unpin Session' : 'Pin Session'}
-        icon={isPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
+        icon={
+          isPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />
+        }
         onClick={handleClick(onTogglePin)}
       />
       <MenuItem
         label={isHidden ? 'Unhide Session' : 'Hide Session'}
-        icon={isHidden ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
+        icon={
+          isHidden ? <Eye className="size-4" /> : <EyeOff className="size-4" />
+        }
         onClick={handleClick(onToggleHide)}
       />
-      <div className="mx-2 my-1 border-t" style={{ borderColor: 'var(--color-border)' }} />
+      <div
+        className="mx-2 my-1 border-t"
+        style={{ borderColor: 'var(--color-border)' }}
+      />
       <MenuItem
         label={copiedField === 'id' ? 'Copied!' : 'Copy Session ID'}
         icon={
@@ -163,10 +194,15 @@ export const SessionContextMenu = ({
         }
         onClick={handleCopy(`claude --resume ${sessionId}`, 'command')}
       />
-      <div className="mx-2 my-1 border-t" style={{ borderColor: 'var(--color-border)' }} />
+      <div
+        className="mx-2 my-1 border-t"
+        style={{ borderColor: 'var(--color-border)' }}
+      />
       <MenuItem
         label="Delete Session"
-        icon={<Trash2 className="size-4" style={{ color: 'rgb(248, 113, 113)' }} />}
+        icon={
+          <Trash2 className="size-4" style={{ color: 'rgb(248, 113, 113)' }} />
+        }
         onClick={handleDelete}
         labelStyle={{ color: 'rgb(248, 113, 113)' }}
       />
@@ -201,7 +237,10 @@ const MenuItem = ({
         <span style={labelStyle}>{label}</span>
       </span>
       {shortcut && (
-        <span className="ml-4 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+        <span
+          className="ml-4 text-xs"
+          style={{ color: 'var(--color-text-muted)' }}
+        >
           {shortcut}
         </span>
       )}
