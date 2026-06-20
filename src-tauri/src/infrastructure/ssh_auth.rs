@@ -402,6 +402,43 @@ pub async fn try_key_auth<H: client::Handler>(
     }
 }
 
+/// 认证候选步骤的纯数据表示。生产代码 auth_auto 通过此枚举迭代执行，
+/// 顺序由 plan_auth_candidate_steps 决定（single source of truth）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AuthStep {
+    Agent,
+    IdentityFile(PathBuf),
+    DefaultKey(&'static str),
+}
+
+/// 规划 auth_auto 的候选步骤顺序（纯函数，不执行真认证）。
+///
+/// 对齐 Electron `buildAuthCandidates` 顺序：
+/// **agent sockets → identity files → default keys**.
+///
+/// `has_agent` 而非 `&[AgentCandidate]` 的原因：纯函数只关心顺序，
+/// 不关心 agent 候选的内部结构（AgentSource + PathBuf）。调用方
+/// `auth_auto` 传入 `!agent_sockets.is_empty()` 即可。
+///
+/// 此函数是 auth_auto 顺序的唯一来源 —— auth_auto 迭代此函数返回的 Vec<AuthStep>
+/// 执行实际认证，测试通过断言返回值守护顺序不变。
+pub(crate) fn plan_auth_candidate_steps(
+    has_agent: bool,
+    identity_files: &[PathBuf],
+) -> Vec<AuthStep> {
+    let mut steps = Vec::new();
+    if has_agent {
+        steps.push(AuthStep::Agent);
+    }
+    for f in identity_files {
+        steps.push(AuthStep::IdentityFile(f.clone()));
+    }
+    for name in DEFAULT_KEY_NAMES {
+        steps.push(AuthStep::DefaultKey(name));
+    }
+    steps
+}
+
 /// Authenticate with auto fallback (mirrors Electron `resolveAutoAuth`).
 ///
 /// Phase 2 signature: identity_files from ssh -G + multi-candidate agent_sockets.
@@ -424,92 +461,118 @@ pub async fn auth_auto<H: client::Handler>(
     };
 
     let mut tried_paths: HashSet<PathBuf> = HashSet::new();
-    let mut tried_steps: Vec<&str> = Vec::new();
-
-    // Step 1: identity files
-    for key_path in identity_files {
-        let masked = mask_home_path(key_path);
-        if !tried_paths.insert(key_path.clone()) {
-            log::debug!("Skipping duplicate identity file: {}", masked);
-            trace.record_attempt(
-                masked.clone(),
-                AttemptOutcome::Skipped {
-                    reason: "duplicate path".to_string(),
-                },
-                0,
-            );
-            continue;
+    // tried_steps 用 Vec + contains 检查去重（修正 codex 第四轮 C4）：
+    // 保留实际尝试顺序，避免 HashSet sort 破坏 "agent sockets < identity files < default keys" 语义。
+    // 协议规则七："测试验证意图而非仅行为"——错误消息的意图是反映尝试顺序。
+    let mut tried_steps: Vec<&'static str> = Vec::new();
+    /// 内联辅助：去重 push
+    fn record_step(tried_steps: &mut Vec<&'static str>, step: &'static str) {
+        if !tried_steps.contains(&step) {
+            tried_steps.push(step);
         }
-        let attempt_start = std::time::Instant::now();
-        match try_key_auth_with_timeout(session, username, key_path).await {
-            Ok(()) => {
-                let ms = attempt_start.elapsed().as_millis() as u64;
-                log::info!("Auto auth succeeded with identity file: {}", masked);
-                trace.record_attempt(masked, AttemptOutcome::Used, ms);
-                return Ok(());
-            }
-            Err(e) => {
-                let ms = attempt_start.elapsed().as_millis() as u64;
-                let reason = e.to_string();
-                log::debug!("Identity file {} failed: {}", masked, reason);
-                trace.record_attempt(masked, AttemptOutcome::Failed { reason }, ms);
-            }
-        }
-    }
-    if !identity_files.is_empty() {
-        tried_steps.push("identity files");
     }
 
-    // Step 2: agent sockets
-    if !agent_sockets.is_empty() {
-        match auth_agent(session, username, agent_sockets, trace).await {
-            Ok(()) => {
-                log::info!("Auto auth succeeded with SSH agent");
-                return Ok(());
-            }
-            Err(e) => log::debug!("All agent sockets failed: {}", e),
-        }
-        tried_steps.push("agent sockets");
-    }
+    // 顺序由 plan_auth_candidate_steps 决定（生产模块纯函数，测试守护）：
+    // agent sockets → identity files → default keys
+    //
+    // 注意：ssh_dir 来自函数顶部（417-424 行），保留不变。
+    // plan_auth_candidate_steps 第一个参数是 has_agent: bool（避免 AgentCandidate 类型耦合）。
+    let plan = plan_auth_candidate_steps(!agent_sockets.is_empty(), identity_files);
 
-    // Step 3: default keys (skip already-tried)
-    let mut default_tried = 0;
-    for key_name in DEFAULT_KEY_NAMES {
-        let key_path = ssh_dir.join(key_name);
-        let masked = mask_home_path(&key_path);
-        if !tried_paths.insert(key_path.clone()) {
-            trace.record_attempt(
-                masked,
-                AttemptOutcome::Skipped {
-                    reason: "duplicate path".to_string(),
-                },
-                0,
-            );
-            continue;
+    for step in plan {
+        match step {
+            AuthStep::Agent => {
+                match auth_agent(session, username, agent_sockets, trace).await {
+                    Ok(()) => {
+                        log::info!("Auto auth succeeded with SSH agent");
+                        return Ok(());
+                    }
+                    Err(e) => log::debug!("All agent sockets failed: {}", e),
+                }
+                record_step(&mut tried_steps, "agent sockets");
+            }
+            AuthStep::IdentityFile(key_path) => {
+                let masked = mask_home_path(&key_path);
+                if !tried_paths.insert(key_path.clone()) {
+                    log::debug!("Skipping duplicate identity file: {}", masked);
+                    trace.record_attempt(
+                        masked.clone(),
+                        AttemptOutcome::Skipped {
+                            reason: "duplicate path".to_string(),
+                        },
+                        0,
+                    );
+                    continue;
+                }
+                let attempt_start = std::time::Instant::now();
+                match try_key_auth_with_timeout(session, username, &key_path).await {
+                    Ok(()) => {
+                        let ms = attempt_start.elapsed().as_millis() as u64;
+                        log::info!("Auto auth succeeded with identity file: {}", masked);
+                        trace.record_attempt(masked, AttemptOutcome::Used, ms);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        let ms = attempt_start.elapsed().as_millis() as u64;
+                        let reason = e.to_string();
+                        log::debug!("Identity file {} failed: {}", masked, reason);
+                        // 加密 key 用 Skipped 而非 Failed（与 Task 6 协调）
+                        let outcome = if reason.contains("skipped — passphrases") {
+                            record_step(&mut tried_steps, "encrypted keys (skipped)");
+                            AttemptOutcome::Skipped {
+                                reason: "encrypted key — use ssh-agent".to_string(),
+                            }
+                        } else {
+                            AttemptOutcome::Failed { reason }
+                        };
+                        trace.record_attempt(masked, outcome, ms);
+                    }
+                }
+                record_step(&mut tried_steps, "identity files");
+            }
+            // 修正 codex 第四轮 H1：DefaultKey arm 加 Skipped 分支（与 IdentityFile 对称）
+            // 用户可能把加密 key 放在 ~/.ssh/id_rsa 等默认位置，需要同样友好处理
+            AuthStep::DefaultKey(name) => {
+                // ssh_dir 来自函数顶部（417-424 行的 dirs::home_dir().join(".ssh")）
+                let key_path = ssh_dir.join(name);
+                let masked = mask_home_path(&key_path);
+                if !tried_paths.insert(key_path.clone()) {
+                    trace.record_attempt(
+                        masked,
+                        AttemptOutcome::Skipped {
+                            reason: "duplicate path".to_string(),
+                        },
+                        0,
+                    );
+                    continue;
+                }
+                let attempt_start = std::time::Instant::now();
+                // 用 match 替代 is_ok()，保留错误细节（含 "Key file not found" 等）
+                match try_key_auth_with_timeout(session, username, &key_path).await {
+                    Ok(()) => {
+                        let ms = attempt_start.elapsed().as_millis() as u64;
+                        log::info!("Auto auth succeeded with default key: {}", name);
+                        trace.record_attempt(masked, AttemptOutcome::Used, ms);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        let ms = attempt_start.elapsed().as_millis() as u64;
+                        let reason = e.to_string();
+                        log::debug!("Default key {} failed: {}", name, reason);
+                        let outcome = if reason.contains("skipped — passphrases") {
+                            record_step(&mut tried_steps, "encrypted keys (skipped)");
+                            AttemptOutcome::Skipped {
+                                reason: "encrypted key — use ssh-agent".to_string(),
+                            }
+                        } else {
+                            AttemptOutcome::Failed { reason }
+                        };
+                        trace.record_attempt(masked, outcome, ms);
+                    }
+                }
+                record_step(&mut tried_steps, "default keys");
+            }
         }
-        let attempt_start = std::time::Instant::now();
-        if try_key_auth_with_timeout(session, username, &key_path)
-            .await
-            .is_ok()
-        {
-            let ms = attempt_start.elapsed().as_millis() as u64;
-            log::info!("Auto auth succeeded with default key: {}", key_name);
-            trace.record_attempt(masked, AttemptOutcome::Used, ms);
-            return Ok(());
-        } else {
-            let ms = attempt_start.elapsed().as_millis() as u64;
-            trace.record_attempt(
-                masked,
-                AttemptOutcome::Failed {
-                    reason: "rejected".to_string(),
-                },
-                ms,
-            );
-        }
-        default_tried += 1;
-    }
-    if default_tried > 0 {
-        tried_steps.push("default keys");
     }
 
     Err(AuthError::new(format!(
@@ -765,5 +828,52 @@ mod tests {
         trace.timings.resolve_ms = 42;
         let err = AuthError::with_trace("early failure", trace);
         assert!(err.to_string().contains("resolve: 42ms"));
+    }
+
+    /// Task 2: agent must come first when both agent and identity_files present.
+    #[test]
+    fn test_plan_auth_candidate_steps_agent_first_when_both_present() {
+        let files = vec![std::path::PathBuf::from("/home/u/.ssh/id_ed25519")];
+        let steps = super::plan_auth_candidate_steps(true, &files);
+        assert!(!steps.is_empty());
+        assert!(
+            matches!(steps[0], super::AuthStep::Agent),
+            "agent must come first when both agent and identity_files present"
+        );
+        let first_file_idx = steps
+            .iter()
+            .position(|s| matches!(s, super::AuthStep::IdentityFile(_)))
+            .expect("should have identity file step");
+        let default_idx = steps
+            .iter()
+            .position(|s| matches!(s, super::AuthStep::DefaultKey(_)))
+            .expect("should have default key step");
+        assert!(
+            first_file_idx < default_idx,
+            "identity files must come before default keys"
+        );
+    }
+
+    /// Task 2: only agent → agent first, then default keys (no identity files).
+    #[test]
+    fn test_plan_auth_candidate_steps_only_agent() {
+        let steps = super::plan_auth_candidate_steps(true, &[]);
+        assert!(matches!(steps[0], super::AuthStep::Agent));
+        assert!(steps.len() > 1);
+        assert!(matches!(steps[1], super::AuthStep::DefaultKey(_)));
+    }
+
+    /// Task 2: no agent → identity file first; agent arm must not appear.
+    #[test]
+    fn test_plan_auth_candidate_steps_only_files_when_no_agent() {
+        let files = vec![std::path::PathBuf::from("/home/u/.ssh/company_key")];
+        let steps = super::plan_auth_candidate_steps(false, &files);
+        assert!(
+            matches!(steps[0], super::AuthStep::IdentityFile(_)),
+            "identity file should be first when no agent"
+        );
+        assert!(!steps
+            .iter()
+            .any(|s| matches!(s, super::AuthStep::Agent)));
     }
 }
