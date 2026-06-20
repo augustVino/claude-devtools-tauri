@@ -478,7 +478,11 @@ impl ProjectScanner {
             })
             .unwrap_or(info.birthtime_ms);
 
-        let todo_data = self.load_todo_data(info.name.trim_end_matches(".jsonl"));
+        // list_sessions 阶段不读 todo_data：前端不引用该字段（grep src/ 无 todoData 使用），
+        // 每次 load_todo_data 是一次 SFTP read，N session 累计显著耗时。
+        // 与 Electron buildLightSessionMetadata 一致：light metadata 不附带 todoData。
+        // 若未来前端需要，改为按需在 session 详情打开时单独加载。
+        let _todo_data: Option<serde_json::Value> = None;
 
         Some(Session {
             id: info.session_id,
@@ -486,7 +490,7 @@ impl ProjectScanner {
             project_path: decoded_path,
             created_at,
             updated_at: Some(info.mtime_ms),
-            todo_data,
+            todo_data: _todo_data,
             first_message: preview.first_message,
             message_timestamp: preview.first_timestamp,
             has_subagents: preview.has_task_calls,
