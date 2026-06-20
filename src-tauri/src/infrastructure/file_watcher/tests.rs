@@ -60,6 +60,17 @@ impl FsProvider for MockFsProvider {
     fn read_file_head(&self, _path: &std::path::Path, _max_lines: usize) -> Result<String, String> {
         Ok(String::new())
     }
+    fn read_file_range(
+        &self,
+        _path: &std::path::Path,
+        _offset: u64,
+        _length: Option<u64>,
+    ) -> Result<Vec<u8>, String> {
+        // MockFsProvider 当前不模拟文件内容，返回空 Vec 让 polling/stat 路径不报错。
+        // 如果未来 file_watcher 测试需要 read_file_range 行为，扩展 MockFsProvider
+        // 增加 file_contents: HashMap<PathBuf, Vec<u8>> 字段。
+        Ok(Vec::new())
+    }
     fn stat(&self, _path: &std::path::Path) -> Result<FsStatResult, String> {
         Ok(FsStatResult {
             size: 100,

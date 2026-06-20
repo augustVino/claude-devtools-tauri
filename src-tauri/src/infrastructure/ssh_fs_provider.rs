@@ -214,9 +214,106 @@ impl FsProvider for SshFsProvider {
     }
 
     fn read_file_head(&self, path: &Path, max_lines: usize) -> Result<String, String> {
-        let content = self.read_file(path)?;
+        // 流式读前 64KB，避免读全文（对齐 Electron createReadStream）。
+        // 64KB 通常覆盖 200+ 行 JSONL。
+        //
+        // 修正 codex 第二轮 C4：用 from_utf8_lossy 避免 CJK/emoji 字符在 64KB 边界
+        // 被切断导致 from_utf8 失败 → 回退到全读 → 丢失截断保护。
+        const HEAD_CHUNK_BYTES: u64 = 64 * 1024;
+
+        // 拉取前 64KB 字节
+        let bytes = match self.read_file_range(path, 0, Some(HEAD_CHUNK_BYTES)) {
+            Ok(b) => b,
+            Err(_) => {
+                // SFTP 服务器不支持 seek 或 read with length → 回退到全读
+                let full = self.read_file(path)?;
+                full.into_bytes()
+            }
+        };
+
+        // 关键：判断是否触发了截断（read_file_range 返回的字节数 == HEAD_CHUNK_BYTES）
+        let was_truncated = (bytes.len() as u64) >= HEAD_CHUNK_BYTES;
+
+        // 用 from_utf8_lossy 而非 from_utf8，避免 CJK 字符在 64KB 边界被切坏抛错。
+        // lossy 在边界处用 U+FFFD 替换无效字节，不影响行解析（lines 按 \n 分割）。
+        let mut content = String::from_utf8_lossy(&bytes).into_owned();
+
+        // 截断保护：若读满 64KB 且末尾不是换行，丢弃最后一行（可能是不完整行）
+        if was_truncated && !content.ends_with('\n') {
+            if let Some(last_newline) = content.rfind('\n') {
+                content.truncate(last_newline + 1);
+            } else {
+                // 整个 64KB 是一行（极少见，单行 JSONL > 64KB）→ 清空，让上层用其他方式读取
+                log::warn!(
+                    "read_file_head: 64KB chunk is a single line for {}, content truncated",
+                    path.display()
+                );
+                content.clear();
+            }
+        }
+
         let lines: Vec<&str> = content.lines().take(max_lines).collect();
         Ok(lines.join("\n"))
+    }
+
+    fn read_file_range(
+        &self,
+        path: &Path,
+        offset: u64,
+        length: Option<u64>,
+    ) -> Result<Vec<u8>, String> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+        let path_str = path.to_string_lossy().to_string();
+        let path_for_log = path.to_path_buf();
+        let sftp = self.sftp.clone();
+        let offset_for_closure = offset;
+        let length_for_closure = length;
+
+        crate::utils::retry::retry_transient(
+            "SFTP read_file_range",
+            path,
+            || {
+                // 构造 future（async block 只捕获 sftp: Arc + 拷贝变量，不捕获 &self）
+                let fut = async {
+                    let mut file = sftp.open(&path_str).await.map_err(|e| {
+                        SftpError::IO(format!("open {} failed: {}", path_for_log.display(), e))
+                    })?;
+                    if offset_for_closure > 0 {
+                        file.seek(tokio::io::SeekFrom::Start(offset_for_closure))
+                            .await
+                            .map_err(|e| {
+                                SftpError::IO(format!(
+                                    "seek {} failed: {}",
+                                    path_for_log.display(),
+                                    e
+                                ))
+                            })?;
+                    }
+                    let mut buf = Vec::new();
+                    match length_for_closure {
+                        Some(n) => {
+                            (&mut file).take(n).read_to_end(&mut buf).await.map_err(|e| {
+                                SftpError::IO(format!("read range failed: {}", e))
+                            })?;
+                        }
+                        None => {
+                            file.read_to_end(&mut buf).await.map_err(|e| {
+                                SftpError::IO(format!("read to end failed: {}", e))
+                            })?;
+                        }
+                    }
+                    Ok::<Vec<u8>, SftpError>(buf)
+                };
+                // self.blocking_sftp 在 closure 内调用（&self 借用不跨 closure 调用），
+                // 与现有 read_file 模式相同。
+                let bytes = self.blocking_sftp(fut)?;
+                Ok::<Vec<u8>, SftpError>(bytes)
+            },
+            MAX_RETRIES,
+            RETRY_BASE_DELAY_MS,
+            &|err| classify_sftp_error(err) == SftpErrorKind::Transient,
+        )
+        .map_err(|e| format_sftp_error(path, &e))
     }
 
     fn stat(&self, path: &Path) -> Result<FsStatResult, String> {

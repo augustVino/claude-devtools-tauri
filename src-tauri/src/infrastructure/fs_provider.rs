@@ -59,6 +59,20 @@ pub trait FsProvider: Send + Sync + std::fmt::Debug {
     /// 读取文件前 N 行，适用于大文件的快速预览。
     fn read_file_head(&self, path: &Path, max_lines: usize) -> Result<String, String>;
 
+    /// 读取文件指定字节范围 `[offset, offset + length)`。
+    ///
+    /// 对齐 Electron `createReadStream({start: offset})` (SshFileSystemProvider.ts)。
+    /// - `length = None` → 从 offset 读到 EOF
+    /// - `length = Some(n)` → 最多读 n 字节
+    ///
+    /// 本地实现用 `fs::File::seek + read`；SFTP 实现用 `open + seek + read_to_end`。
+    fn read_file_range(
+        &self,
+        path: &Path,
+        offset: u64,
+        length: Option<u64>,
+    ) -> Result<Vec<u8>, String>;
+
     /// 获取文件元数据。
     fn stat(&self, path: &Path) -> Result<FsStatResult, String>;
 
@@ -120,6 +134,39 @@ impl FsProvider for LocalFsProvider {
             }
         }
         Ok(lines.join("\n"))
+    }
+
+    fn read_file_range(
+        &self,
+        path: &Path,
+        offset: u64,
+        length: Option<u64>,
+    ) -> Result<Vec<u8>, String> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut file = std::fs::File::open(path)
+            .map_err(|e| format!("Failed to open {}: {}", path.display(), e))?;
+        file.seek(SeekFrom::Start(offset))
+            .map_err(|e| format!("Failed to seek {}: {}", path.display(), e))?;
+        let mut buf = Vec::new();
+        match length {
+            Some(n) => {
+                (&mut file)
+                    .take(n)
+                    .read_to_end(&mut buf)
+                    .map_err(|e| format!("Failed to read range in {}: {}", path.display(), e))?;
+            }
+            None => {
+                file.read_to_end(&mut buf).map_err(|e| {
+                    format!(
+                        "Failed to read {} from offset {}: {}",
+                        path.display(),
+                        offset,
+                        e
+                    )
+                })?;
+            }
+        }
+        Ok(buf)
     }
 
     fn stat(&self, path: &Path) -> Result<FsStatResult, String> {
@@ -321,5 +368,59 @@ mod tests {
     fn test_provider_type() {
         let p = provider();
         assert_eq!(p.provider_type(), "local");
+    }
+
+    // ── read_file_range ───────────────────────────────────────
+
+    #[test]
+    fn test_read_file_range_local_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("data.bin");
+        std::fs::write(&file_path, b"0123456789ABCDEF").unwrap();
+
+        let p = provider();
+        let result = p.read_file_range(&file_path, 0, None).unwrap();
+        assert_eq!(result, b"0123456789ABCDEF");
+    }
+
+    #[test]
+    fn test_read_file_range_local_with_offset_and_length() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("data.bin");
+        std::fs::write(&file_path, b"0123456789ABCDEF").unwrap();
+
+        let p = provider();
+        let result = p.read_file_range(&file_path, 4, Some(8)).unwrap();
+        assert_eq!(result, b"456789AB");
+    }
+
+    #[test]
+    fn test_read_file_range_local_offset_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("data.bin");
+        std::fs::write(&file_path, b"0123456789").unwrap();
+
+        let p = provider();
+        let result = p.read_file_range(&file_path, 5, None).unwrap();
+        assert_eq!(result, b"56789");
+    }
+
+    #[test]
+    fn test_read_file_range_local_missing_file_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = provider();
+        let result = p.read_file_range(&dir.path().join("nope"), 0, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_file_head_still_works_after_refactor() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("lines.txt");
+        std::fs::write(&file_path, "line1\nline2\nline3\n").unwrap();
+
+        let p = provider();
+        let result = p.read_file_head(&file_path, 2).unwrap();
+        assert_eq!(result, "line1\nline2");
     }
 }
