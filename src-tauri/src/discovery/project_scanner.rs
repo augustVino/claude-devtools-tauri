@@ -132,6 +132,74 @@ impl ProjectScanner {
         projects
     }
 
+    /// 异步扫描所有项目，用有界并发处理项目目录（对齐 Electron
+    /// ProjectScanner.scan + collectFulfilledInBatches）。
+    ///
+    /// SSH 模式 batch=8，本地模式 batch=24。每个目录在独立 spawn_blocking
+    /// 线程上调用同步 `scan_project`，从而并发执行多个 SFTP read_dir。
+    ///
+    /// 解决 SSH 模式 scan 串行耗时（11 个项目 × ~500ms read_dir ≈ 5.5s）触发
+    /// Tauri webview IPC 长时调用导致 get_projects 失败的问题。
+    pub async fn scan_async(&self) -> Vec<Project> {
+        if !self.fs_provider.exists(&self.projects_dir).unwrap_or(false) {
+            return Vec::new();
+        }
+
+        let entries = match self.fs_provider.read_dir(&self.projects_dir) {
+            Ok(entries) => entries,
+            Err(_) => return Vec::new(),
+        };
+
+        let valid_dirs: Vec<String> = entries
+            .iter()
+            .filter(|d| d.is_directory && path_decoder::is_valid_encoded_path(&d.name))
+            .map(|d| d.name.clone())
+            .collect();
+
+        if valid_dirs.is_empty() {
+            return Vec::new();
+        }
+
+        // 对齐 Electron ProjectScanner.scan: SSH=8, local=24
+        let batch_size = if self.fs_provider.provider_type() == "ssh" {
+            8
+        } else {
+            24
+        };
+
+        let mut projects: Vec<Project> = Vec::new();
+        for chunk in valid_dirs.chunks(batch_size) {
+            let futures: Vec<_> = chunk
+                .iter()
+                .map(|name| {
+                    let name = name.clone();
+                    let projects_dir = self.projects_dir.clone();
+                    let todos_dir = self.todos_dir.clone();
+                    let fs_provider = self.fs_provider.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let scanner =
+                            ProjectScanner::with_paths(projects_dir, todos_dir, fs_provider);
+                        scanner.scan_project(&name)
+                    })
+                })
+                .collect();
+            let results = futures::future::join_all(futures).await;
+            for r in results {
+                if let Ok(ps) = r {
+                    projects.extend(ps);
+                }
+            }
+        }
+
+        projects.sort_by(|a, b| {
+            b.most_recent_session
+                .unwrap_or(0)
+                .cmp(&a.most_recent_session.unwrap_or(0))
+        });
+
+        projects
+    }
+
     /// Scan a single project directory and return project metadata.
     pub fn scan_project(&self, encoded_name: &str) -> Vec<Project> {
         let project_path = self.projects_dir.join(encoded_name);
@@ -156,7 +224,16 @@ impl ProjectScanner {
             return vec![];
         }
 
-        // Extract session IDs, timestamps, and cwd from session files
+        // Extract session IDs, timestamps, and cwd from session files.
+        //
+        // 仅读第一个有 cwd 的 session 文件（first_cwd.is_none() 短路）。
+        // 对齐 Electron ProjectPathResolver.resolveProjectPath:
+        //   const maxPathsToInspect = this.fsProvider.type === 'ssh' ? 1 : sessionPaths.length;
+        // 单项目耗时主要由 read_dir + 1 次 read_file_head 组成；
+        // SSH 模式的整体加速由 scan_async 的有界并发（batch=8）承担，
+        // 不在此处跳过 cwd 提取——否则 Project.path 会回退到 lossy decode，
+        // 导致下游 WorktreeGrouper/RepositoryGroup 名称解析错误
+        // （如 "ai-worktree" 被解析成 "worktree"）。
         let mut session_ids: Vec<String> = Vec::new();
         let mut most_recent_session: Option<u64> = None;
         let mut created_at = u64::MAX;
@@ -685,8 +762,179 @@ impl Default for ProjectScanner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::infrastructure::fs_provider::{FsDirent, FsStatResult};
+    use std::collections::HashMap;
     use std::fs;
+    use std::sync::Mutex as StdMutex;
     use tempfile::TempDir;
+
+    // ── CountingFsProvider（用于验证 SSH 模式 scan 行为） ───────
+
+    #[derive(Debug, Clone)]
+    struct CountingFsProvider {
+        provider_type_str: &'static str,
+        entries: std::sync::Arc<StdMutex<HashMap<String, Vec<FsDirent>>>>,
+        file_contents: std::sync::Arc<StdMutex<HashMap<String, String>>>,
+        read_head_calls: std::sync::Arc<StdMutex<Vec<String>>>,
+    }
+
+    impl CountingFsProvider {
+        fn new(provider_type_str: &'static str) -> Self {
+            Self {
+                provider_type_str,
+                entries: std::sync::Arc::new(StdMutex::new(HashMap::new())),
+                file_contents: std::sync::Arc::new(StdMutex::new(HashMap::new())),
+                read_head_calls: std::sync::Arc::new(StdMutex::new(Vec::new())),
+            }
+        }
+
+        fn set_entries(&self, path: &str, dirents: Vec<FsDirent>) {
+            self.entries
+                .lock()
+                .unwrap()
+                .insert(path.to_string(), dirents);
+        }
+
+        fn set_file_content(&self, path: &str, content: &str) {
+            self.file_contents
+                .lock()
+                .unwrap()
+                .insert(path.to_string(), content.to_string());
+        }
+
+        fn read_head_call_count(&self) -> usize {
+            self.read_head_calls.lock().unwrap().len()
+        }
+    }
+
+    impl FsProvider for CountingFsProvider {
+        fn provider_type(&self) -> &'static str {
+            self.provider_type_str
+        }
+        fn exists(&self, _path: &Path) -> Result<bool, String> {
+            Ok(true)
+        }
+        fn read_file(&self, _path: &Path) -> Result<String, String> {
+            Ok(String::new())
+        }
+        fn read_file_head(&self, path: &Path, _max_lines: usize) -> Result<String, String> {
+            self.read_head_calls
+                .lock()
+                .unwrap()
+                .push(path.to_string_lossy().to_string());
+            Ok(self
+                .file_contents
+                .lock()
+                .unwrap()
+                .get(&path.to_string_lossy().to_string())
+                .cloned()
+                .unwrap_or_default())
+        }
+        fn read_file_range(
+            &self,
+            _path: &Path,
+            _offset: u64,
+            _length: Option<u64>,
+        ) -> Result<Vec<u8>, String> {
+            Ok(Vec::new())
+        }
+        fn stat(&self, _path: &Path) -> Result<FsStatResult, String> {
+            Ok(FsStatResult {
+                size: 0,
+                mtime_ms: 0,
+                birthtime_ms: 0,
+                is_file: true,
+                is_directory: false,
+            })
+        }
+        fn read_dir(&self, path: &Path) -> Result<Vec<FsDirent>, String> {
+            let key = path.to_string_lossy().to_string();
+            self.entries
+                .lock()
+                .unwrap()
+                .get(&key)
+                .cloned()
+                .ok_or_else(|| format!("No entries for {}", key))
+        }
+    }
+
+    fn make_dirent(name: &str, is_file: bool) -> FsDirent {
+        FsDirent {
+            name: name.to_string(),
+            is_file,
+            is_directory: !is_file,
+            size: Some(100),
+            mtime_ms: Some(1_000),
+            birthtime_ms: Some(500),
+        }
+    }
+
+    /// SSH 模式下 scan_project 仍读第 1 个 session 提取 cwd（对齐 Electron
+    /// ProjectPathResolver.resolveProjectPath: maxPathsToInspect = type === 'ssh' ? 1 : ...）。
+    /// 整体加速由 scan_async 的有界并发承担，不在 scan_project 跳过 cwd 提取，
+    /// 否则 Project.path lossy decode 会让下游 WorktreeGrouper 名称解析错误。
+    #[test]
+    fn test_scan_project_reads_first_session_cwd_in_ssh_mode() {
+        let provider = CountingFsProvider::new("ssh");
+        provider.set_entries(
+            "/projects",
+            vec![make_dirent("-Users-test-myproject", false)],
+        );
+        provider.set_entries(
+            "/projects/-Users-test-myproject",
+            vec![
+                make_dirent("session-1.jsonl", true),
+                make_dirent("session-2.jsonl", true),
+                make_dirent("session-3.jsonl", true),
+            ],
+        );
+        // 第一个 session 含 cwd，确保短路生效（首次读到 cwd 即停止后续读取）
+        provider.set_file_content(
+            "/projects/-Users-test-myproject/session-1.jsonl",
+            r#"{"type":"user","cwd":"/Users/test/myproject","message":{"role":"user","content":"hi"}}"#,
+        );
+
+        let scanner = ProjectScanner::with_paths(
+            PathBuf::from("/projects"),
+            PathBuf::from("/todos"),
+            std::sync::Arc::new(provider.clone()),
+        );
+
+        let projects = scanner.scan();
+        assert_eq!(projects.len(), 1, "should find the project");
+        assert_eq!(
+            provider.read_head_call_count(),
+            1,
+            "SSH mode reads only the first session to extract cwd (not all 3)"
+        );
+    }
+
+    /// 本地模式下 scan_project 也只读第一个 session 提取 cwd（短路）。
+    #[test]
+    fn test_scan_project_reads_file_head_in_local_mode() {
+        let provider = CountingFsProvider::new("local");
+        provider.set_entries(
+            "/projects",
+            vec![make_dirent("-Users-test-myproject", false)],
+        );
+        provider.set_entries(
+            "/projects/-Users-test-myproject",
+            vec![make_dirent("session-1.jsonl", true)],
+        );
+
+        let scanner = ProjectScanner::with_paths(
+            PathBuf::from("/projects"),
+            PathBuf::from("/todos"),
+            std::sync::Arc::new(provider.clone()),
+        );
+
+        let projects = scanner.scan();
+        assert_eq!(projects.len(), 1);
+        assert!(
+            provider.read_head_call_count() >= 1,
+            "Local mode should call read_file_head to extract cwd"
+        );
+    }
 
     fn setup_test_env() -> (TempDir, ProjectScanner) {
         let temp_dir = TempDir::new().unwrap();

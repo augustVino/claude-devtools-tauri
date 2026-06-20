@@ -44,7 +44,7 @@ impl ProjectServiceImpl {
 impl super::project_service_trait::ProjectService for ProjectServiceImpl {
     async fn scan_projects(&self) -> Result<Vec<Project>, AppError> {
         let scanner = self.scanner().await?;
-        Ok(scanner.scan())
+        Ok(scanner.scan_async().await)
     }
 
     async fn list_sessions(&self, project_id: &str) -> Result<Vec<Session>, AppError> {
@@ -69,11 +69,9 @@ impl super::project_service_trait::ProjectService for ProjectServiceImpl {
             (projects_dir, scanner)
         };
 
-        if !projects_dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let projects = scanner.scan();
+        // scan_async 内部已用 fs_provider.exists 检查 projects_dir，
+        // 替代原 Path::exists()（本地 fs，SSH 模式下永远 false）。
+        let projects = scanner.scan_async().await;
         if projects.is_empty() {
             return Ok(Vec::new());
         }
