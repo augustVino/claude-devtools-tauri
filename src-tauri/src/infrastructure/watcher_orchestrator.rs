@@ -221,7 +221,8 @@ impl WatcherOrchestrator {
             tauri::async_runtime::spawn(async move {
                 // 订阅主 watcher 的事件
                 let mut error_rx = { file_watcher_for_error.lock().await.receiver() };
-                let detector = crate::error::error_detector::ErrorDetector::new(config_manager);
+                let detector = crate::error::error_detector::ErrorDetector::new(config_manager.clone());
+                // config_manager clone 保留用于 subagent gate（动态读 notification 配置）
                 loop {
                     tokio::select! {
                         result = error_rx.recv() => {
@@ -231,7 +232,16 @@ impl WatcherOrchestrator {
                                     if path.extension().map(|e| e != "jsonl").unwrap_or(true) {
                                         continue;
                                     }
-                                    if crate::utils::is_subagent_file(&event.path) {
+                                    // includeSubagentErrors gate（对齐 Electron FileWatcher.ts:583-596）：
+                                    // 默认 true，但仅在配置开启时处理 subagent 文件。
+                                    // ⚠️ 行为变更：之前无条件 continue 跳过所有 subagent，
+                                    // 接线后默认 true 的用户首次会收到 subagent 错误通知。
+                                    let include_subagent = config_manager
+                                        .get_config()
+                                        .await
+                                        .notifications
+                                        .include_subagent_errors;
+                                    if !include_subagent && crate::utils::is_subagent_file(&event.path) {
                                         continue;
                                     }
                                     let session_id = path.file_stem()
