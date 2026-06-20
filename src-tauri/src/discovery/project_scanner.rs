@@ -51,6 +51,53 @@ pub struct ProjectScanner {
     fs_provider: Arc<dyn FsProvider>,
 }
 
+/// 单个 session 文件的轻量元数据（read_dir 阶段产出，排序后传入 build_session_for_listing）。
+#[derive(Debug, Clone)]
+struct SessionFileInfo {
+    name: String,
+    session_id: String,
+    mtime_ms: u64,
+    birthtime_ms: u64,
+}
+
+/// Free function：并发构建 sessions（所有参数 owned，spawn_blocking 闭包可自由 move）。
+async fn list_sessions_parallel(
+    projects_dir: PathBuf,
+    todos_dir: PathBuf,
+    fs_provider: Arc<dyn FsProvider>,
+    project_id: String,
+    base_dir: String,
+    file_infos: Vec<SessionFileInfo>,
+    batch_size: usize,
+) -> Vec<Session> {
+    let mut sessions: Vec<Session> = Vec::new();
+    for chunk in file_infos.chunks(batch_size) {
+        let futures: Vec<_> = chunk
+            .iter()
+            .map(|info| {
+                let info = info.clone();
+                let pid = project_id.clone();
+                let bdir = base_dir.clone();
+                let projects_dir = projects_dir.clone();
+                let todos_dir = todos_dir.clone();
+                let fs_provider = fs_provider.clone();
+                tokio::task::spawn_blocking(move || {
+                    let scanner =
+                        ProjectScanner::with_paths(projects_dir, todos_dir, fs_provider);
+                    scanner.build_session_for_listing(&pid, &bdir, info)
+                })
+            })
+            .collect();
+        let results = futures::future::join_all(futures).await;
+        for r in results {
+            if let Ok(Some(s)) = r {
+                sessions.push(s);
+            }
+        }
+    }
+    sessions
+}
+
 impl ProjectScanner {
     /// Create a new ProjectScanner with default paths.
     pub fn new() -> Self {
@@ -291,28 +338,69 @@ impl ProjectScanner {
 
     /// List all sessions for a project.
     pub fn list_sessions(&self, project_id: &str) -> Vec<Session> {
+        let file_infos = match self.collect_session_files(project_id) {
+            Some(f) => f,
+            None => return Vec::new(),
+        };
+        if file_infos.is_empty() {
+            return Vec::new();
+        }
+        let base_dir = path_decoder::extract_base_dir(project_id);
+
+        file_infos
+            .into_iter()
+            .filter_map(|info| self.build_session_for_listing(project_id, &base_dir, info))
+            .collect()
+    }
+
+    /// 异步并发版 list_sessions（对齐 Electron collectFulfilledInBatches 模式）。
+    ///
+    /// SSH 模式 batch=8，本地 batch=32。每个 session 在独立 spawn_blocking 线程上
+    /// 调用 build_session_for_listing（包含 extract_session_preview + load_todo_data，
+    /// 共两次 SFTP read）。串行 N session ≈ N 秒，并发后约 N/8 秒。
+    pub async fn list_sessions_async(&self, project_id: &str) -> Vec<Session> {
+        // Shadow to owned to break the method-parameter lifetime, then delegate
+        // to a free function so spawn_blocking closures can capture by move.
+        let project_id = project_id.to_string();
+        let file_infos = match self.collect_session_files(&project_id) {
+            Some(f) => f,
+            None => return Vec::new(),
+        };
+        if file_infos.is_empty() {
+            return Vec::new();
+        }
+        let base_dir = path_decoder::extract_base_dir(&project_id).to_string();
+        let batch_size = if self.fs_provider.provider_type() == "ssh" {
+            8
+        } else {
+            32
+        };
+
+        list_sessions_parallel(
+            self.projects_dir.clone(),
+            self.todos_dir.clone(),
+            self.fs_provider.clone(),
+            project_id,
+            base_dir,
+            file_infos,
+            batch_size,
+        )
+        .await
+    }
+
+    /// Step 1 + 2: read_dir → filter .jsonl → sort by mtime desc（同步，开销小）。
+    /// 返回 None 表示路径不存在或读不到；返回空 Vec 表示项目无 session 文件。
+    fn collect_session_files(&self, project_id: &str) -> Option<Vec<SessionFileInfo>> {
         let base_dir = path_decoder::extract_base_dir(project_id);
         let project_path = self.projects_dir.join(&base_dir);
 
         if !self.fs_provider.exists(&project_path).unwrap_or(false) {
-            return Vec::new();
+            return None;
         }
 
-        let entries = match self.fs_provider.read_dir(&project_path) {
-            Ok(entries) => entries,
-            Err(_) => return Vec::new(),
-        };
+        let entries = self.fs_provider.read_dir(&project_path).ok()?;
 
-        // Step 1: Collect file entries with metadata (lightweight stat calls)
-        struct FileInfo {
-            name: String,
-            session_id: String,
-            mtime_ms: u64,
-            birthtime_ms: u64,
-        }
-
-        let mut file_infos: Vec<FileInfo> = Vec::new();
-
+        let mut file_infos: Vec<SessionFileInfo> = Vec::new();
         for dirent in &entries {
             if !dirent.is_file {
                 continue;
@@ -323,22 +411,15 @@ impl ProjectScanner {
             {
                 continue;
             }
-
-            let session_id = path_decoder::extract_session_id(&dirent.name);
-
-            let mtime_ms = dirent.mtime_ms.unwrap_or(0);
-            let birthtime_ms = dirent.birthtime_ms.unwrap_or(0);
-
-            file_infos.push(FileInfo {
+            file_infos.push(SessionFileInfo {
                 name: dirent.name.clone(),
-                session_id,
-                mtime_ms,
-                birthtime_ms,
+                session_id: path_decoder::extract_session_id(&dirent.name),
+                mtime_ms: dirent.mtime_ms.unwrap_or(0),
+                birthtime_ms: dirent.birthtime_ms.unwrap_or(0),
             });
         }
 
-        // Step 2: Sort by file modification time (most recent first), matching Electron's mtimeMs sort.
-        // Tie-breaker: session ID alphabetical ascending (stable ordering).
+        // Sort by mtime desc, tie-break by session_id asc（与 Electron mtimeMs sort 一致）
         file_infos.sort_by(|a, b| {
             if b.mtime_ms != a.mtime_ms {
                 return b.mtime_ms.cmp(&a.mtime_ms);
@@ -346,73 +427,77 @@ impl ProjectScanner {
             a.session_id.cmp(&b.session_id)
         });
 
-        // Step 3: Build Session objects from sorted file entries
-        let mut sessions: Vec<Session> = Vec::new();
+        Some(file_infos)
+    }
 
-        for info in &file_infos {
-            let entry_path = project_path.join(&info.name);
+    /// Step 3: 为单个 FileInfo 构建 Session（含 extract_session_preview + load_todo_data）。
+    /// 返回 None 表示该 session 被 noise filter 过滤或读不到内容。
+    fn build_session_for_listing(
+        &self,
+        project_id: &str,
+        base_dir: &str,
+        info: SessionFileInfo,
+    ) -> Option<Session> {
+        let project_path = self.projects_dir.join(base_dir);
+        let entry_path = project_path.join(&info.name);
 
-            // Skip noise-only sessions (local filesystem only)
-            if self.fs_provider.provider_type() != "ssh" {
-                if !crate::discovery::session_content_filter::has_non_noise_messages(
-                    &entry_path,
-                    self.fs_provider.as_ref(),
-                ) {
-                    continue;
-                }
+        // Skip noise-only sessions (local filesystem only)
+        if self.fs_provider.provider_type() != "ssh" {
+            if !crate::discovery::session_content_filter::has_non_noise_messages(
+                &entry_path,
+                self.fs_provider.as_ref(),
+            ) {
+                return None;
             }
-
-            let preview = self.extract_session_preview(&entry_path, Some(info.mtime_ms));
-
-            // Skip sessions that couldn't be read (file may have been deleted or is empty)
-            if preview.message_count == 0 && preview.first_message.is_none() {
-                log::debug!(
-                    "Skipping empty or unreadable session file: {}",
-                    entry_path.display()
-                );
-                continue;
-            }
-
-            let decoded_path = preview
-                .cwd
-                .unwrap_or_else(|| self.resolve_project_path(&base_dir));
-
-            // createdAt: use first message timestamp from JSONL, fallback to file birth time.
-            // This matches Electron's buildSessionMetadata() behavior for date grouping.
-            let created_at = preview
-                .first_timestamp
-                .as_ref()
-                .and_then(|ts| {
-                    chrono::DateTime::parse_from_rfc3339(ts)
-                        .or_else(|_| chrono::DateTime::parse_from_rfc2822(ts))
-                        .ok()
-                        .and_then(|dt| dt.timestamp_millis().try_into().ok())
-                })
-                .unwrap_or(info.birthtime_ms);
-
-            let file_name = info.name.as_str();
-
-            sessions.push(Session {
-                id: info.session_id.clone(),
-                project_id: project_id.to_string(),
-                project_path: decoded_path,
-                created_at,
-                updated_at: Some(info.mtime_ms),
-                todo_data: self.load_todo_data(file_name.trim_end_matches(".jsonl")),
-                first_message: preview.first_message,
-                message_timestamp: preview.first_timestamp,
-                has_subagents: preview.has_task_calls,
-                message_count: preview.message_count,
-                is_ongoing: preview.is_ongoing,
-                git_branch: preview.git_branch,
-                metadata_level: Some(SessionMetadataLevel::Light),
-                context_consumption: None,
-                compaction_count: None,
-                phase_breakdown: None,
-            });
         }
 
-        sessions
+        let preview = self.extract_session_preview(&entry_path, Some(info.mtime_ms));
+
+        // Skip sessions that couldn't be read (file may have been deleted or is empty)
+        if preview.message_count == 0 && preview.first_message.is_none() {
+            log::debug!(
+                "Skipping empty or unreadable session file: {}",
+                entry_path.display()
+            );
+            return None;
+        }
+
+        let decoded_path = preview
+            .cwd
+            .clone()
+            .unwrap_or_else(|| self.resolve_project_path(base_dir));
+
+        let created_at = preview
+            .first_timestamp
+            .as_ref()
+            .and_then(|ts| {
+                chrono::DateTime::parse_from_rfc3339(ts)
+                    .or_else(|_| chrono::DateTime::parse_from_rfc2822(ts))
+                    .ok()
+                    .and_then(|dt| dt.timestamp_millis().try_into().ok())
+            })
+            .unwrap_or(info.birthtime_ms);
+
+        let todo_data = self.load_todo_data(info.name.trim_end_matches(".jsonl"));
+
+        Some(Session {
+            id: info.session_id,
+            project_id: project_id.to_string(),
+            project_path: decoded_path,
+            created_at,
+            updated_at: Some(info.mtime_ms),
+            todo_data,
+            first_message: preview.first_message,
+            message_timestamp: preview.first_timestamp,
+            has_subagents: preview.has_task_calls,
+            message_count: preview.message_count,
+            is_ongoing: preview.is_ongoing,
+            git_branch: preview.git_branch,
+            metadata_level: Some(SessionMetadataLevel::Light),
+            context_consumption: None,
+            compaction_count: None,
+            phase_breakdown: None,
+        })
     }
 
     /// Read the first 200 lines of a JSONL file to extract preview metadata.

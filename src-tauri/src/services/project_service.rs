@@ -49,7 +49,7 @@ impl super::project_service_trait::ProjectService for ProjectServiceImpl {
 
     async fn list_sessions(&self, project_id: &str) -> Result<Vec<Session>, AppError> {
         let scanner = self.scanner().await?;
-        Ok(scanner.list_sessions(project_id))
+        Ok(scanner.list_sessions_async(project_id).await)
     }
 
     async fn get_repository_groups(&self) -> Result<Vec<RepositoryGroup>, AppError> {
