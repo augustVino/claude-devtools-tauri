@@ -317,16 +317,9 @@ impl SessionServiceImpl {
     // ════════════════════════════════════════════════════════════════
     //  会话列表
     // ════════════════════════════════════════════════════════════════
-
-    /// 获取指定项目下的所有会话列表。
-    ///
-    /// 扫描项目目录下的 `.jsonl` 文件，构建会话元数据，并按文件修改时间降序排列。
-    pub async fn get_sessions(&self, project_id: &str) -> Result<Vec<Session>, AppError> {
-        // 委托给 ProjectService::list_sessions（已 SSH-aware + 并发优化）。
-        // 原实现用 tokio::fs::read_dir 在 SSH 模式下报 ENOENT (os error 2)，
-        // 且与 list_sessions 是平行重复实现。统一走 list_sessions_async 路径。
-        self.project_service.list_sessions(project_id).await
-    }
+    // 注：原 SessionService::get_sessions 已删除（与 ProjectService::list_sessions
+    // 重叠）。完整列表语义统一走 ProjectService::list_sessions（discovery 层）。
+    // SessionService 保留分页/批量查询变体（语义不同）和详情类操作。
 
     /// 分页获取指定项目的会话列表。
     ///
@@ -841,12 +834,6 @@ impl SessionServiceImpl {
 
 #[async_trait]
 impl super::session_service_trait::SessionService for SessionServiceImpl {
-    async fn get_sessions(
-        &self,
-        project_id: &str,
-    ) -> Result<Vec<crate::types::domain::Session>, AppError> {
-        self.get_sessions(project_id).await
-    }
 
     async fn get_session_detail(
         &self,
@@ -929,26 +916,5 @@ mod tests {
     /// 构造空 ContextManager（无任何 context 注册），用于测试无 active context 场景。
     fn make_empty_context_manager() -> Arc<RwLock<ContextManager>> {
         Arc::new(RwLock::new(ContextManager::new()))
-    }
-
-    #[tokio::test]
-    async fn test_get_sessions_returns_error_when_no_active_context() {
-        let empty_cm = make_empty_context_manager();
-        let config_manager = Arc::new(crate::infrastructure::ConfigManager::new());
-        let project_service: Arc<dyn ProjectService> =
-            Arc::new(crate::services::ProjectServiceImpl::new(empty_cm.clone()));
-        let repo: Arc<dyn crate::infrastructure::session_repository::SessionRepository> = Arc::new(
-            crate::infrastructure::local_session_repository::LocalSessionRepository::new(
-                Arc::new(crate::infrastructure::LocalFsProvider::new()),
-                PathBuf::from("/tmp"),
-                PathBuf::from("/tmp"),
-            ),
-        );
-        let svc = SessionServiceImpl::new(empty_cm, config_manager, project_service, repo);
-
-        let result = svc.get_sessions("any-project").await;
-        assert!(
-            matches!(result, Err(AppError::Internal(msg)) if msg.contains("No active ServiceContext"))
-        );
     }
 }

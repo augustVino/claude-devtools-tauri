@@ -172,4 +172,16 @@ mod tests {
             matches!(result, Err(AppError::Internal(msg)) if msg.contains("No active ServiceContext"))
         );
     }
+
+    /// 迁移自原 SessionService::get_sessions 同名测试。
+    /// SessionService::get_sessions 已删除（与 ProjectService::list_sessions 重叠），
+    /// 此测试保留"无 active context 时正确报错"的回归保护。
+    #[tokio::test]
+    async fn test_list_sessions_returns_error_when_no_active_context() {
+        let svc = ProjectServiceImpl::new(make_empty_context_manager());
+        let result = svc.list_sessions("any-project").await;
+        assert!(
+            matches!(result, Err(AppError::Internal(msg)) if msg.contains("No active ServiceContext"))
+        );
+    }
 }

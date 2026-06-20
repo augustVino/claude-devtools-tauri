@@ -23,11 +23,11 @@ pub use super::AppState;
 
 #[command]
 pub async fn get_sessions(
-    service: State<'_, Arc<dyn SessionService>>,
+    project_service: State<'_, Arc<dyn crate::services::ProjectService>>,
     project_id: String,
 ) -> Result<Vec<Session>, String> {
-    service
-        .get_sessions(&project_id)
+    project_service
+        .list_sessions(&project_id)
         .await
         .map_err(|e| e.into_tauri_string())
 }

@@ -38,8 +38,8 @@ pub async fn get_sessions(
 ) -> Result<Json<Vec<Session>>, (StatusCode, Json<super::ErrorResponse>)> {
     let safe_id = guards::validate_project_id(&project_id).map_err(error_json)?;
     state
-        .session_service
-        .get_sessions(&safe_id)
+        .project_service
+        .list_sessions(&safe_id)
         .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))

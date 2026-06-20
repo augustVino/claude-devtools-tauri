@@ -10,7 +10,6 @@ use async_trait::async_trait;
 
 #[async_trait]
 pub trait SessionService: Send + Sync {
-    async fn get_sessions(&self, project_id: &str) -> Result<Vec<Session>, AppError>;
     async fn get_session_detail(
         &self,
         project_id: &str,
