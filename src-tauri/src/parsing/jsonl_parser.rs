@@ -337,6 +337,42 @@ pub async fn parse_jsonl_file_with_provider(
     parse_jsonl_lines(&content)
 }
 
+/// 增量解析：从 byte offset 读到 EOF，返回 (new_messages, new_offset)。
+///
+/// 对齐 Electron `parseAppendedMessages`（FileWatcher.ts:733-788）。
+///
+/// # 末尾 partial 行处理
+/// 找最后一个 `\n`，仅解析 safe_end 之前的完整行；末尾无尾换行的 partial
+/// 行不计入 new_offset，下次重读。这保证写一半的 JSON 行不会被错误解析。
+///
+/// # 简化偏差（与 Electron）
+/// Electron 在 trailing partial 时仍尝试解析（行可能恰好完整只是缺尾换行）；
+/// Tauri 无条件丢弃。对错误检测影响小（只关心已写完的 message），注释标注。
+///
+/// # Phase 4B 用法
+/// watcher_orchestrator 错误检测 task 用此函数做增量解析，避免每次全量读
+/// 大 session 文件（SSH 上几 MB 文件全量读 ~秒级）。
+#[allow(dead_code)] // Phase 4B 启用；提前 commit 降低 4B 风险
+pub async fn parse_jsonl_from_offset(
+    file_path: &std::path::Path,
+    offset: u64,
+    fs_provider: &dyn crate::infrastructure::fs_provider::FsProvider,
+) -> (Vec<ParsedMessage>, u64) {
+    let bytes = match fs_provider.read_file_range(file_path, offset, None) {
+        Ok(b) => b,
+        Err(_) => return (vec![], offset),
+    };
+    // 末尾安全截断：找最后一个 '\n'，partial 行下次重读
+    let safe_end = bytes
+        .iter()
+        .rposition(|&b| b == b'\n')
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let content = String::from_utf8_lossy(&bytes[..safe_end]);
+    let msgs = parse_jsonl_lines(&content);
+    (msgs, offset + safe_end as u64)
+}
+
 /// Shared line-parsing logic (provider-agnostic).
 fn parse_jsonl_lines(content: &str) -> Vec<ParsedMessage> {
     let mut messages = vec![];
@@ -667,4 +703,103 @@ mod tests {
             request_id: None,
         }
     }
+
+    // ── parse_jsonl_from_offset 增量解析测试 ───────────────────────
+
+    use crate::infrastructure::fs_provider::LocalFsProvider;
+    use std::sync::Arc;
+
+    fn write_jsonl_fixture(dir: &tempfile::TempDir, name: &str, content: &str) -> std::path::PathBuf {
+        let path = dir.path().join(name);
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_parse_jsonl_from_offset_appended_lines() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let provider = Arc::new(LocalFsProvider::new());
+
+        // 初始：3 行用户消息
+        let initial = "{\"type\":\"user\",\"uuid\":\"u1\",\"message\":{\"role\":\"user\",\"content\":\"a\"}}\n\
+                       {\"type\":\"user\",\"uuid\":\"u2\",\"message\":{\"role\":\"user\",\"content\":\"b\"}}\n\
+                       {\"type\":\"user\",\"uuid\":\"u3\",\"message\":{\"role\":\"user\",\"content\":\"c\"}}\n";
+        let path = write_jsonl_fixture(&dir, "session.jsonl", &initial);
+        let initial_size = initial.len() as u64;
+
+        // 全量解析（offset=0）
+        let (msgs, offset) = rt
+            .block_on(parse_jsonl_from_offset(&path, 0, provider.as_ref()));
+        assert_eq!(msgs.len(), 3, "initial parse should return 3 messages");
+        assert_eq!(offset, initial_size, "offset should advance to end of complete lines");
+
+        // Append 2 行新消息
+        let appended = "{\"type\":\"user\",\"uuid\":\"u4\",\"message\":{\"role\":\"user\",\"content\":\"d\"}}\n\
+                        {\"type\":\"user\",\"uuid\":\"u5\",\"message\":{\"role\":\"user\",\"content\":\"e\"}}\n";
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(appended.as_bytes())
+            .unwrap();
+
+        // 增量解析（offset=initial_size）
+        let (new_msgs, new_offset) = rt
+            .block_on(parse_jsonl_from_offset(&path, initial_size, provider.as_ref()));
+        assert_eq!(new_msgs.len(), 2, "incremental parse should return only 2 new messages");
+        assert!(new_offset > initial_size, "offset should advance past appended bytes");
+    }
+
+    #[test]
+    fn test_parse_jsonl_from_offset_partial_line_not_consumed() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let provider = Arc::new(LocalFsProvider::new());
+
+        // 1 完整行 + 1 partial 行（无尾换行）
+        let content = "{\"type\":\"user\",\"uuid\":\"u1\",\"message\":{\"role\":\"user\",\"content\":\"a\"}}\n\
+                       {\"type\":\"user\",\"uuid\":\"partial\"";
+        let path = write_jsonl_fixture(&dir, "partial.jsonl", content);
+        let complete_end = content.find('\n').map(|i| i + 1).unwrap() as u64;
+
+        let (msgs, offset) = rt
+            .block_on(parse_jsonl_from_offset(&path, 0, provider.as_ref()));
+        assert_eq!(msgs.len(), 1, "only the complete first line should parse");
+        assert_eq!(
+            offset, complete_end,
+            "offset must stop at last '\\n', partial line not consumed"
+        );
+
+        // Simulate flush: append closing bytes + newline
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b",\"message\":{\"role\":\"user\",\"content\":\"b\"}}\n")
+            .unwrap();
+
+        let (more_msgs, _) = rt
+            .block_on(parse_jsonl_from_offset(&path, offset, provider.as_ref()));
+        assert_eq!(more_msgs.len(), 1, "previously partial line should now parse after flush");
+    }
+
+    #[test]
+    fn test_parse_jsonl_from_offset_empty_after_offset() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let provider = Arc::new(LocalFsProvider::new());
+
+        let initial = "{\"type\":\"user\",\"uuid\":\"u1\",\"message\":{\"role\":\"user\",\"content\":\"a\"}}\n";
+        let path = write_jsonl_fixture(&dir, "empty.jsonl", &initial);
+        let initial_size = initial.len() as u64;
+
+        // 读 offset=EOF，应返回 0 消息 + offset 不变
+        let (msgs, offset) = rt
+            .block_on(parse_jsonl_from_offset(&path, initial_size, provider.as_ref()));
+        assert!(msgs.is_empty(), "no new bytes after offset → empty messages");
+        assert_eq!(offset, initial_size, "offset unchanged when nothing to read");
+    }
 }
+
+use std::io::Write;
