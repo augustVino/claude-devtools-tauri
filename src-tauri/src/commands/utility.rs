@@ -323,10 +323,11 @@ pub struct MentionedFileInfo {
     pub estimated_tokens: usize,
 }
 
-/// Read a mentioned file for context injection.
+/// Read a mentioned file for context injection. SSH-aware via active context.
 /// Returns MentionedFileInfo with token count (matches Electron HTTP API behavior).
 #[tauri::command]
 pub async fn read_mentioned_file(
+    context_manager: tauri::State<'_, std::sync::Arc<tokio::sync::RwLock<crate::infrastructure::ContextManager>>>,
     file_path: String,
     _project_root: String,
     max_tokens: Option<usize>,
@@ -334,12 +335,25 @@ pub async fn read_mentioned_file(
     let max_tokens_limit = max_tokens.unwrap_or(25000);
     let path = Path::new(&file_path);
 
+    let fs_provider = {
+        let mgr = context_manager.read().await;
+        let active = mgr
+            .get_active()
+            .ok_or_else(|| "No active ServiceContext".to_string())?;
+        let ctx = active.read().await;
+        ctx.fs_provider.clone()
+    };
+
     // Skip non-existent paths and directories
-    if !path.exists() || path.is_dir() {
+    let stat = match fs_provider.stat(path) {
+        Ok(s) => s,
+        Err(_) => return Ok(None),
+    };
+    if stat.is_directory {
         return Ok(None);
     }
 
-    match tokio::fs::read_to_string(path).await {
+    match fs_provider.read_file(path) {
         Ok(content) => {
             if content.len() > 1_000_000 {
                 return Ok(None);

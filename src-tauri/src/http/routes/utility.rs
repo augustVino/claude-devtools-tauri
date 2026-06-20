@@ -114,7 +114,7 @@ pub struct MentionedFileInfo {
 ///
 /// POST /api/read-mentioned-file
 pub async fn read_mentioned_file(
-    State(_state): State<HttpState>,
+    State(state): State<HttpState>,
     Json(body): Json<ReadMentionedFileRequest>,
 ) -> Result<Json<Option<MentionedFileInfo>>, (StatusCode, Json<super::ErrorResponse>)> {
     let max_tokens_limit = body.max_tokens.unwrap_or(25000);
@@ -142,12 +142,26 @@ pub async fn read_mentioned_file(
         .normalized_path
         .unwrap_or_else(|| Path::new(&body.absolute_path).to_path_buf());
 
+    // SSH-aware: 从 active context 取 fs_provider
+    let fs_provider = {
+        let mgr = state.context_manager.read().await;
+        let active = mgr
+            .get_active()
+            .ok_or_else(|| error_json("No active ServiceContext".to_string()))?;
+        let ctx = active.read().await;
+        ctx.fs_provider.clone()
+    };
+
     // 跳过不存在的路径和目录
-    if !path.exists() || path.is_dir() {
+    let stat = match fs_provider.stat(&path) {
+        Ok(s) => s,
+        Err(_) => return Ok(Json(None)),
+    };
+    if stat.is_directory {
         return Ok(Json(None));
     }
 
-    match tokio::fs::read_to_string(path).await {
+    match fs_provider.read_file(&path) {
         Ok(content) => {
             if content.len() > 1_000_000 {
                 return Ok(Json(None));
