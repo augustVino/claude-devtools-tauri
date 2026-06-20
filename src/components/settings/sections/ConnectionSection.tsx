@@ -25,6 +25,7 @@ import type {
   SshConnectionConfig,
   SshConnectionProfile,
 } from '@shared/types';
+import { normalizeSshAuthMethod } from '@shared/types';
 
 const authMethodOptions: readonly { value: SshAuthMethod; label: string }[] = [
   { value: 'auto', label: 'Auto (from SSH Config)' },
@@ -102,7 +103,7 @@ export const ConnectionSection = (): React.JSX.Element => {
       setHost(lastSshConfig.host);
       setPort(String(lastSshConfig.port));
       setUsername(lastSshConfig.username);
-      setAuthMethod(lastSshConfig.authMethod);
+      setAuthMethod(normalizeSshAuthMethod(lastSshConfig.authMethod));
       if (lastSshConfig.privateKeyPath) {
         setPrivateKeyPath(lastSshConfig.privateKeyPath);
       }
@@ -155,7 +156,7 @@ export const ConnectionSection = (): React.JSX.Element => {
     setHost(profile.host);
     setPort(String(profile.port));
     setUsername(profile.username);
-    setAuthMethod(profile.authMethod);
+    setAuthMethod(normalizeSshAuthMethod(profile.authMethod));
     if (profile.privateKeyPath) setPrivateKeyPath(profile.privateKeyPath);
     setPassword('');
     setTestResult(null);

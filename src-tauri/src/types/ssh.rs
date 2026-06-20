@@ -15,13 +15,36 @@ pub struct SshConnectionConfig {
 }
 
 /// SSH 认证方式。
-/// CRITICAL: rename_all = "camelCase" 使 PrivateKey → "privateKey"
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+///
+/// serde 设计：删除 enum 级 `rename_all`（与 per-variant `rename` 冲突），改 per-variant
+/// `rename` + 多 `alias`，向后兼容老 profile 的 `sshConfig` / `ssh_config` / `SshConfig` /
+/// `private_key` / `identity_file` 等历史值，全部归一到 `Auto`（对齐 Electron `sshConfig`
+/// 语义：自动尝试 agent → IdentityFile → 默认 key）。
+///
+/// Serialize 方向：`Password` → `"password"`、`PrivateKey` → `"privateKey"`、
+/// `Agent` → `"agent"`、`Auto` → `"auto"`（与原 rename_all 行为一致）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SshAuthMethod {
+    #[serde(alias = "password", alias = "Password", rename = "password")]
     Password,
+    #[serde(
+        alias = "private_key",
+        alias = "PrivateKey",
+        alias = "identity_file",
+        alias = "IdentityFile",
+        rename = "privateKey"
+    )]
     PrivateKey,
+    #[serde(alias = "agent", alias = "Agent", rename = "agent")]
     Agent,
+    #[serde(
+        alias = "auto",
+        alias = "Auto",
+        alias = "sshConfig",
+        alias = "ssh_config",
+        alias = "SshConfig",
+        rename = "auto"
+    )]
     Auto,
 }
 

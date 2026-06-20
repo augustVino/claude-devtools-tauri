@@ -244,8 +244,34 @@ export type SshConnectionState =
 
 /**
  * SSH authentication method.
+ *
+ * Tauri 后端 SshAuthMethod enum 已支持多 casing alias（sshConfig / ssh_config /
+ * SshConfig / private_key / identity_file 等老值全部归一到 "auto"，对齐
+ * Electron `sshConfig` 语义）。前端通过 `normalizeSshAuthMethod` 在读取老 profile
+ * 时统一归一，避免类型不匹配。
  */
 export type SshAuthMethod = "password" | "privateKey" | "agent" | "auto";
+
+/**
+ * 归一化老 profile 的 authMethod 值。
+ *
+ * - "password" / "privateKey" / "agent" 原样返回（合法值）
+ * - 其他值（包括 "sshConfig" / "ssh_config" / "SshConfig" / "identity_file" /
+ *   "IdentityFile" / undefined / unknown）统一归一到 "auto"
+ *
+ * 用于：
+ * - 读取老 profile / lastSshConfig 时（ConnectionSection）
+ * - 写入 lastSshConfig 前（connectionSlice saveLastConnection）
+ * - WorkspaceSection handleAdd/handleEdit 写入前
+ *
+ * 与后端 Rust 端 `SshAuthMethod` enum 的 serde alias 列表保持同步。
+ */
+export function normalizeSshAuthMethod(raw: unknown): SshAuthMethod {
+  if (raw === "password" || raw === "privateKey" || raw === "agent") {
+    return raw;
+  }
+  return "auto";
+}
 
 /**
  * SSH config host entry resolved from ~/.ssh/config.

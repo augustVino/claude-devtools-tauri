@@ -22,6 +22,7 @@ import { SettingsSectionHeader } from '../components/SettingsSectionHeader';
 import { SettingsSelect } from '../components/SettingsSelect';
 
 import type { SshAuthMethod, SshConnectionProfile } from '@shared/types';
+import { normalizeSshAuthMethod } from '@shared/types';
 
 const inputClass = 'w-full rounded-md border px-3 py-1.5 text-sm focus:outline-none focus:ring-1';
 const inputStyle = {
@@ -94,7 +95,7 @@ export const WorkspaceSection = (): React.JSX.Element => {
         setFormHost(profile.host);
         setFormPort(String(profile.port));
         setFormUsername(profile.username);
-        setFormAuthMethod(profile.authMethod);
+        setFormAuthMethod(normalizeSshAuthMethod(profile.authMethod));
         setFormPrivateKeyPath(profile.privateKeyPath ?? '');
       }
     }

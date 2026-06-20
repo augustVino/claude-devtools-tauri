@@ -20,3 +20,6 @@ export type * from './visualization';
 
 // Re-export API types (ElectronAPI, ConfigAPI, etc.)
 export type * from './api';
+
+// Re-export normalizeSshAuthMethod function (not a type, needs explicit value re-export)
+export { normalizeSshAuthMethod } from './api';

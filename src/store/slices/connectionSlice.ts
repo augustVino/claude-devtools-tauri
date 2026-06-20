@@ -115,7 +115,7 @@ export const createConnectionSlice: StateCreator<AppState, [], [], ConnectionSli
           host: config.host,
           port: config.port,
           username: config.username,
-          authMethod: config.authMethod,
+          authMethod: normalizeSshAuthMethod(config.authMethod),
           privateKeyPath: config.privateKeyPath,
         };
         set({ lastSshConfig: saved });
