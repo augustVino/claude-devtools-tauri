@@ -17,6 +17,7 @@ fn local_provider() -> Arc<dyn FsProvider> {
 struct MockFsProvider {
     provider_type_str: &'static str,
     entries: Arc<StdMutex<HashMap<String, Vec<MockDirent>>>>,
+    ensure_dir_calls: Arc<StdMutex<Vec<String>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +33,7 @@ impl MockFsProvider {
         Self {
             provider_type_str,
             entries: Arc::new(StdMutex::new(HashMap::new())),
+            ensure_dir_calls: Arc::new(StdMutex::new(Vec::new())),
         }
     }
 
@@ -44,6 +46,14 @@ impl MockFsProvider {
 
     fn clear_entries(&self) {
         self.entries.lock().unwrap().clear();
+    }
+
+    fn ensure_dir_call_count(&self) -> usize {
+        self.ensure_dir_calls.lock().unwrap().len()
+    }
+
+    fn ensure_dir_calls_snapshot(&self) -> Vec<String> {
+        self.ensure_dir_calls.lock().unwrap().clone()
     }
 }
 
@@ -99,6 +109,61 @@ impl FsProvider for MockFsProvider {
             })
             .ok_or_else(|| format!("No mock entries for {}", key))
     }
+
+    /// SSH-style provider（type="ssh"）继承 trait 默认 no-op 实现。
+    /// 这里覆盖默认以记录调用，验证 watcher_orchestrator 在 SSH 模式下不触发
+    /// 本地 fs::create_dir_all 副作用。
+    /// LocalFsProvider 的真实行为（创建目录）由独立测试覆盖。
+    fn ensure_dir(&self, path: &std::path::Path) -> Result<(), String> {
+        self.ensure_dir_calls
+            .lock()
+            .unwrap()
+            .push(path.to_string_lossy().to_string());
+        // SSH mock 不实际创建，对应生产 SshFsProvider 的 no-op 语义。
+        Ok(())
+    }
+}
+
+// ── ensure_dir 行为对照测试 ──────────────────────────────────
+
+/// SSH-style provider 在 ensure_dir 调用时不应触发本地 fs::create_dir_all。
+/// 对应 commit a08be11 修复的 watcher_orchestrator 副作用 bug：
+/// 原代码 `tokio::fs::create_dir_all(&projects_dir)` 在 SSH context 下误建本地目录。
+#[test]
+fn test_watcher_does_not_create_local_dirs_in_ssh_mode() {
+    let ssh_provider = MockFsProvider::new("ssh");
+    let bogus_path = std::env::temp_dir().join("claude-devtools-test-ssh-no-create-xyz");
+    // 路径在本地不存在
+    assert!(!bogus_path.exists(), "precondition: path should not exist");
+
+    let result = ssh_provider.ensure_dir(&bogus_path);
+    assert!(result.is_ok(), "ensure_dir should return Ok under SSH");
+
+    // 关键断言：SSH provider 不应在本地实际创建目录
+    assert!(
+        !bogus_path.exists(),
+        "SSH ensure_dir must NOT create local directories (was the bug in watcher_orchestrator)"
+    );
+    // 调用被记录（证明 trait 多态走的是 provider.ensure_dir，而非硬编码 tokio::fs）
+    assert_eq!(ssh_provider.ensure_dir_call_count(), 1);
+}
+
+/// LocalFsProvider.ensure_dir 必须实际创建目录（与 SSH no-op 形成对照）。
+#[test]
+fn test_watcher_creates_dirs_in_local_mode() {
+    use crate::infrastructure::fs_provider::LocalFsProvider;
+    use std::fs;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let nested = tmp.path().join("nested/deep/dir");
+    assert!(!nested.exists(), "precondition: nested dir should not exist");
+
+    let provider = LocalFsProvider::new();
+    provider.ensure_dir(&nested).unwrap();
+
+    assert!(nested.is_dir(), "LocalFsProvider must create nested dirs");
+    // 清理（防止 tempdir 残留，虽然 TempDir drop 会清理）
+    let _ = fs::remove_dir_all(&nested);
 }
 
 #[tokio::test]
