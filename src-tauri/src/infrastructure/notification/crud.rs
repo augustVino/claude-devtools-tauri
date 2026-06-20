@@ -63,10 +63,14 @@ impl NotificationManager {
 
         // --- 插入到头部（最新的在前） ---
         {
-            let mut notifications = self.notifications.write().map_err(|e| {
-                error!("Failed to acquire write lock: {e}");
-                e
-            }).ok()?;
+            let mut notifications = self
+                .notifications
+                .write()
+                .map_err(|e| {
+                    error!("Failed to acquire write lock: {e}");
+                    e
+                })
+                .ok()?;
 
             notifications.insert(0, stored.clone());
         }
@@ -97,14 +101,15 @@ impl NotificationManager {
         let limit = options.limit.unwrap_or(20);
         let offset = options.offset.unwrap_or(0);
 
-        let notifications = self.notifications.read().map(|n| n.clone()).unwrap_or_default();
+        let notifications = self
+            .notifications
+            .read()
+            .map(|n| n.clone())
+            .unwrap_or_default();
         let total = notifications.len();
 
-        let page: Vec<StoredNotification> = notifications
-            .into_iter()
-            .skip(offset)
-            .take(limit)
-            .collect();
+        let page: Vec<StoredNotification> =
+            notifications.into_iter().skip(offset).take(limit).collect();
 
         let unread_count = self
             .notifications
@@ -258,7 +263,9 @@ impl NotificationManager {
         for notification in &notifications {
             let project_name = &notification.error.context.project_name;
             *by_project.entry(project_name.clone()).or_insert(0) += 1;
-            *by_source.entry(notification.error.source.clone()).or_insert(0) += 1;
+            *by_source
+                .entry(notification.error.source.clone())
+                .or_insert(0) += 1;
         }
 
         let unread = notifications.iter().filter(|n| !n.is_read).count();

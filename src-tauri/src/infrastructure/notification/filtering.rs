@@ -6,7 +6,7 @@ use crate::parsing::git_identity::GitIdentityResolver;
 use crate::types::config::DetectedError;
 use crate::utils::path_decoder;
 
-use super::{NotificationManager, THROTTLE_MS, MAX_REGEX_CACHE_SIZE};
+use super::{NotificationManager, MAX_REGEX_CACHE_SIZE, THROTTLE_MS};
 
 /// Extension trait grouping filtering/throttling methods on NotificationManager.
 ///
@@ -110,7 +110,9 @@ impl NotificationManager {
 
             // 未命中缓存，编译并缓存
             let compiled = crate::utils::regex_validation::create_safe_regex(&case_insensitive);
-            let is_match = compiled.as_ref().map_or(false, |re| re.is_match(&error.message));
+            let is_match = compiled
+                .as_ref()
+                .map_or(false, |re| re.is_match(&error.message));
 
             {
                 let mut cache = self.regex_cache.lock().unwrap_or_else(|e| e.into_inner());
@@ -163,7 +165,7 @@ impl NotificationManager {
                 return false;
             }
             // 暂停已过期 — 清除暂停状态
-            let _ = self.config_manager.clear_snooze().await;  // explicitly discard Result
+            let _ = self.config_manager.clear_snooze().await; // explicitly discard Result
             return true;
         }
 

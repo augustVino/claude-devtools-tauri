@@ -12,11 +12,11 @@
 //! 因此不受 shell 注入影响。`opener_id` 通过 `OpenTargetId::from_str` 白名单校验，
 //! 未知值直接返回 `Err`。
 
+use crate::error::AppError;
+use crate::types::memory::OpenTarget;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::process::Command;
-use crate::error::AppError;
-use crate::types::memory::OpenTarget;
 
 /// opener_id 白名单。未知值返回 Err。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -233,12 +233,7 @@ pub async fn detect_installations() -> Vec<OpenTarget> {
     let detections: Vec<_> = APP_SPECS
         .iter()
         .map(|spec| async move {
-            match tokio::time::timeout(
-                Duration::from_secs(2),
-                detect_single_app(spec),
-            )
-            .await
-            {
+            match tokio::time::timeout(Duration::from_secs(2), detect_single_app(spec)).await {
                 Ok(available) => spec.to_target(available),
                 Err(_) => spec.to_target(false), // timeout = not available
             }
@@ -256,11 +251,12 @@ pub async fn detect_installations() -> Vec<OpenTarget> {
 /// 非 macOS 平台返回 Err(OpenFailed)。
 pub async fn open_with(opener_id: &str, path: &str, is_directory: bool) -> Result<(), AppError> {
     if cfg!(not(target_os = "macos")) {
-        return Err(AppError::OpenFailed("Not supported on this platform".into()));
+        return Err(AppError::OpenFailed(
+            "Not supported on this platform".into(),
+        ));
     }
 
-    let target_id =
-        OpenTargetId::from_str(opener_id).map_err(|e| AppError::InvalidInput(e))?;
+    let target_id = OpenTargetId::from_str(opener_id).map_err(|e| AppError::InvalidInput(e))?;
 
     match target_id {
         OpenTargetId::Finder => {
@@ -270,13 +266,12 @@ pub async fn open_with(opener_id: &str, path: &str, is_directory: bool) -> Resul
                 cmd.arg("-R");
             }
             cmd.arg(path);
-            let output = cmd.output().await.map_err(|e| {
-                AppError::OpenFailed(format!("Failed to open in Finder: {e}"))
-            })?;
+            let output = cmd
+                .output()
+                .await
+                .map_err(|e| AppError::OpenFailed(format!("Failed to open in Finder: {e}")))?;
             if !output.status.success() {
-                return Err(AppError::OpenFailed(
-                    "The path could not be opened".into(),
-                ));
+                return Err(AppError::OpenFailed("The path could not be opened".into()));
             }
         }
         _ => {
@@ -289,15 +284,10 @@ pub async fn open_with(opener_id: &str, path: &str, is_directory: bool) -> Resul
                 .output()
                 .await
                 .map_err(|e| {
-                    AppError::OpenFailed(format!(
-                        "Failed to open in {}: {e}",
-                        spec.label
-                    ))
+                    AppError::OpenFailed(format!("Failed to open in {}: {e}", spec.label))
                 })?;
             if !output.status.success() {
-                return Err(AppError::OpenFailed(
-                    "The path could not be opened".into(),
-                ));
+                return Err(AppError::OpenFailed("The path could not be opened".into()));
             }
         }
     }

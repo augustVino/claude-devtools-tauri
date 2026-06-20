@@ -47,9 +47,17 @@ pub struct AiChunk {
     pub sidechain_messages: Vec<ParsedMessage>,
     #[serde(rename = "toolExecutions", default)]
     pub tool_executions: Vec<ToolExecution>,
-    #[serde(rename = "semanticSteps", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "semanticSteps",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub semantic_steps: Vec<SemanticStep>,
-    #[serde(rename = "semanticStepGroups", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "semanticStepGroups",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub semantic_step_groups: Vec<SemanticStepGroup>,
 }
 
@@ -125,7 +133,11 @@ pub struct SessionDetail {
     pub chunks: Vec<Chunk>,
     pub processes: Vec<Process>,
     pub metrics: SessionMetrics,
-    #[serde(default, rename = "fingerprint", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "fingerprint",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub fingerprint: Option<String>,
 }
 

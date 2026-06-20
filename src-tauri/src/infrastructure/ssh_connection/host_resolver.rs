@@ -108,7 +108,11 @@ pub(super) async fn resolve_host(
             ResolvedHost::fallback(input_host)
         }
         Ok(Err(e)) => {
-            log::warn!("ssh -G spawn failed for {}: {}; falling back", input_host, e);
+            log::warn!(
+                "ssh -G spawn failed for {}: {}; falling back",
+                input_host,
+                e
+            );
             ResolvedHost::fallback(input_host)
         }
         Err(_) => {
@@ -130,11 +134,8 @@ pub(super) async fn resolve_host(
                         entry.identity_files.len(),
                         input_host
                     );
-                    resolved.identity_files = entry
-                        .identity_files
-                        .iter()
-                        .map(PathBuf::from)
-                        .collect();
+                    resolved.identity_files =
+                        entry.identity_files.iter().map(PathBuf::from).collect();
                 }
             }
         }
@@ -205,8 +206,7 @@ host 1password
 ";
         let resolved = parse_ssh_g_output(output);
         let home = dirs::home_dir().unwrap();
-        let expected = home
-            .join("Library/Group Containers/2BUA8C4S2C.com.1password/agent.sock");
+        let expected = home.join("Library/Group Containers/2BUA8C4S2C.com.1password/agent.sock");
         assert_eq!(resolved.identity_agent.as_ref(), Some(&expected));
     }
 
@@ -249,7 +249,8 @@ hostname only.example.com
 
     #[test]
     fn test_parse_unknown_keys_ignored() {
-        let output = "hostname x.example.com\nforwardagent yes\nuserknownhostsfile /dev/null\nuser dave\n";
+        let output =
+            "hostname x.example.com\nforwardagent yes\nuserknownhostsfile /dev/null\nuser dave\n";
         let resolved = parse_ssh_g_output(output);
         assert_eq!(resolved.hostname, "x.example.com");
         assert_eq!(resolved.user.as_deref(), Some("dave"));

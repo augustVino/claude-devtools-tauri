@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::parsing::claude_md_reader::{ClaudeMdReader, ClaudeMdFileInfo};
+use crate::parsing::claude_md_reader::{ClaudeMdFileInfo, ClaudeMdReader};
 
 /// Open a path in the system file manager.
 ///
@@ -28,7 +28,11 @@ use crate::parsing::claude_md_reader::{ClaudeMdReader, ClaudeMdFileInfo};
 /// - 目录白名单限制（~/.claude 和可选的项目目录）
 /// - Symlink escape 防护
 #[tauri::command]
-pub async fn open_path(app: tauri::AppHandle, path: String, project_root: Option<String>) -> Result<(), String> {
+pub async fn open_path(
+    app: tauri::AppHandle,
+    path: String,
+    project_root: Option<String>,
+) -> Result<(), String> {
     let expanded = if path.starts_with('~') {
         if let Some(home) = dirs::home_dir() {
             let remainder = path[1..].trim_start_matches('/');
@@ -56,7 +60,9 @@ pub async fn open_path(app: tauri::AppHandle, path: String, project_root: Option
     }
 
     // 目录白名单校验（~/.claude 和可选的项目目录）
-    let project_normalized = project_root.as_ref().map(|root| normalize_path(&PathBuf::from(root)));
+    let project_normalized = project_root
+        .as_ref()
+        .map(|root| normalize_path(&PathBuf::from(root)));
     if !is_within_allowed_directories(&normalized, project_normalized.as_deref()) {
         return Err("Path is outside allowed directories".to_string());
     }
@@ -88,7 +94,9 @@ fn normalize_path(p: &std::path::Path) -> std::path::PathBuf {
     let mut normalized = std::path::PathBuf::new();
     for component in p.components() {
         match component {
-            std::path::Component::ParentDir => { normalized.pop(); }
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
             std::path::Component::CurDir => {}
             _ => normalized.push(component),
         }
@@ -107,12 +115,12 @@ fn matches_sensitive_pattern(normalized: &std::path::Path) -> bool {
 
     // 目录/子串包含匹配（对应 Electron 中不带 $ 锚点的正则）
     let contains_patterns: &[&str] = &[
-        "/.ssh/",           // SSH keys and config
-        "/.aws/",           // AWS credentials
-        "/.config/gcloud/", // GCP credentials
-        "/.azure/",         // Azure credentials
+        "/.ssh/",               // SSH keys and config
+        "/.aws/",               // AWS credentials
+        "/.config/gcloud/",     // GCP credentials
+        "/.azure/",             // Azure credentials
         "/.docker/config.json", // Docker credentials
-        "/.kube/config",    // Kubernetes config
+        "/.kube/config",        // Kubernetes config
     ];
     if contains_patterns.iter().any(|pat| path_lower.contains(pat)) {
         return true;
@@ -120,7 +128,8 @@ fn matches_sensitive_pattern(normalized: &std::path::Path) -> bool {
 
     // 文件名组件结尾匹配（对应 Electron 中带 $ 锚点的正则）
     // 检查路径最后一个 `/` 之后的组件是否以指定模式结尾
-    let filename = normalized.file_name()
+    let filename = normalized
+        .file_name()
         .map(|n| n.to_string_lossy().to_lowercase())
         .unwrap_or_default();
     let filename_str = filename.as_str();
@@ -172,7 +181,10 @@ fn matches_sensitive_pattern(normalized: &std::path::Path) -> bool {
 }
 
 /// 检查路径是否在允许的目录内（~/.claude 和可选的项目目录）。
-fn is_within_allowed_directories(normalized: &std::path::Path, project_root: Option<&std::path::Path>) -> bool {
+fn is_within_allowed_directories(
+    normalized: &std::path::Path,
+    project_root: Option<&std::path::Path>,
+) -> bool {
     // 始终允许 ~/.claude 目录（与 Electron 对齐）
     if let Some(home) = dirs::home_dir() {
         let claude_dir = home.join(".claude");
@@ -210,8 +222,7 @@ fn resolve_real_path(p: &std::path::Path) -> Option<std::path::PathBuf> {
 #[tauri::command]
 pub async fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
     // 与 Electron 对齐：通过 URL 解析进行格式校验和协议验证
-    let parsed = url::Url::parse(&url)
-        .map_err(|_| "Invalid URL".to_string())?;
+    let parsed = url::Url::parse(&url).map_err(|_| "Invalid URL".to_string())?;
 
     let scheme = parsed.scheme().to_lowercase();
     if scheme != "http" && scheme != "https" && scheme != "mailto" {
@@ -254,9 +265,7 @@ pub async fn set_zoom_factor(
 ) -> Result<(), String> {
     let clamped = factor.clamp(0.5, 3.0);
     if let Some(window) = app.get_webview_window("main") {
-        window
-            .set_zoom(clamped)
-            .map_err(|e| e.to_string())?;
+        window.set_zoom(clamped).map_err(|e| e.to_string())?;
     }
     zoom_state.store(clamped.to_bits(), Ordering::Relaxed);
     Ok(())
@@ -385,7 +394,9 @@ mod write_text_file_tests {
             .await
             .expect("write should succeed");
 
-        let read_back = tokio::fs::read_to_string(&path).await.expect("should read back");
+        let read_back = tokio::fs::read_to_string(&path)
+            .await
+            .expect("should read back");
         assert_eq!(read_back, content);
     }
 
@@ -394,15 +405,23 @@ mod write_text_file_tests {
         let dir = tempfile::TempDir::new().expect("temp dir creation");
         let path = dir.path().join("test-overwrite.md");
 
-        write_text_file(path.to_string_lossy().to_string(), "old content".to_string())
-            .await
-            .expect("first write should succeed");
+        write_text_file(
+            path.to_string_lossy().to_string(),
+            "old content".to_string(),
+        )
+        .await
+        .expect("first write should succeed");
 
-        write_text_file(path.to_string_lossy().to_string(), "new content".to_string())
-            .await
-            .expect("overwrite should succeed");
+        write_text_file(
+            path.to_string_lossy().to_string(),
+            "new content".to_string(),
+        )
+        .await
+        .expect("overwrite should succeed");
 
-        let read_back = tokio::fs::read_to_string(&path).await.expect("should read back");
+        let read_back = tokio::fs::read_to_string(&path)
+            .await
+            .expect("should read back");
         assert_eq!(read_back, "new content");
     }
 

@@ -14,23 +14,37 @@ impl super::SshConnectionManager {
     /// 复用 establish_raw_connection() 消除与 connect() 的重复代码。
     pub async fn test(&self, config: &SshConnectionConfig) -> Result<SshTestResult, String> {
         if config.host.trim().is_empty() {
-            return Ok(SshTestResult { success: false, error: Some("Host is required".into()) });
+            return Ok(SshTestResult {
+                success: false,
+                error: Some("Host is required".into()),
+            });
         }
 
         let request = ConnectRequest::new(config.clone());
 
         // 复用核心连接逻辑（与 connect 完全相同的 Steps 4-10）
-        match super::connect_flow::establish_raw_connection(&request, self.config_parser.as_ref()).await {
+        match super::connect_flow::establish_raw_connection(&request, self.config_parser.as_ref())
+            .await
+        {
             Ok(raw) => {
                 // test 不需要 FsProvider/远程路径/存储 → 直接断开
-                let _ = raw.session.disconnect(russh::Disconnect::ByApplication, "", "").await;
+                let _ = raw
+                    .session
+                    .disconnect(russh::Disconnect::ByApplication, "", "")
+                    .await;
                 // raw.sftp drop → SFTP session 自动关闭
-                Ok(SshTestResult { success: true, error: None })
+                Ok(SshTestResult {
+                    success: true,
+                    error: None,
+                })
             }
             Err(auth_err) => {
                 // AuthError Display impl renders enriched multi-section message
                 // (root + auth chain + timing) when trace is non-empty.
-                Ok(SshTestResult { success: false, error: Some(auth_err.to_string()) })
+                Ok(SshTestResult {
+                    success: false,
+                    error: Some(auth_err.to_string()),
+                })
             }
         }
     }

@@ -19,9 +19,17 @@ pub fn get_tool_summary(tool_name: &str, input: &serde_json::Value) -> String {
     match tool_name {
         // --- Enhanced: separate Edit/Read/Write ---
         "Edit" => {
-            let file = extract_field(input, "file_path").map(|f| basename(&f)).unwrap_or_else(|| "Edit".to_string());
-            let old_lines = input.get("old_string").and_then(|v| v.as_str()).map(|s| s.lines().count());
-            let new_lines = input.get("new_string").and_then(|v| v.as_str()).map(|s| s.lines().count());
+            let file = extract_field(input, "file_path")
+                .map(|f| basename(&f))
+                .unwrap_or_else(|| "Edit".to_string());
+            let old_lines = input
+                .get("old_string")
+                .and_then(|v| v.as_str())
+                .map(|s| s.lines().count());
+            let new_lines = input
+                .get("new_string")
+                .and_then(|v| v.as_str())
+                .map(|s| s.lines().count());
             match (old_lines, new_lines) {
                 (Some(o), Some(n)) if o != n => format!("{} - {} -> {} lines", file, o, n),
                 (Some(n), _) => format!("{} - {} lines", file, n),
@@ -29,30 +37,43 @@ pub fn get_tool_summary(tool_name: &str, input: &serde_json::Value) -> String {
             }
         }
         "Read" => {
-            let file = extract_field(input, "file_path").map(|f| basename(&f)).unwrap_or_else(|| "Read".to_string());
-            match (input.get("limit").and_then(|v| v.as_u64()), input.get("offset").and_then(|v| v.as_u64())) {
-                (Some(limit), Some(offset)) => format!("{} - lines {}-{}", file, offset + 1, offset + limit),
+            let file = extract_field(input, "file_path")
+                .map(|f| basename(&f))
+                .unwrap_or_else(|| "Read".to_string());
+            match (
+                input.get("limit").and_then(|v| v.as_u64()),
+                input.get("offset").and_then(|v| v.as_u64()),
+            ) {
+                (Some(limit), Some(offset)) => {
+                    format!("{} - lines {}-{}", file, offset + 1, offset + limit)
+                }
                 (Some(limit), None) => format!("{} - lines 1-{}", file, limit),
                 _ => file,
             }
         }
         "Write" => {
-            let file = extract_field(input, "file_path").map(|f| basename(&f)).unwrap_or_else(|| "Write".to_string());
-            input.get("content").and_then(|v| v.as_str()).map(|s| {
-                let lines = s.lines().count();
-                format!("{} - {} lines", file, lines)
-            }).unwrap_or(file)
+            let file = extract_field(input, "file_path")
+                .map(|f| basename(&f))
+                .unwrap_or_else(|| "Write".to_string());
+            input
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(|s| {
+                    let lines = s.lines().count();
+                    format!("{} - {} lines", file, lines)
+                })
+                .unwrap_or(file)
         }
         // --- Existing: unchanged ---
-        "Bash" => {
-            extract_field(input, "description")
-                .map(|d| truncate(&d, 50))
-                .or_else(|| extract_field(input, "command").map(|c| truncate(&c, 50)))
-                .unwrap_or_else(|| "Bash".to_string())
-        }
+        "Bash" => extract_field(input, "description")
+            .map(|d| truncate(&d, 50))
+            .or_else(|| extract_field(input, "command").map(|c| truncate(&c, 50)))
+            .unwrap_or_else(|| "Bash".to_string()),
         // --- Enhanced: separate Grep/Glob ---
         "Grep" => {
-            let pattern = extract_field(input, "pattern").map(|p| truncate(&p, 30)).unwrap_or_else(|| "Grep".to_string());
+            let pattern = extract_field(input, "pattern")
+                .map(|p| truncate(&p, 30))
+                .unwrap_or_else(|| "Grep".to_string());
             let scope = extract_field(input, "glob")
                 .or_else(|| extract_field(input, "path").map(|p| basename(&p)));
             match scope {
@@ -61,7 +82,9 @@ pub fn get_tool_summary(tool_name: &str, input: &serde_json::Value) -> String {
             }
         }
         "Glob" => {
-            let pattern = extract_field(input, "pattern").map(|p| truncate(&p, 30)).unwrap_or_else(|| "Glob".to_string());
+            let pattern = extract_field(input, "pattern")
+                .map(|p| truncate(&p, 30))
+                .unwrap_or_else(|| "Glob".to_string());
             match extract_field(input, "path").map(|p| basename(&p)) {
                 Some(s) => format!(r#""{}" in {}"#, pattern, s),
                 None => format!(r#""{}""#, pattern),
@@ -82,42 +105,33 @@ pub fn get_tool_summary(tool_name: &str, input: &serde_json::Value) -> String {
                 "Task".to_string()
             }
         }
-        "Skill" => {
-            extract_field(input, "skill").unwrap_or_else(|| "Skill".to_string())
-        }
+        "Skill" => extract_field(input, "skill").unwrap_or_else(|| "Skill".to_string()),
         // --- Enhanced: WebFetch with url::Url ---
-        "WebFetch" => {
-            extract_field(input, "url")
-                .map(|u| {
-                    match url::Url::parse(&u) {
-                        Ok(parsed) => {
-                            let display = format!("{}{}", parsed.host_str().unwrap_or(""), parsed.path());
-                            truncate(&display, 50)
-                        }
-                        Err(_) => truncate(&u, 50),
-                    }
-                })
-                .unwrap_or_else(|| "WebFetch".to_string())
-        }
+        "WebFetch" => extract_field(input, "url")
+            .map(|u| match url::Url::parse(&u) {
+                Ok(parsed) => {
+                    let display = format!("{}{}", parsed.host_str().unwrap_or(""), parsed.path());
+                    truncate(&display, 50)
+                }
+                Err(_) => truncate(&u, 50),
+            })
+            .unwrap_or_else(|| "WebFetch".to_string()),
         // --- Enhanced: WebSearch with quotes ---
-        "WebSearch" => {
-            extract_field(input, "query")
-                .map(|q| truncate(&format!(r#""{}""#, q), 42))
-                .unwrap_or_else(|| "WebSearch".to_string())
-        }
+        "WebSearch" => extract_field(input, "query")
+            .map(|q| truncate(&format!(r#""{}""#, q), 42))
+            .unwrap_or_else(|| "WebSearch".to_string()),
         // --- NEW: Team tools ---
         "TeamCreate" => {
-            let name = extract_field(input, "team_name").unwrap_or_else(|| "Create team".to_string());
+            let name =
+                extract_field(input, "team_name").unwrap_or_else(|| "Create team".to_string());
             match extract_field(input, "description").map(|d| truncate(&d, 30)) {
                 Some(desc) => format!("{} - {}", name, desc),
                 None => name,
             }
         }
-        "TaskCreate" => {
-            extract_field(input, "subject")
-                .map(|s| truncate(&s, 50))
-                .unwrap_or_else(|| "Create task".to_string())
-        }
+        "TaskCreate" => extract_field(input, "subject")
+            .map(|s| truncate(&s, 50))
+            .unwrap_or_else(|| "Create task".to_string()),
         "TaskUpdate" => {
             let mut parts = Vec::new();
             if let Some(tid) = extract_field(input, "taskId") {
@@ -136,23 +150,23 @@ pub fn get_tool_summary(tool_name: &str, input: &serde_json::Value) -> String {
             }
         }
         "TaskList" => "List tasks".to_string(),
-        "TaskGet" => {
-            extract_field(input, "taskId")
-                .map(|tid| format!("Get task #{}", tid))
-                .unwrap_or_else(|| "Get task".to_string())
-        }
+        "TaskGet" => extract_field(input, "taskId")
+            .map(|tid| format!("Get task #{}", tid))
+            .unwrap_or_else(|| "Get task".to_string()),
         "SendMessage" => {
             let msg_type = extract_field(input, "type");
             let recipient = extract_field(input, "recipient");
             let summary = extract_field(input, "summary").map(|s| truncate(&s, 30));
             match msg_type.as_deref() {
-                Some("shutdown_request") => {
-                    recipient.map(|r| format!("Shutdown {}", r)).unwrap_or_else(|| "Shutdown".to_string())
-                }
+                Some("shutdown_request") => recipient
+                    .map(|r| format!("Shutdown {}", r))
+                    .unwrap_or_else(|| "Shutdown".to_string()),
                 Some("shutdown_response") => "Shutdown response".to_string(),
                 _ => {
                     if recipient.as_deref() == Some("*") {
-                        summary.map(|s| format!("Broadcast: {}", s)).unwrap_or_else(|| "Broadcast".to_string())
+                        summary
+                            .map(|s| format!("Broadcast: {}", s))
+                            .unwrap_or_else(|| "Broadcast".to_string())
                     } else {
                         match (recipient, summary) {
                             (Some(r), Some(s)) => format!("To {}: {}", r, s),
@@ -173,12 +187,18 @@ pub fn get_tool_summary(tool_name: &str, input: &serde_json::Value) -> String {
                 (false, None) => op,
             }
         }
-        "TodoWrite" => {
-            input.get("todos").and_then(|t| t.as_array()).map(|arr| {
+        "TodoWrite" => input
+            .get("todos")
+            .and_then(|t| t.as_array())
+            .map(|arr| {
                 let count = arr.len();
-                if count == 1 { "1 item".to_string() } else { format!("{} items", count) }
-            }).unwrap_or_else(|| "TodoWrite".to_string())
-        }
+                if count == 1 {
+                    "1 item".to_string()
+                } else {
+                    format!("{} items", count)
+                }
+            })
+            .unwrap_or_else(|| "TodoWrite".to_string()),
         "NotebookEdit" => {
             let file = extract_field(input, "notebook_path").map(|f| basename(&f));
             let mode = extract_field(input, "edit_mode");
@@ -189,15 +209,13 @@ pub fn get_tool_summary(tool_name: &str, input: &serde_json::Value) -> String {
             }
         }
         // --- Default fallback ---
-        _ => {
-            extract_field(input, "name")
-                .or_else(|| extract_field(input, "path"))
-                .or_else(|| extract_field(input, "file"))
-                .or_else(|| extract_field(input, "query"))
-                .or_else(|| extract_field(input, "command"))
-                .map(|f| truncate(&f, 50))
-                .unwrap_or_else(|| tool_name.to_string())
-        }
+        _ => extract_field(input, "name")
+            .or_else(|| extract_field(input, "path"))
+            .or_else(|| extract_field(input, "file"))
+            .or_else(|| extract_field(input, "query"))
+            .or_else(|| extract_field(input, "command"))
+            .map(|f| truncate(&f, 50))
+            .unwrap_or_else(|| tool_name.to_string()),
     }
 }
 
@@ -270,19 +288,28 @@ mod tests {
     #[test]
     fn test_team_create() {
         let input = json!({"team_name": "my-team", "description": "Build feature X"});
-        assert_eq!(get_tool_summary("TeamCreate", &input), "my-team - Build feature X");
+        assert_eq!(
+            get_tool_summary("TeamCreate", &input),
+            "my-team - Build feature X"
+        );
     }
 
     #[test]
     fn test_task_create() {
         let input = json!({"subject": "Implement auth flow"});
-        assert_eq!(get_tool_summary("TaskCreate", &input), "Implement auth flow");
+        assert_eq!(
+            get_tool_summary("TaskCreate", &input),
+            "Implement auth flow"
+        );
     }
 
     #[test]
     fn test_task_update() {
         let input = json!({"taskId": "task-1", "status": "in_progress", "owner": "researcher"});
-        assert_eq!(get_tool_summary("TaskUpdate", &input), "#task-1 in_progress -> researcher");
+        assert_eq!(
+            get_tool_summary("TaskUpdate", &input),
+            "#task-1 in_progress -> researcher"
+        );
     }
 
     #[test]
@@ -299,19 +326,28 @@ mod tests {
     #[test]
     fn test_send_message_dm() {
         let input = json!({"recipient": "researcher", "summary": "Start working on X"});
-        assert_eq!(get_tool_summary("SendMessage", &input), "To researcher: Start working on X");
+        assert_eq!(
+            get_tool_summary("SendMessage", &input),
+            "To researcher: Start working on X"
+        );
     }
 
     #[test]
     fn test_send_message_shutdown() {
         let input = json!({"type": "shutdown_request", "recipient": "researcher"});
-        assert_eq!(get_tool_summary("SendMessage", &input), "Shutdown researcher");
+        assert_eq!(
+            get_tool_summary("SendMessage", &input),
+            "Shutdown researcher"
+        );
     }
 
     #[test]
     fn test_send_message_broadcast() {
         let input = json!({"recipient": "*", "summary": "Team update"});
-        assert_eq!(get_tool_summary("SendMessage", &input), "Broadcast: Team update");
+        assert_eq!(
+            get_tool_summary("SendMessage", &input),
+            "Broadcast: Team update"
+        );
     }
 
     #[test]
@@ -334,7 +370,10 @@ mod tests {
     #[test]
     fn test_notebook_edit() {
         let input = json!({"notebook_path": "/work/analysis.ipynb", "edit_mode": "insert"});
-        assert_eq!(get_tool_summary("NotebookEdit", &input), "insert - analysis.ipynb");
+        assert_eq!(
+            get_tool_summary("NotebookEdit", &input),
+            "insert - analysis.ipynb"
+        );
     }
 
     // Enhanced existing tools
@@ -379,20 +418,34 @@ mod tests {
     #[test]
     fn test_glob_with_path() {
         let input = json!({"pattern": "*.test.ts", "path": "/src/components"});
-        assert_eq!(get_tool_summary("Glob", &input), r#""*.test.ts" in components"#);
+        assert_eq!(
+            get_tool_summary("Glob", &input),
+            r#""*.test.ts" in components"#
+        );
     }
 
     #[test]
     fn test_web_fetch_url_parsing() {
         let input = json!({"url": "https://example.com/api/v1/data?key=value"});
         let result = get_tool_summary("WebFetch", &input);
-        assert!(result.contains("example.com"), "Expected hostname in: {}", result);
-        assert!(result.contains("/api/v1/data"), "Expected pathname in: {}", result);
+        assert!(
+            result.contains("example.com"),
+            "Expected hostname in: {}",
+            result
+        );
+        assert!(
+            result.contains("/api/v1/data"),
+            "Expected pathname in: {}",
+            result
+        );
     }
 
     #[test]
     fn test_web_search_with_quotes() {
         let input = json!({"query": "rust async patterns"});
-        assert_eq!(get_tool_summary("WebSearch", &input), r#""rust async patterns""#);
+        assert_eq!(
+            get_tool_summary("WebSearch", &input),
+            r#""rust async patterns""#
+        );
     }
 }

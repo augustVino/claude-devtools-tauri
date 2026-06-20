@@ -40,14 +40,25 @@ pub async fn context_switch(
     let mut mgr = manager.write().await;
 
     // Use switch_with_watcher_actions (Batch 1 Task 1)
-    let (result, actions) = mgr.switch_with_watcher_actions(&context_id)
+    let (result, actions) = mgr
+        .switch_with_watcher_actions(&context_id)
         .map_err(|e| e.into_tauri_string())?;
-    log::info!("Context switched: {} -> {}", result.previous_id, result.current_id);
+    log::info!(
+        "Context switched: {} -> {}",
+        result.previous_id,
+        result.current_id
+    );
 
     // Execute watcher lifecycle based on actions
     if actions.should_stop_old || actions.should_start_new {
-        let cm = app.state::<Arc<crate::infrastructure::ConfigManager>>().inner().clone();
-        let nm = app.state::<Arc<RwLock<crate::infrastructure::NotificationManager>>>().inner().clone();
+        let cm = app
+            .state::<Arc<crate::infrastructure::ConfigManager>>()
+            .inner()
+            .clone();
+        let nm = app
+            .state::<Arc<RwLock<crate::infrastructure::NotificationManager>>>()
+            .inner()
+            .clone();
         if actions.should_stop_old {
             if let Some(old_ctx) = mgr.get(&actions.old_context_id) {
                 old_ctx.read().await.stop_watcher_tasks().await;
@@ -65,16 +76,20 @@ pub async fn context_switch(
     if result.previous_id != result.current_id {
         let ctx_arc = mgr.get(&result.current_id).unwrap();
         let info = ContextInfo::from_context(&*ctx_arc.read().await);
-        drop(mgr);  // Release write lock before emitting
+        drop(mgr); // Release write lock before emitting
         events::emit_context_changed(&app, &info);
 
         // Bridge to SSE
         if let Some(broadcaster) = app.try_state::<crate::http::sse::SSEBroadcaster>() {
-            broadcaster.inner().send(crate::http::sse::BackendEvent::ContextChanged(info));
+            broadcaster
+                .inner()
+                .send(crate::http::sse::BackendEvent::ContextChanged(info));
         }
     } else {
         drop(mgr);
     }
 
-    Ok(SwitchResponse { context_id: result.current_id })
+    Ok(SwitchResponse {
+        context_id: result.current_id,
+    })
 }

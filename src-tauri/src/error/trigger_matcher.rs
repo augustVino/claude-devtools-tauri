@@ -23,11 +23,8 @@ const MAX_CACHE_SIZE: usize = 500;
 
 /// 线程安全的 LRU 缓存，用于存储已编译的正则表达式。
 /// 键：原始模式字符串。值：编译后的正则（无效或危险的则为 None）。
-static REGEX_CACHE: LazyLock<Cache<String, Option<Regex>>> = LazyLock::new(|| {
-    Cache::builder()
-        .max_capacity(MAX_CACHE_SIZE as u64)
-        .build()
-});
+static REGEX_CACHE: LazyLock<Cache<String, Option<Regex>>> =
+    LazyLock::new(|| Cache::builder().max_capacity(MAX_CACHE_SIZE as u64).build());
 
 // =============================================================================
 // 模式匹配

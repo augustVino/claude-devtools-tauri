@@ -1,6 +1,6 @@
 //! Persistence operations for NotificationManager: load, save, prune.
 
-use log::{info, warn, error};
+use log::{error, info, warn};
 
 use crate::types::config::StoredNotification;
 
@@ -19,8 +19,7 @@ impl NotificationManager {
 
         match tokio::fs::read_to_string(&self.persistence_path).await {
             Ok(content) => {
-                let parsed: Result<Vec<StoredNotification>, _> =
-                    serde_json::from_str(&content);
+                let parsed: Result<Vec<StoredNotification>, _> = serde_json::from_str(&content);
 
                 match parsed {
                     Ok(notifications) => {

@@ -1,5 +1,5 @@
-use tauri::{command, Emitter, Manager, State};
 use std::sync::Arc;
+use tauri::{command, Emitter, Manager, State};
 use tokio::sync::RwLock;
 
 use crate::infrastructure::NotificationManager;
@@ -21,7 +21,10 @@ fn validate_notification_id(id: &str) -> Result<(), String> {
     if !first.is_some_and(|c| c.is_alphanumeric()) {
         return Err("Invalid notification ID format".to_string());
     }
-    if !id.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-') {
+    if !id
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
         return Err("Invalid notification ID format".to_string());
     }
     Ok(())
@@ -136,9 +139,7 @@ pub async fn handle_notification_click(
     last_shown_error: State<'_, Arc<std::sync::Mutex<Option<DetectedError>>>>,
 ) -> Result<bool, String> {
     let error = {
-        let mut guard = last_shown_error
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut guard = last_shown_error.lock().unwrap_or_else(|e| e.into_inner());
         guard.take()
     };
 
@@ -168,7 +169,10 @@ pub async fn handle_notification_click(
         .map_err(|e| format!("Failed to emit notification:clicked event: {e}"))?;
 
     // Bridge to SSE broadcaster for HTTP-only clients
-    let broadcaster = app_handle.state::<crate::http::sse::SSEBroadcaster>().inner().clone();
+    let broadcaster = app_handle
+        .state::<crate::http::sse::SSEBroadcaster>()
+        .inner()
+        .clone();
     broadcaster.send(crate::http::sse::BackendEvent::NotificationClicked(error));
 
     Ok(true)

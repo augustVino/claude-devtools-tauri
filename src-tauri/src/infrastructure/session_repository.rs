@@ -3,12 +3,12 @@
 //! 将数据访问逻辑从 SessionService 中分离，使 Service 只关注业务编排。
 //! 通过 trait object (`Arc<dyn SessionRepository>`) 支持 mock 测试和多实现切换。
 
-use std::path::{Path, PathBuf};
 use async_trait::async_trait;
+use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
-use crate::parsing::ParsedSession;
 use crate::infrastructure::fs_provider::FsStatResult;
+use crate::parsing::ParsedSession;
 
 /// 会话文件条目 — 用于批量读取的轻量级描述。
 #[derive(Debug, Clone)]
@@ -40,11 +40,7 @@ pub trait SessionRepository: Send + Sync {
 
     /// 检查指定会话是否存在。
     #[allow(dead_code)]
-    async fn session_exists(
-        &self,
-        project_id: &str,
-        session_id: &str,
-    ) -> Result<bool, AppError>;
+    async fn session_exists(&self, project_id: &str, session_id: &str) -> Result<bool, AppError>;
 
     /// 获取会话文件的元信息（不解析内容）。
     #[allow(dead_code)]
@@ -74,13 +70,17 @@ mod tests {
     #[async_trait]
     impl SessionRepository for MockSessionRepository {
         async fn read_raw_session(
-            &self, _project_id: &str, _session_file: &str,
+            &self,
+            _project_id: &str,
+            _session_file: &str,
         ) -> Result<ParsedSession, AppError> {
             Err(AppError::NotFound("mock: no sessions".into()))
         }
 
         async fn session_exists(
-            &self, _project_id: &str, _session_id: &str,
+            &self,
+            _project_id: &str,
+            _session_id: &str,
         ) -> Result<bool, AppError> {
             Ok(false)
         }
@@ -89,14 +89,21 @@ mod tests {
             Err(AppError::NotFound("mock: no stat".into()))
         }
 
-        async fn list_session_files(&self, _project_id: &str) -> Result<Vec<SessionFileItem>, AppError> {
+        async fn list_session_files(
+            &self,
+            _project_id: &str,
+        ) -> Result<Vec<SessionFileItem>, AppError> {
             Ok(Vec::new())
         }
 
         async fn delete_session_files(
-            &self, _project_id: &str, _session_id: &str,
+            &self,
+            _project_id: &str,
+            _session_id: &str,
         ) -> Result<DeleteFilesResult, AppError> {
-            Ok(DeleteFilesResult { associated_deleted: 0 })
+            Ok(DeleteFilesResult {
+                associated_deleted: 0,
+            })
         }
     }
 

@@ -91,9 +91,11 @@ impl super::project_service_trait::ProjectService for ProjectServiceImpl {
 mod tests {
     use super::*;
     // 引入 trait 使 svc.scan_projects() 等方法在作用域内可见
-    use crate::services::ProjectService as _;
-    use crate::infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
+    use crate::infrastructure::service_context::{
+        ContextType, ServiceContext, ServiceContextConfig,
+    };
     use crate::infrastructure::LocalFsProvider;
+    use crate::services::ProjectService as _;
     use std::fs;
     use std::path::PathBuf;
 
@@ -168,6 +170,8 @@ mod tests {
     async fn test_scan_projects_returns_error_when_no_active_context() {
         let svc = ProjectServiceImpl::new(make_empty_context_manager());
         let result = svc.scan_projects().await;
-        assert!(matches!(result, Err(AppError::Internal(msg)) if msg.contains("No active ServiceContext")));
+        assert!(
+            matches!(result, Err(AppError::Internal(msg)) if msg.contains("No active ServiceContext"))
+        );
     }
 }

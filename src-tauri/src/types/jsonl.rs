@@ -414,8 +414,7 @@ mod tests {
 
     #[test]
     fn deserialize_fixture_file() {
-        let content =
-            std::fs::read_to_string("fixtures/sample-session.jsonl").unwrap();
+        let content = std::fs::read_to_string("fixtures/sample-session.jsonl").unwrap();
         let count = content
             .lines()
             .filter(|l| !l.is_empty())
@@ -426,8 +425,7 @@ mod tests {
 
     #[test]
     fn deserialize_fixture_counts_by_type() {
-        let content =
-            std::fs::read_to_string("fixtures/sample-session.jsonl").unwrap();
+        let content = std::fs::read_to_string("fixtures/sample-session.jsonl").unwrap();
         let mut user_count = 0u32;
         let mut assistant_count = 0u32;
         let mut system_count = 0u32;

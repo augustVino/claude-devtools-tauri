@@ -7,9 +7,9 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::discovery::{ProjectScanner, SessionSearcher, SubagentResolver};
-use crate::infrastructure::DataCache;
 use crate::infrastructure::file_watcher::FileWatcher;
 use crate::infrastructure::fs_provider::FsProvider;
+use crate::infrastructure::DataCache;
 
 /// 服务上下文配置。
 #[derive(Clone)]
@@ -61,13 +61,20 @@ impl ServiceContext {
             config.todos_dir.clone(),
             config.fs_provider.clone(),
         );
-        let session_searcher = Arc::new(Mutex::new(
-            SessionSearcher::new(config.projects_dir.clone(), config.todos_dir.clone(), config.fs_provider.clone(), None),
-        ));
-        let subagent_resolver = SubagentResolver::new(config.projects_dir.clone(), config.fs_provider.clone());
+        let session_searcher = Arc::new(Mutex::new(SessionSearcher::new(
+            config.projects_dir.clone(),
+            config.todos_dir.clone(),
+            config.fs_provider.clone(),
+            None,
+        )));
+        let subagent_resolver =
+            SubagentResolver::new(config.projects_dir.clone(), config.fs_provider.clone());
         let cache = config.cache.unwrap_or_else(|| {
             // 与 Electron 对齐：支持 CLAUDE_CONTEXT_DISABLE_CACHE 环境变量禁用缓存
-            if std::env::var("CLAUDE_CONTEXT_DISABLE_CACHE").map(|v| v == "1").unwrap_or(false) {
+            if std::env::var("CLAUDE_CONTEXT_DISABLE_CACHE")
+                .map(|v| v == "1")
+                .unwrap_or(false)
+            {
                 DataCache::disabled()
             } else {
                 DataCache::new()
@@ -126,11 +133,9 @@ impl ServiceContext {
             });
         });
 
-        let cancel_token = orchestrator.spawn_all(
-            app_handle,
-            config_manager,
-            notification_manager,
-        ).await;
+        let cancel_token = orchestrator
+            .spawn_all(app_handle, config_manager, notification_manager)
+            .await;
 
         // 存储 cancel token 以支持 stop_watcher_tasks
         {

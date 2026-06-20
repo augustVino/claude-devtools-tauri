@@ -69,7 +69,9 @@ pub(super) async fn probe_tcp(host: &str, port: u16) -> TcpProbeResult {
             let elapsed = start.elapsed();
             log::debug!(
                 "TCP probe to {}:{} succeeded in {:.3}s",
-                host, port, elapsed.as_secs_f64()
+                host,
+                port,
+                elapsed.as_secs_f64()
             );
             TcpProbeResult::Reachable { elapsed }
         }
@@ -77,7 +79,10 @@ pub(super) async fn probe_tcp(host: &str, port: u16) -> TcpProbeResult {
             let elapsed = start.elapsed();
             log::debug!(
                 "TCP probe to {}:{} failed in {:.3}s: {}",
-                host, port, elapsed.as_secs_f64(), e
+                host,
+                port,
+                elapsed.as_secs_f64(),
+                e
             );
             TcpProbeResult::Unreachable {
                 error: e.to_string(),
@@ -88,7 +93,9 @@ pub(super) async fn probe_tcp(host: &str, port: u16) -> TcpProbeResult {
             let elapsed = start.elapsed();
             log::debug!(
                 "TCP probe to {}:{} timed out after {:.0}s",
-                host, port, TCP_PROBE_TIMEOUT.as_secs()
+                host,
+                port,
+                TCP_PROBE_TIMEOUT.as_secs()
             );
             TcpProbeResult::Timeout { elapsed }
         }
@@ -112,7 +119,9 @@ mod tests {
 
     #[test]
     fn test_tcp_probe_result_is_reachable() {
-        let r = TcpProbeResult::Reachable { elapsed: Duration::from_millis(50) };
+        let r = TcpProbeResult::Reachable {
+            elapsed: Duration::from_millis(50),
+        };
         assert!(r.is_reachable());
         assert_eq!(r.elapsed_ms(), 50);
     }
@@ -129,7 +138,9 @@ mod tests {
 
     #[test]
     fn test_tcp_probe_result_timeout_no_is_reachable() {
-        let r = TcpProbeResult::Timeout { elapsed: TCP_PROBE_TIMEOUT };
+        let r = TcpProbeResult::Timeout {
+            elapsed: TCP_PROBE_TIMEOUT,
+        };
         assert!(!r.is_reachable());
         assert_eq!(r.elapsed_ms(), TCP_PROBE_TIMEOUT.as_millis() as u64);
     }
@@ -149,7 +160,9 @@ mod tests {
 
     #[test]
     fn test_diagnostic_message_timeout_includes_firewall_hint() {
-        let r = TcpProbeResult::Timeout { elapsed: TCP_PROBE_TIMEOUT };
+        let r = TcpProbeResult::Timeout {
+            elapsed: TCP_PROBE_TIMEOUT,
+        };
         let msg = r.diagnostic_message("corp.example.com", 2222).unwrap();
         assert!(msg.contains("corp.example.com:2222"));
         assert!(msg.contains("Firewall"));
@@ -160,7 +173,9 @@ mod tests {
 
     #[test]
     fn test_diagnostic_message_reachable_returns_none() {
-        let r = TcpProbeResult::Reachable { elapsed: Duration::from_millis(5) };
+        let r = TcpProbeResult::Reachable {
+            elapsed: Duration::from_millis(5),
+        };
         assert!(r.diagnostic_message("h", 22).is_none());
     }
 

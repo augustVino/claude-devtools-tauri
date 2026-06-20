@@ -7,9 +7,10 @@
 //! - Coordinate with set_dock_visible command
 
 use tauri::{
-    AppHandle, Emitter, Manager, image::Image,
+    image::Image,
     menu::{Menu, MenuItem, PredefinedMenuItem, SubmenuBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Emitter, Manager,
 };
 
 use crate::discovery::ProjectScanner;
@@ -110,8 +111,14 @@ impl TrayIconManager {
 
         if recent.is_empty() {
             submenu_builder = submenu_builder.item(
-                &MenuItem::with_id(&self.app_handle, "empty", "No Recent Sessions", false, None::<&str>)
-                    .map_err(|e| format!("Failed to create empty menu item: {e}"))?,
+                &MenuItem::with_id(
+                    &self.app_handle,
+                    "empty",
+                    "No Recent Sessions",
+                    false,
+                    None::<&str>,
+                )
+                .map_err(|e| format!("Failed to create empty menu item: {e}"))?,
             );
         } else {
             for project in &recent {
@@ -135,8 +142,14 @@ impl TrayIconManager {
         let menu = Menu::with_items(
             &self.app_handle,
             &[
-                &MenuItem::with_id(&self.app_handle, "toggle", "Show/Hide Window", true, None::<&str>)
-                    .map_err(|e| format!("Failed to create toggle menu item: {e}"))?,
+                &MenuItem::with_id(
+                    &self.app_handle,
+                    "toggle",
+                    "Show/Hide Window",
+                    true,
+                    None::<&str>,
+                )
+                .map_err(|e| format!("Failed to create toggle menu item: {e}"))?,
                 &PredefinedMenuItem::separator(&self.app_handle)
                     .map_err(|e| format!("Failed to create separator: {e}"))?,
                 &recent_submenu,
@@ -227,13 +240,11 @@ impl TrayIconManager {
                 let _ = window.set_focus();
                 #[cfg(target_os = "macos")]
                 {
-                    let _ = app.run_on_main_thread(|| {
-                        unsafe {
-                            use cocoa::appkit::NSApplication;
-                            use cocoa::base::nil;
-                            let _ns_app = NSApplication::sharedApplication(nil);
-                            let _: () = NSApplication::activateIgnoringOtherApps_(_ns_app, true);
-                        }
+                    let _ = app.run_on_main_thread(|| unsafe {
+                        use cocoa::appkit::NSApplication;
+                        use cocoa::base::nil;
+                        let _ns_app = NSApplication::sharedApplication(nil);
+                        let _: () = NSApplication::activateIgnoringOtherApps_(_ns_app, true);
                     });
                 }
             }

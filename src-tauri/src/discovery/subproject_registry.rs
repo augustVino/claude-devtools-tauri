@@ -29,12 +29,7 @@ impl SubprojectRegistry {
 
     /// Register a subproject and return its composite ID.
     #[allow(dead_code)]
-    pub fn register(
-        &mut self,
-        base_dir: &str,
-        cwd: &str,
-        session_ids: Vec<String>,
-    ) -> String {
+    pub fn register(&mut self, base_dir: &str, cwd: &str, session_ids: Vec<String>) -> String {
         let hash = format!("{:x}", Sha256::digest(cwd.as_bytes()))[..8].to_string();
         let composite_id = format!("{base_dir}::{hash}");
         self.entries.insert(

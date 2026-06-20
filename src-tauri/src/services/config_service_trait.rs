@@ -7,9 +7,9 @@
 //! - test_trigger: ProjectScanner 构建 + 触发测试
 //! - clear_snooze: 简单委托
 
-use async_trait::async_trait;
 use crate::error::AppError;
 use crate::types::config::{AppConfig, NotificationTrigger, TriggerTestResult};
+use async_trait::async_trait;
 
 #[async_trait]
 pub trait ConfigService: Send + Sync {

@@ -11,7 +11,7 @@ mod session_ops;
 mod snooze;
 mod trigger_proxy;
 
-use defaults::{CONFIG_FILENAME, default_app_config};
+use defaults::{default_app_config, CONFIG_FILENAME};
 
 use std::path::PathBuf;
 use tokio::sync::RwLock;
@@ -43,13 +43,19 @@ impl ConfigManager {
             .expect("home directory must exist")
             .join(".claude")
             .join(CONFIG_FILENAME);
-        Self { config: RwLock::new(default_app_config()), config_path }
+        Self {
+            config: RwLock::new(default_app_config()),
+            config_path,
+        }
     }
 
     /// 使用自定义路径创建配置管理器（主要用于测试）
     #[allow(dead_code)]
     pub fn with_path(path: PathBuf) -> Self {
-        Self { config: RwLock::new(default_app_config()), config_path: path }
+        Self {
+            config: RwLock::new(default_app_config()),
+            config_path: path,
+        }
     }
 
     /// 初始化：从磁盘加载配置并与默认值深度合并。
@@ -57,10 +63,11 @@ impl ConfigManager {
         let file_existed = self.config_path.exists();
         let loaded = self.load_config().await?;
         let mut merged = loaded;
-        merged.notifications.triggers = crate::infrastructure::trigger_manager::TriggerManager::merge_triggers(
-            merged.notifications.triggers,
-            &crate::infrastructure::trigger_manager::default_triggers(),
-        );
+        merged.notifications.triggers =
+            crate::infrastructure::trigger_manager::TriggerManager::merge_triggers(
+                merged.notifications.triggers,
+                &crate::infrastructure::trigger_manager::default_triggers(),
+            );
         {
             let mut config = self.config.write().await;
             *config = merged;
@@ -73,7 +80,9 @@ impl ConfigManager {
     }
 
     /// 返回配置文件的路径
-    pub fn get_config_path(&self) -> std::path::PathBuf { self.config_path.clone() }
+    pub fn get_config_path(&self) -> std::path::PathBuf {
+        self.config_path.clone()
+    }
 
     /// 获取当前配置的完整副本。（现为 async）
     pub async fn get_config(&self) -> AppConfig {
@@ -81,23 +90,41 @@ impl ConfigManager {
     }
 
     /// 分区更新配置。支持六个分区，含字段级校验和 claudeRootPath 规范化。（现为 async）
-    pub async fn update_config(&self, section: &str, mut data: serde_json::Value) -> Result<AppConfig, AppError> {
+    pub async fn update_config(
+        &self,
+        section: &str,
+        mut data: serde_json::Value,
+    ) -> Result<AppConfig, AppError> {
         let merged: AppConfig = {
             let mut config = self.config.write().await;
-            let current_json = serde_json::to_value(&*config)
-                .map_err(|e| AppError::Config(format!("failed to serialize current config: {e}")))?;
-            let valid_sections = ["notifications", "general", "display", "sessions", "ssh", "httpServer"];
+            let current_json = serde_json::to_value(&*config).map_err(|e| {
+                AppError::Config(format!("failed to serialize current config: {e}"))
+            })?;
+            let valid_sections = [
+                "notifications",
+                "general",
+                "display",
+                "sessions",
+                "ssh",
+                "httpServer",
+            ];
             if !valid_sections.contains(&section) {
-                return Err(AppError::InvalidInput(format!("unknown config section: {section}")));
+                return Err(AppError::InvalidInput(format!(
+                    "unknown config section: {section}"
+                )));
             }
             config_validator::validate_update_payload(section, &data)
-                .map_err(|e| AppError::InvalidInput(e))?;  // R7 FIX: explicit map_err for String->AppError
+                .map_err(|e| AppError::InvalidInput(e))?; // R7 FIX: explicit map_err for String->AppError
             if section == "general" {
                 if let Some(obj) = data.as_object_mut() {
                     if let Some(v) = obj.get_mut("claudeRootPath") {
                         if let Some(s) = v.as_str() {
                             let trimmed = s.trim();
-                            if !trimmed.is_empty() { *v = serde_json::Value::String(path_utils::normalize_claude_root_path(trimmed)); }
+                            if !trimmed.is_empty() {
+                                *v = serde_json::Value::String(
+                                    path_utils::normalize_claude_root_path(trimmed),
+                                );
+                            }
                         }
                     }
                 }
@@ -108,7 +135,9 @@ impl ConfigManager {
             merged
         };
         self.persist_inner().await?;
-        if section == "general" { crate::utils::set_claude_root_override(merged.general.claude_root_path.clone()); }
+        if section == "general" {
+            crate::utils::set_claude_root_override(merged.general.claude_root_path.clone());
+        }
         Ok(merged)
     }
 
@@ -116,10 +145,14 @@ impl ConfigManager {
 
     async fn load_config(&self) -> Result<AppConfig, AppError> {
         if !self.config_path.exists() {
-            info!("No config file found at {:?}, using defaults", self.config_path);
+            info!(
+                "No config file found at {:?}, using defaults",
+                self.config_path
+            );
             return Ok(default_app_config());
         }
-        let content = fs::read_to_string(&self.config_path).await
+        let content = fs::read_to_string(&self.config_path)
+            .await
             .map_err(|e| AppError::Io(e))?;
         let parsed: serde_json::Value = serde_json::from_str(&content)
             .map_err(|e| AppError::Parse(format!("failed to parse config JSON: {e}")))?;
@@ -128,15 +161,19 @@ impl ConfigManager {
 
     async fn persist_inner(&self) -> Result<(), AppError> {
         let config = self.config.read().await;
-        if let Some(parent) = self.config_path.parent() { tokio::fs::create_dir_all(parent).await.map_err(|e| AppError::Io(e))?; }
+        if let Some(parent) = self.config_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| AppError::Io(e))?;
+        }
         let content = serde_json::to_string_pretty(&*config)
             .map_err(|e| AppError::Config(format!("failed to serialize config: {e}")))?;
-        tokio::fs::write(&self.config_path, content).await
+        tokio::fs::write(&self.config_path, content)
+            .await
             .map_err(|e| AppError::Io(e))?;
         info!("Config saved to {:?}", self.config_path);
         Ok(())
     }
-
 }
 
 #[cfg(test)]
@@ -147,5 +184,6 @@ mod tests;
 fn merge_with_defaults(loaded: &serde_json::Value) -> Result<AppConfig, AppError> {
     let defaults = defaults::default_config_json();
     let merged = config_validator::json_merge(&defaults, loaded);
-    serde_json::from_value(merged).map_err(|e| AppError::Parse(format!("failed to deserialize merged config: {e}")))
+    serde_json::from_value(merged)
+        .map_err(|e| AppError::Parse(format!("failed to deserialize merged config: {e}")))
 }

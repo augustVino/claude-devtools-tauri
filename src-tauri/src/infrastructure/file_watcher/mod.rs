@@ -196,6 +196,8 @@ impl FileWatcher {
 
 impl Default for FileWatcher {
     fn default() -> Self {
-        Self::new(Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()))
+        Self::new(Arc::new(
+            crate::infrastructure::fs_provider::LocalFsProvider::new(),
+        ))
     }
 }

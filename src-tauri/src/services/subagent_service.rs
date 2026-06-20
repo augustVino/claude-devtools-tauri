@@ -1,12 +1,12 @@
 //! SubagentServiceImpl — 子 Agent 详情构建的具体实现。
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use async_trait::async_trait;
 use crate::error::AppError;
 use crate::infrastructure::ContextManager;
 use crate::services::subagent_service_trait::SubagentService;
 use crate::types::chunks::SubagentDetail;
+use async_trait::async_trait;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 pub struct SubagentServiceImpl {
     context_manager: Arc<RwLock<ContextManager>>,
@@ -78,9 +78,7 @@ impl SubagentService for SubagentServiceImpl {
             projects_dir.clone(),
             fs_provider.clone(),
         );
-        let nested = resolver.resolve_subagents(
-            project_id, subagent_id, None, None
-        );
+        let nested = resolver.resolve_subagents(project_id, subagent_id, None, None);
 
         // ⚠️ 类型转换：resolver::Process → types::chunks::Process
         let nested_chunks: Vec<crate::types::chunks::Process> =
@@ -88,14 +86,16 @@ impl SubagentService for SubagentServiceImpl {
 
         // 5. Build detail
         let detail = crate::analysis::chunk_builder::ChunkBuilder::build_subagent_detail(
-            subagent_id, &messages, &nested_chunks
+            subagent_id,
+            &messages,
+            &nested_chunks,
         );
 
         // 6. Cache result
         if let Ok(value) = serde_json::to_value(&detail) {
-            cache.set_subagent(
-                project_id, session_id, subagent_id, value
-            ).await;
+            cache
+                .set_subagent(project_id, session_id, subagent_id, value)
+                .await;
         }
 
         Ok(Some(detail))
@@ -119,7 +119,9 @@ mod tests {
         projects_dir: PathBuf,
         todos_dir: PathBuf,
     ) -> Arc<RwLock<ContextManager>> {
-        use crate::infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
+        use crate::infrastructure::service_context::{
+            ContextType, ServiceContext, ServiceContextConfig,
+        };
         use crate::infrastructure::LocalFsProvider;
         let mut mgr = ContextManager::new();
         mgr.register_context(ServiceContext::new(ServiceContextConfig {
@@ -138,6 +140,8 @@ mod tests {
     async fn test_get_subagent_detail_returns_error_when_no_active_context() {
         let svc = SubagentServiceImpl::new(make_empty_context_manager());
         let result = svc.get_subagent_detail("proj", "sess", "sub").await;
-        assert!(matches!(result, Err(AppError::Internal(msg)) if msg.contains("No active ServiceContext")));
+        assert!(
+            matches!(result, Err(AppError::Internal(msg)) if msg.contains("No active ServiceContext"))
+        );
     }
 }

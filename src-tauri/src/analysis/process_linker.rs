@@ -38,9 +38,7 @@ pub fn link_processes_to_chunk(chunk: &mut AiChunk, subagents: &[Process]) {
     }
 
     // Sort linked processes by start_time for deterministic ordering
-    chunk
-        .processes
-        .sort_by_key(|p| p.start_time);
+    chunk.processes.sort_by_key(|p| p.start_time);
 }
 
 /// Collect all Task tool call IDs from a slice of assistant messages.
@@ -63,11 +61,7 @@ mod tests {
     use crate::types::domain::SessionMetrics;
     use crate::types::messages::ParsedMessage;
 
-    fn make_chunk(
-        start_time: u64,
-        end_time: u64,
-        responses: Vec<ParsedMessage>,
-    ) -> AiChunk {
+    fn make_chunk(start_time: u64, end_time: u64, responses: Vec<ParsedMessage>) -> AiChunk {
         AiChunk {
             id: "test-chunk".to_string(),
             start_time,

@@ -278,7 +278,10 @@ pub fn group_ai_messages<'a>(
             ai_buffer.push(msg);
         } else {
             flush_ai_buffer(&mut ai_buffer, &mut result);
-            result.push(GroupedMessage::Single { category, message: msg });
+            result.push(GroupedMessage::Single {
+                category,
+                message: msg,
+            });
         }
     }
     flush_ai_buffer(&mut ai_buffer, &mut result);
@@ -411,10 +414,14 @@ mod tests {
     fn test_all_system_messages_are_hard_noise() {
         let meta_system = make_system_msg(true, "<system-reminder>reminder</system-reminder>");
         let non_meta_system = make_system_msg(false, "some system info");
-        let cmd_system = make_system_msg(false, "<local-command-stdout>output</local-command-stdout>");
+        let cmd_system =
+            make_system_msg(false, "<local-command-stdout>output</local-command-stdout>");
 
         assert_eq!(classify_message(&meta_system), MessageCategory::HardNoise);
-        assert_eq!(classify_message(&non_meta_system), MessageCategory::HardNoise);
+        assert_eq!(
+            classify_message(&non_meta_system),
+            MessageCategory::HardNoise
+        );
         assert_eq!(classify_message(&cmd_system), MessageCategory::HardNoise);
     }
 
@@ -422,13 +429,19 @@ mod tests {
 
     #[test]
     fn test_user_with_stdout_is_system_chunk() {
-        let msg = make_user_msg(true, "<local-command-stdout>ls output\nfile1.txt\n</local-command-stdout>");
+        let msg = make_user_msg(
+            true,
+            "<local-command-stdout>ls output\nfile1.txt\n</local-command-stdout>",
+        );
         assert_eq!(classify_message(&msg), MessageCategory::System);
     }
 
     #[test]
     fn test_user_with_stderr_is_system_chunk() {
-        let msg = make_user_msg(true, "<local-command-stderr>error message</local-command-stderr>");
+        let msg = make_user_msg(
+            true,
+            "<local-command-stderr>error message</local-command-stderr>",
+        );
         assert_eq!(classify_message(&msg), MessageCategory::System);
     }
 
@@ -466,7 +479,10 @@ mod tests {
 
     #[test]
     fn test_user_with_caveat_is_noise() {
-        let msg = make_user_msg(false, "<local-command-caveat>Some caveat</local-command-caveat>");
+        let msg = make_user_msg(
+            false,
+            "<local-command-caveat>Some caveat</local-command-caveat>",
+        );
         assert_eq!(classify_message(&msg), MessageCategory::HardNoise);
     }
 
@@ -492,7 +508,10 @@ mod tests {
 
     #[test]
     fn test_user_with_stdout_prefix_not_user() {
-        let msg = make_user_msg(false, "<local-command-stdout>some output</local-command-stdout>");
+        let msg = make_user_msg(
+            false,
+            "<local-command-stdout>some output</local-command-stdout>",
+        );
         // meta=true, so this should be System chunk (checked before User)
         assert_ne!(classify_message(&msg), MessageCategory::User);
     }
@@ -501,7 +520,10 @@ mod tests {
 
     #[test]
     fn test_user_mixed_system_reminder_with_real_text_is_user() {
-        let msg = make_user_msg(false, "<system-reminder>rules here</system-reminder>Please fix the bug");
+        let msg = make_user_msg(
+            false,
+            "<system-reminder>rules here</system-reminder>Please fix the bug",
+        );
         assert_eq!(classify_message(&msg), MessageCategory::User);
     }
 

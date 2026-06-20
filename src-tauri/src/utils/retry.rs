@@ -95,7 +95,7 @@ mod tests {
         let result = retry_transient(
             "test_op",
             Path::new("/tmp/test"),
-            || { failing_op(&mut fails) },
+            || failing_op(&mut fails),
             3,
             10,
             &|e| matches!(e, TestError::Transient(_)),
@@ -109,7 +109,7 @@ mod tests {
         let result = retry_transient(
             "test_op",
             Path::new("/tmp/test"),
-            || { failing_op(&mut fails) },
+            || failing_op(&mut fails),
             3,
             1, // minimal delay for tests
             &|e| matches!(e, TestError::Transient(_)),
@@ -133,9 +133,6 @@ mod tests {
             &|e| matches!(e, TestError::Transient(_)),
         );
         assert!(result.is_err());
-        assert_eq!(
-            call_count.load(std::sync::atomic::Ordering::SeqCst),
-            1
-        ); // only called once
+        assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 1); // only called once
     }
 }

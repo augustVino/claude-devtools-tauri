@@ -31,7 +31,9 @@ fn parse_frontmatter(content: &str) -> HashMap<String, String> {
     let newline_pos = after_first_delim.find('\n').unwrap_or(0);
     let after_first_newline = &after_first_delim[newline_pos + 1..];
 
-    let end_pos = after_first_newline.find("\n---").or_else(|| after_first_newline.find("\r\n---"));
+    let end_pos = after_first_newline
+        .find("\n---")
+        .or_else(|| after_first_newline.find("\r\n---"));
     let frontmatter_content = match end_pos {
         Some(pos) => &after_first_newline[..pos],
         None => return HashMap::new(),
@@ -169,7 +171,10 @@ Content
         let result = read_agent_configs(&temp_dir.path().to_string_lossy());
 
         assert_eq!(result.len(), 3);
-        assert_eq!(result.get("coder").unwrap().color, Some("green".to_string()));
+        assert_eq!(
+            result.get("coder").unwrap().color,
+            Some("green".to_string())
+        );
         assert_eq!(result.get("reviewer").unwrap().color, None);
         assert_eq!(result.get("plain").unwrap().name, "plain");
     }

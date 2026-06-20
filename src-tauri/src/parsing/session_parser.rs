@@ -208,10 +208,7 @@ mod tests {
 
     #[test]
     fn test_process_messages_metrics() {
-        let messages = vec![
-            make_user_msg("u1", false, false),
-            make_assistant_msg("a1"),
-        ];
+        let messages = vec![make_user_msg("u1", false, false), make_assistant_msg("a1")];
 
         let session = process_messages(&messages);
         assert_eq!(session.metrics.input_tokens, 100);

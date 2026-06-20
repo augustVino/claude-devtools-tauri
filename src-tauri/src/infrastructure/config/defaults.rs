@@ -1,6 +1,8 @@
 //! 默认配置构造函数和常量。
 
-use crate::types::config::{AppConfig, DisplayConfig, GeneralConfig, NotificationConfig, SessionConfig};
+use crate::types::config::{
+    AppConfig, DisplayConfig, GeneralConfig, NotificationConfig, SessionConfig,
+};
 
 /// 配置文件名
 pub(crate) const CONFIG_FILENAME: &str = "claude-devtools-config.json";
@@ -15,7 +17,10 @@ pub(crate) fn default_app_config() -> AppConfig {
         notifications: NotificationConfig {
             enabled: true,
             sound_enabled: true,
-            ignored_regex: DEFAULT_IGNORED_REGEX.iter().map(|s| s.to_string()).collect(),
+            ignored_regex: DEFAULT_IGNORED_REGEX
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             ignored_repositories: vec![],
             snoozed_until: None,
             snooze_minutes: 30,

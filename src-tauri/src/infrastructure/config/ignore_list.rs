@@ -4,7 +4,10 @@ use crate::error::AppError;
 
 impl super::ConfigManager {
     /// 添加一个正则表达式到忽略列表。会校验正则语法和去重。
-    pub async fn add_ignore_regex(&self, pattern: String) -> Result<crate::types::AppConfig, AppError> {
+    pub async fn add_ignore_regex(
+        &self,
+        pattern: String,
+    ) -> Result<crate::types::AppConfig, AppError> {
         let trimmed = Self::validate_ignore_pattern(pattern)?;
 
         self.with_config_mut(|config| {
@@ -13,20 +16,28 @@ impl super::ConfigManager {
             }
             config.notifications.ignored_regex.push(trimmed);
             true
-        }).await
+        })
+        .await
     }
 
     /// 从忽略列表中移除指定的正则表达式
-    pub async fn remove_ignore_regex(&self, pattern: String) -> Result<crate::types::AppConfig, AppError> {
+    pub async fn remove_ignore_regex(
+        &self,
+        pattern: String,
+    ) -> Result<crate::types::AppConfig, AppError> {
         self.with_config_mut(|config| {
             let before = config.notifications.ignored_regex.len();
             config.notifications.ignored_regex.retain(|p| p != &pattern);
             config.notifications.ignored_regex.len() != before
-        }).await
+        })
+        .await
     }
 
     /// 添加一个仓库 ID 到忽略列表
-    pub async fn add_ignore_repository(&self, repo_id: String) -> Result<crate::types::AppConfig, AppError> {
+    pub async fn add_ignore_repository(
+        &self,
+        repo_id: String,
+    ) -> Result<crate::types::AppConfig, AppError> {
         let trimmed = repo_id.trim().to_string();
         if trimmed.is_empty() {
             return Ok(self.get_config().await);
@@ -36,17 +47,27 @@ impl super::ConfigManager {
             if !config.notifications.ignored_repositories.contains(&trimmed) {
                 config.notifications.ignored_repositories.push(trimmed);
                 true
-            } else { false }
-        }).await
+            } else {
+                false
+            }
+        })
+        .await
     }
 
     /// 从忽略列表中移除指定的仓库 ID
-    pub async fn remove_ignore_repository(&self, repo_id: String) -> Result<crate::types::AppConfig, AppError> {
+    pub async fn remove_ignore_repository(
+        &self,
+        repo_id: String,
+    ) -> Result<crate::types::AppConfig, AppError> {
         self.with_config_mut(|config| {
             let before = config.notifications.ignored_repositories.len();
-            config.notifications.ignored_repositories.retain(|id| id != &repo_id);
+            config
+                .notifications
+                .ignored_repositories
+                .retain(|id| id != &repo_id);
             config.notifications.ignored_repositories.len() != before
-        }).await
+        })
+        .await
     }
 
     /// 校验忽略正则模式（纯函数，无副作用）。

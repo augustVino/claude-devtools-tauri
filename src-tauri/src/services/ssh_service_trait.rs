@@ -4,12 +4,12 @@
 //! SshConnectionManager, ContextManager, ConfigManager, NotificationManager,
 //! ServiceContext, SSEBroadcaster。
 
-use async_trait::async_trait;
 use crate::error::AppError;
-use crate::types::ssh::{
-    SshConnectionConfig, SshConnectionStatus, SshTestResult, SshConfigHostEntry,
-};
 use crate::http::sse::SSEBroadcaster;
+use crate::types::ssh::{
+    SshConfigHostEntry, SshConnectionConfig, SshConnectionStatus, SshTestResult,
+};
+use async_trait::async_trait;
 
 /// SSH 连接操作的返回值类型别名。
 pub type SshConnectResult = SshConnectionStatus;
@@ -59,7 +59,11 @@ pub trait SshService: Send + Sync {
 
     /// 从 host 名构造 SSH context ID
     fn ssh_context_id(&self, host: &str) -> String {
-        if host.is_empty() { "ssh".to_string() } else { format!("ssh-{host}") }
+        if host.is_empty() {
+            "ssh".to_string()
+        } else {
+            format!("ssh-{host}")
+        }
     }
 
     /// 判断 context ID 是否属于 SSH 上下文

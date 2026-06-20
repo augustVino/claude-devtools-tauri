@@ -25,40 +25,77 @@ pub fn encode_path(absolute_path: &str) -> String {
     if absolute_path.is_empty() {
         return String::new();
     }
-    let encoded: String = absolute_path.chars().map(|c| if c == '/' || c == '\\' { '-' } else { c }).collect();
-    if encoded.starts_with('-') { encoded } else { format!("-{encoded}") }
+    let encoded: String = absolute_path
+        .chars()
+        .map(|c| if c == '/' || c == '\\' { '-' } else { c })
+        .collect();
+    if encoded.starts_with('-') {
+        encoded
+    } else {
+        format!("-{encoded}")
+    }
 }
 
 /// 将目录名解码回路径（尽力而为；对含 `-` 的路径有损）。
 pub fn decode_path(encoded_name: &str) -> String {
-    if encoded_name.is_empty() { return String::new(); }
-    if let Some(rest) = legacy_windows_drive(encoded_name) { return rest; }
+    if encoded_name.is_empty() {
+        return String::new();
+    }
+    if let Some(rest) = legacy_windows_drive(encoded_name) {
+        return rest;
+    }
     let without_leading = encoded_name.strip_prefix('-').unwrap_or(encoded_name);
-    let decoded: String = without_leading.chars().map(|c| if c == '-' { '/' } else { c }).collect();
-    if looks_like_windows_drive(&decoded) { return translate_wsl_mount(&decoded); }
-    let absolute = if decoded.starts_with('/') { decoded } else { format!("/{decoded}") };
+    let decoded: String = without_leading
+        .chars()
+        .map(|c| if c == '-' { '/' } else { c })
+        .collect();
+    if looks_like_windows_drive(&decoded) {
+        return translate_wsl_mount(&decoded);
+    }
+    let absolute = if decoded.starts_with('/') {
+        decoded
+    } else {
+        format!("/{decoded}")
+    };
     translate_wsl_mount(&absolute)
 }
 
 /// 提取项目名称（路径最后一段）。优先使用 `cwd_hint` 以避免有损解码。
 pub fn extract_project_name(encoded_name: &str, cwd_hint: Option<&str>) -> String {
     if let Some(hint) = cwd_hint {
-        if let Some(name) = hint.split(&['/', '\\']).filter(|s| !s.is_empty()).next_back() {
+        if let Some(name) = hint
+            .split(&['/', '\\'])
+            .filter(|s| !s.is_empty())
+            .next_back()
+        {
             return name.to_string();
         }
     }
     let decoded = decode_path(encoded_name);
-    decoded.split('/').filter(|s| !s.is_empty()).next_back().unwrap_or(encoded_name).to_string()
+    decoded
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .next_back()
+        .unwrap_or(encoded_name)
+        .to_string()
 }
 
 /// 验证编码路径格式（POSIX、Windows 盘符或旧版 Windows 格式）。
 pub fn is_valid_encoded_path(encoded_name: &str) -> bool {
-    if encoded_name.is_empty() { return false; }
+    if encoded_name.is_empty() {
+        return false;
+    }
     let legacy_re = regex::Regex::new(r"^[a-zA-Z]--[a-zA-Z0-9_.\s-]+$").unwrap();
-    if legacy_re.is_match(encoded_name) { return true; }
-    if !encoded_name.starts_with('-') { return false; }
+    if legacy_re.is_match(encoded_name) {
+        return true;
+    }
+    if !encoded_name.starts_with('-') {
+        return false;
+    }
     let valid_re = regex::Regex::new(r"^-[a-zA-Z0-9_.\s:\-]+$").unwrap();
-    if !valid_re.is_match(encoded_name) { return false; }
+    if !valid_re.is_match(encoded_name) {
+        return false;
+    }
     if let Some(pos) = encoded_name.find(':') {
         if !is_drive_colon_at_start(encoded_name, pos) || encoded_name[pos + 1..].contains(':') {
             return false;
@@ -69,7 +106,9 @@ pub fn is_valid_encoded_path(encoded_name: &str) -> bool {
 
 /// 验证项目 ID 格式（纯编码路径或复合格式 `{编码路径}::{8位十六进制}`）。
 pub fn is_valid_project_id(project_id: &str) -> bool {
-    if project_id.is_empty() { return false; }
+    if project_id.is_empty() {
+        return false;
+    }
     match project_id.find("::") {
         None => is_valid_encoded_path(project_id),
         Some(sep) => is_valid_encoded_path(&project_id[..sep]) && is_hex8(&project_id[sep + 2..]),
@@ -86,30 +125,44 @@ pub fn extract_base_dir(project_id: &str) -> &str {
 
 /// 从文件名中提取会话 ID，去除 `.jsonl` 扩展名。
 pub fn extract_session_id(filename: &str) -> String {
-    filename.strip_suffix(".jsonl").unwrap_or(filename).to_string()
+    filename
+        .strip_suffix(".jsonl")
+        .unwrap_or(filename)
+        .to_string()
 }
 
 /// 构建会话文件路径：`{claude_base}/projects/{project_id}/{session_id}.jsonl`。
 #[allow(dead_code)]
 pub fn build_session_path(claude_base: &str, project_id: &str, session_id: &str) -> PathBuf {
-    PathBuf::from(claude_base).join("projects").join(extract_base_dir(project_id)).join(format!("{session_id}.jsonl"))
+    PathBuf::from(claude_base)
+        .join("projects")
+        .join(extract_base_dir(project_id))
+        .join(format!("{session_id}.jsonl"))
 }
 
 /// 构建子 Agent 目录路径：`{claude_base}/projects/{project_id}/{session_id}/subagents`。
 #[allow(dead_code)]
 pub fn build_subagents_path(claude_base: &str, project_id: &str, session_id: &str) -> PathBuf {
-    PathBuf::from(claude_base).join("projects").join(extract_base_dir(project_id)).join(session_id).join("subagents")
+    PathBuf::from(claude_base)
+        .join("projects")
+        .join(extract_base_dir(project_id))
+        .join(session_id)
+        .join("subagents")
 }
 
 /// 构建待办事项文件路径：`{claude_base}/todos/{session_id}.json`。
 #[allow(dead_code)]
 pub fn build_todo_path(claude_base: &str, session_id: &str) -> PathBuf {
-    PathBuf::from(claude_base).join("todos").join(format!("{session_id}.json"))
+    PathBuf::from(claude_base)
+        .join("todos")
+        .join(format!("{session_id}.json"))
 }
 
 /// 返回默认的 `~/.claude` 路径。
 pub fn get_default_claude_base_path() -> PathBuf {
-    dirs::home_dir().map(|h| h.join(".claude")).unwrap_or_else(|| PathBuf::from("/.claude"))
+    dirs::home_dir()
+        .map(|h| h.join(".claude"))
+        .unwrap_or_else(|| PathBuf::from("/.claude"))
 }
 
 /// 根据配置返回有效的 Claude base path。
@@ -136,7 +189,9 @@ pub fn get_todos_base_path() -> PathBuf {
 }
 
 /// 检查路径是否为子 Agent 文件（路径包含 `/subagents/`）。
-pub fn is_subagent_file(path: &str) -> bool { path.contains("/subagents/") }
+pub fn is_subagent_file(path: &str) -> bool {
+    path.contains("/subagents/")
+}
 
 /// 从 `~/.claude/projects/` 下的相对路径中提取项目 ID。
 #[allow(dead_code)]
@@ -148,8 +203,13 @@ pub fn extract_project_id_from_path(relative_path: &str) -> Option<String> {
 /// 处理旧版 Windows 盘符编码格式（如 `C--Users-name` -> `C:/Users/name`）。
 fn legacy_windows_drive(encoded_name: &str) -> Option<String> {
     let b = encoded_name.as_bytes();
-    if b.len() < 4 || !b[0].is_ascii_alphabetic() || b[1] != b'-' || b[2] != b'-' { return None; }
-    let rest: String = b[3..].iter().map(|&c| if c == b'-' { '/' } else { c as char }).collect::<String>();
+    if b.len() < 4 || !b[0].is_ascii_alphabetic() || b[1] != b'-' || b[2] != b'-' {
+        return None;
+    }
+    let rest: String = b[3..]
+        .iter()
+        .map(|&c| if c == b'-' { '/' } else { c as char })
+        .collect::<String>();
     Some(format!("{}:/{rest}", (b[0] as char).to_ascii_uppercase()))
 }
 
@@ -165,7 +225,11 @@ fn translate_wsl_mount(posix_path: &str) -> String {
         if let Some(rest) = posix_path.strip_prefix("/mnt/") {
             if let Some(drive) = rest.chars().next().filter(|c| c.is_ascii_alphabetic()) {
                 let rem = &rest[drive.len_utf8()..];
-                let sep = if rem.is_empty() || rem.starts_with('/') { "" } else { "/" };
+                let sep = if rem.is_empty() || rem.starts_with('/') {
+                    ""
+                } else {
+                    "/"
+                };
                 return format!("{}:{}{}", drive.to_ascii_uppercase(), sep, rem);
             }
         }
@@ -180,7 +244,9 @@ fn is_drive_colon_at_start(s: &str, pos: usize) -> bool {
 }
 
 /// 检查字符串是否为 8 位十六进制值（项目 ID 后缀格式）。
-fn is_hex8(s: &str) -> bool { s.len() == 8 && s.chars().all(|c| c.is_ascii_hexdigit()) }
+fn is_hex8(s: &str) -> bool {
+    s.len() == 8 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
 
 #[cfg(test)]
 mod tests {
@@ -196,7 +262,10 @@ mod tests {
 
     #[test]
     fn encode_windows_and_edge_cases() {
-        assert_eq!(encode_path("C:\\Users\\name\\project"), "-C:-Users-name-project");
+        assert_eq!(
+            encode_path("C:\\Users\\name\\project"),
+            "-C:-Users-name-project"
+        );
         assert_eq!(encode_path(""), "");
         assert_eq!(encode_path("-foo"), "-foo");
         assert_eq!(decode_path(""), "");
@@ -204,7 +273,10 @@ mod tests {
 
     #[test]
     fn round_trip_lossy() {
-        assert_ne!(decode_path(&encode_path("/home/my-project")), "/home/my-project");
+        assert_ne!(
+            decode_path(&encode_path("/home/my-project")),
+            "/home/my-project"
+        );
     }
 
     #[test]
@@ -239,8 +311,14 @@ mod tests {
 
     #[test]
     fn extract_base_dir_and_name() {
-        assert_eq!(extract_base_dir("-Users-name-project"), "-Users-name-project");
-        assert_eq!(extract_base_dir("-Users-name-project::abcd1234"), "-Users-name-project");
+        assert_eq!(
+            extract_base_dir("-Users-name-project"),
+            "-Users-name-project"
+        );
+        assert_eq!(
+            extract_base_dir("-Users-name-project::abcd1234"),
+            "-Users-name-project"
+        );
         assert_eq!(extract_project_name("-Users-name-project", None), "project");
         assert_eq!(
             extract_project_name("-Users-claude-devtools", Some("/home/user/claude-devtools")),
@@ -250,29 +328,51 @@ mod tests {
 
     #[test]
     fn build_paths() {
-        assert_eq!(build_session_path("/h/.claude", "-U-n", "s1"), PathBuf::from("/h/.claude/projects/-U-n/s1.jsonl"));
-        assert_eq!(build_session_path("/h/.claude", "-U-n::abcd1234", "s1"), PathBuf::from("/h/.claude/projects/-U-n/s1.jsonl"));
-        assert_eq!(build_subagents_path("/h/.claude", "-U-n", "s1"), PathBuf::from("/h/.claude/projects/-U-n/s1/subagents"));
-        assert_eq!(build_todo_path("/h/.claude", "s1"), PathBuf::from("/h/.claude/todos/s1.json"));
+        assert_eq!(
+            build_session_path("/h/.claude", "-U-n", "s1"),
+            PathBuf::from("/h/.claude/projects/-U-n/s1.jsonl")
+        );
+        assert_eq!(
+            build_session_path("/h/.claude", "-U-n::abcd1234", "s1"),
+            PathBuf::from("/h/.claude/projects/-U-n/s1.jsonl")
+        );
+        assert_eq!(
+            build_subagents_path("/h/.claude", "-U-n", "s1"),
+            PathBuf::from("/h/.claude/projects/-U-n/s1/subagents")
+        );
+        assert_eq!(
+            build_todo_path("/h/.claude", "s1"),
+            PathBuf::from("/h/.claude/todos/s1.json")
+        );
     }
 
     #[test]
     fn path_helpers() {
         assert!(is_subagent_file("/p/X/s/subagents/child.jsonl"));
         assert!(!is_subagent_file("/p/X/s.jsonl"));
-        assert_eq!(extract_project_id_from_path("projects/-U-n/s.jsonl"), Some("-U-n".to_string()));
+        assert_eq!(
+            extract_project_id_from_path("projects/-U-n/s.jsonl"),
+            Some("-U-n".to_string())
+        );
         assert_eq!(extract_project_id_from_path("-U-n"), None);
     }
 
     #[test]
     fn decode_legacy_windows() {
-        assert_eq!(decode_path("C--Users-name-project"), "C:/Users/name/project");
+        assert_eq!(
+            decode_path("C--Users-name-project"),
+            "C:/Users/name/project"
+        );
     }
 
     #[test]
     fn base_paths() {
-        assert!(get_default_claude_base_path().to_string_lossy().ends_with(".claude"));
-        assert!(get_projects_base_path().to_string_lossy().ends_with("projects"));
+        assert!(get_default_claude_base_path()
+            .to_string_lossy()
+            .ends_with(".claude"));
+        assert!(get_projects_base_path()
+            .to_string_lossy()
+            .ends_with("projects"));
         assert!(get_todos_base_path().to_string_lossy().ends_with("todos"));
     }
 }

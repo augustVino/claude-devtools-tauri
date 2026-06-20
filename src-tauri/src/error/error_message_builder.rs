@@ -99,10 +99,7 @@ fn find_tool_name(message: &ParsedMessage, tool_use_id: &str) -> Option<String> 
 ///
 /// 首先检查 `toolCalls` 数组，然后当 `sourceToolUseID` 匹配时，
 /// 回退到 `toolUseResult` 的 `toolName` 字段。
-pub fn find_tool_name_by_tool_use_id(
-    message: &ParsedMessage,
-    tool_use_id: &str,
-) -> Option<String> {
+pub fn find_tool_name_by_tool_use_id(message: &ParsedMessage, tool_use_id: &str) -> Option<String> {
     // 优先从 toolCalls 中查找
     if let Some(name) = find_tool_name(message, tool_use_id) {
         return Some(name);
@@ -335,10 +332,7 @@ mod tests {
     #[test]
     fn test_find_tool_name_from_tool_calls() {
         let msg = make_parsed_message(
-            vec![
-                make_tool_call("tu1", "Read"),
-                make_tool_call("tu2", "Bash"),
-            ],
+            vec![make_tool_call("tu1", "Read"), make_tool_call("tu2", "Bash")],
             vec![],
             None,
             None,
@@ -402,34 +396,19 @@ mod tests {
 
     #[test]
     fn test_find_tool_name_tool_use_result_no_tool_name_field() {
-        let msg = make_parsed_message(
-            vec![],
-            vec![],
-            Some("tu1"),
-            Some(json!({"output": "ok"})),
-        );
+        let msg = make_parsed_message(vec![], vec![], Some("tu1"), Some(json!({"output": "ok"})));
         assert_eq!(find_tool_name_by_tool_use_id(&msg, "tu1"), None);
     }
 
     #[test]
     fn test_find_tool_name_tool_use_result_tool_name_not_string() {
-        let msg = make_parsed_message(
-            vec![],
-            vec![],
-            Some("tu1"),
-            Some(json!({"toolName": 42})),
-        );
+        let msg = make_parsed_message(vec![], vec![], Some("tu1"), Some(json!({"toolName": 42})));
         assert_eq!(find_tool_name_by_tool_use_id(&msg, "tu1"), None);
     }
 
     #[test]
     fn test_find_tool_name_tool_use_result_null() {
-        let msg = make_parsed_message(
-            vec![],
-            vec![],
-            Some("tu1"),
-            None,
-        );
+        let msg = make_parsed_message(vec![], vec![], Some("tu1"), None);
         assert_eq!(find_tool_name_by_tool_use_id(&msg, "tu1"), None);
     }
 

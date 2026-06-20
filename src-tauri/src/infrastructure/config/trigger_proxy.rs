@@ -15,24 +15,42 @@ impl super::ConfigManager {
 
     /// 仅获取已启用的通知触发器
     pub async fn get_enabled_triggers(&self) -> Vec<NotificationTrigger> {
-        self.get_triggers().await.into_iter().filter(|t| t.enabled).collect()
+        self.get_triggers()
+            .await
+            .into_iter()
+            .filter(|t| t.enabled)
+            .collect()
     }
 
     /// 添加新的通知触发器。若 ID 已存在或校验失败则返回错误。
     ///
     /// **保持直接写锁模式**（与 update_trigger/remove_trigger 一致）。
-    pub async fn add_trigger(&self, trigger: NotificationTrigger) -> Result<crate::types::AppConfig, AppError> {
+    pub async fn add_trigger(
+        &self,
+        trigger: NotificationTrigger,
+    ) -> Result<crate::types::AppConfig, AppError> {
         // Phase 1: 校验（无锁，快速失败）
         let validation = TriggerManager::validate_trigger_only(&trigger);
         if !validation.valid {
-            return Err(AppError::InvalidInput(format!("Invalid trigger: {}", validation.errors.join(", "))));
+            return Err(AppError::InvalidInput(format!(
+                "Invalid trigger: {}",
+                validation.errors.join(", ")
+            )));
         }
 
         // Phase 2: 写入（直接写锁，原子操作）
         let mut config = self.config.write().await;
 
-        if config.notifications.triggers.iter().any(|t| t.id == trigger.id) {
-            return Err(AppError::InvalidInput(format!("Trigger with ID '{}' already exists", trigger.id)));
+        if config
+            .notifications
+            .triggers
+            .iter()
+            .any(|t| t.id == trigger.id)
+        {
+            return Err(AppError::InvalidInput(format!(
+                "Trigger with ID '{}' already exists",
+                trigger.id
+            )));
         }
 
         config.notifications.triggers.push(trigger);
@@ -55,7 +73,8 @@ impl super::ConfigManager {
         let no_op = Arc::new(|| ());
         let mut tm = TriggerManager::new(current_triggers, no_op);
 
-        let updated_triggers = tm.update(trigger_id, updates)
+        let updated_triggers = tm
+            .update(trigger_id, updates)
             .map_err(|e| AppError::Config(e))?;
 
         config.notifications.triggers = updated_triggers;
@@ -65,12 +84,22 @@ impl super::ConfigManager {
     }
 
     /// 根据 ID 移除通知触发器。内置触发器或未找到则返回错误。
-    pub async fn remove_trigger(&self, trigger_id: &str) -> Result<crate::types::AppConfig, AppError> {
+    pub async fn remove_trigger(
+        &self,
+        trigger_id: &str,
+    ) -> Result<crate::types::AppConfig, AppError> {
         let mut config = self.config.write().await;
 
-        if let Some(trigger) = config.notifications.triggers.iter().find(|t| t.id == trigger_id) {
+        if let Some(trigger) = config
+            .notifications
+            .triggers
+            .iter()
+            .find(|t| t.id == trigger_id)
+        {
             if trigger.is_builtin.unwrap_or(false) {
-                return Err(AppError::InvalidInput("Cannot remove built-in triggers. Disable them instead.".into()));
+                return Err(AppError::InvalidInput(
+                    "Cannot remove built-in triggers. Disable them instead.".into(),
+                ));
             }
         }
 
@@ -78,7 +107,9 @@ impl super::ConfigManager {
         config.notifications.triggers.retain(|t| t.id != trigger_id);
 
         if config.notifications.triggers.len() == len_before {
-            return Err(AppError::NotFound(format!("Trigger '{trigger_id}' not found")));
+            return Err(AppError::NotFound(format!(
+                "Trigger '{trigger_id}' not found"
+            )));
         }
 
         drop(config);

@@ -10,12 +10,21 @@ pub(super) fn merge_with_ssh_config_static(
 ) -> SshConnectionConfig {
     if let Some(parser) = &config_parser {
         if let Some(entry) = parser.resolve_host(&config.host) {
-            if let Some(ref host_name) = entry.host_name { config.host = host_name.clone(); }
-            if config.username.is_empty() {
-                if let Some(ref user) = entry.user { config.username = user.clone(); }
+            if let Some(ref host_name) = entry.host_name {
+                config.host = host_name.clone();
             }
-            if config.port == 22 { if let Some(port) = entry.port { config.port = port; } }
-            if matches!(config.auth_method, SshAuthMethod::Auto) && !entry.identity_files.is_empty() {
+            if config.username.is_empty() {
+                if let Some(ref user) = entry.user {
+                    config.username = user.clone();
+                }
+            }
+            if config.port == 22 {
+                if let Some(port) = entry.port {
+                    config.port = port;
+                }
+            }
+            if matches!(config.auth_method, SshAuthMethod::Auto) && !entry.identity_files.is_empty()
+            {
                 config.auth_method = SshAuthMethod::PrivateKey;
                 if config.private_key_path.is_none() {
                     config.private_key_path = Some(entry.identity_files[0].clone());
@@ -24,7 +33,9 @@ pub(super) fn merge_with_ssh_config_static(
         }
     }
     if config.username.is_empty() {
-        config.username = std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or_else(|_| "root".to_string());
+        config.username = std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_else(|_| "root".to_string());
     }
     config
 }

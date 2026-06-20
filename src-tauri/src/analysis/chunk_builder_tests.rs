@@ -100,9 +100,15 @@ fn test_build_chunks_mixed_messages() {
     assert!(matches!(&chunks[2], Chunk::User(_)));
 
     // Verify stable {type}-{uuid} IDs
-    if let Chunk::User(c) = &chunks[0] { assert_eq!(c.id, "user-u1"); }
-    if let Chunk::Ai(c) = &chunks[1] { assert_eq!(c.id, "ai-a1"); }
-    if let Chunk::User(c) = &chunks[2] { assert_eq!(c.id, "user-u2"); }
+    if let Chunk::User(c) = &chunks[0] {
+        assert_eq!(c.id, "user-u1");
+    }
+    if let Chunk::Ai(c) = &chunks[1] {
+        assert_eq!(c.id, "ai-a1");
+    }
+    if let Chunk::User(c) = &chunks[2] {
+        assert_eq!(c.id, "user-u2");
+    }
 }
 
 #[test]

@@ -28,16 +28,25 @@ pub fn extract_tool_calls(content: &serde_json::Value) -> Vec<ToolCall> {
             _ => continue,
         };
 
-        let input = block.get("input").cloned().unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+        let input = block
+            .get("input")
+            .cloned()
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
         let is_task = name == "Task";
 
         let task_description = if is_task {
-            input.get("description").and_then(|v| v.as_str()).map(String::from)
+            input
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(String::from)
         } else {
             None
         };
         let task_subagent_type = if is_task {
-            input.get("subagent_type").and_then(|v| v.as_str()).map(String::from)
+            input
+                .get("subagent_type")
+                .and_then(|v| v.as_str())
+                .map(String::from)
         } else {
             None
         };
@@ -73,8 +82,14 @@ pub fn extract_tool_results(content: &serde_json::Value) -> Vec<ToolResult> {
             _ => continue,
         };
 
-        let result_content = block.get("content").cloned().unwrap_or(serde_json::Value::String(String::new()));
-        let is_error = block.get("is_error").and_then(|v| v.as_bool()).unwrap_or(false);
+        let result_content = block
+            .get("content")
+            .cloned()
+            .unwrap_or(serde_json::Value::String(String::new()));
+        let is_error = block
+            .get("is_error")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         results.push(ToolResult {
             tool_use_id,
@@ -119,18 +134,11 @@ fn parse_chat_history_entry(entry: &ChatHistoryEntry) -> Option<ParsedMessage> {
             let content = user.message.content.clone();
             let role = Some(user.message.role.clone());
             let is_meta = user.is_meta.unwrap_or(false);
-            (
-                MessageType::User,
-                content,
-                role,
-                None,
-                None,
-                is_meta,
-                None,
-            )
+            (MessageType::User, content, role, None, None, is_meta, None)
         }
         ChatHistoryEntry::Assistant(assistant) => {
-            let content = serde_json::to_value(&assistant.message.content).unwrap_or(serde_json::Value::Null);
+            let content =
+                serde_json::to_value(&assistant.message.content).unwrap_or(serde_json::Value::Null);
             let role = Some(assistant.message.role.clone());
             let usage = Some(assistant.message.usage.clone());
             let model = Some(assistant.message.model.clone());
@@ -149,40 +157,57 @@ fn parse_chat_history_entry(entry: &ChatHistoryEntry) -> Option<ParsedMessage> {
                 request_id,
             )
         }
-        ChatHistoryEntry::System(system) => {
-            (
-                MessageType::System,
-                serde_json::Value::Null,
-                None,
-                None,
-                None,
-                system.is_meta,
-                None,
-            )
-        }
-        ChatHistoryEntry::Summary(summary) => {
-            (
-                MessageType::Summary,
-                serde_json::json!(summary.summary),
-                None,
-                None,
-                None,
-                true,
-                None,
-            )
-        }
+        ChatHistoryEntry::System(system) => (
+            MessageType::System,
+            serde_json::Value::Null,
+            None,
+            None,
+            None,
+            system.is_meta,
+            None,
+        ),
+        ChatHistoryEntry::Summary(summary) => (
+            MessageType::Summary,
+            serde_json::json!(summary.summary),
+            None,
+            None,
+            None,
+            true,
+            None,
+        ),
         _ => return None,
     };
 
     // Extract common fields from ConversationalEntry variants
-    let (cwd, git_branch, is_sidechain, user_type, parent_uuid, agent_id,
-         source_tool_use_id, source_tool_assistant_uuid, tool_use_result,
-         is_compact_summary) = match entry {
+    let (
+        cwd,
+        git_branch,
+        is_sidechain,
+        user_type,
+        parent_uuid,
+        agent_id,
+        source_tool_use_id,
+        source_tool_assistant_uuid,
+        tool_use_result,
+        is_compact_summary,
+    ) = match entry {
         ChatHistoryEntry::User(user) => (
-            if user.cwd.is_empty() { None } else { Some(user.cwd.clone()) },
-            if user.git_branch.is_empty() { None } else { Some(user.git_branch.clone()) },
+            if user.cwd.is_empty() {
+                None
+            } else {
+                Some(user.cwd.clone())
+            },
+            if user.git_branch.is_empty() {
+                None
+            } else {
+                Some(user.git_branch.clone())
+            },
             user.is_sidechain,
-            if user.user_type.is_empty() { None } else { Some(user.user_type.clone()) },
+            if user.user_type.is_empty() {
+                None
+            } else {
+                Some(user.user_type.clone())
+            },
             user.parent_uuid.clone(),
             user.agent_id.clone(),
             user.source_tool_use_id.clone(),
@@ -191,10 +216,22 @@ fn parse_chat_history_entry(entry: &ChatHistoryEntry) -> Option<ParsedMessage> {
             user.is_compact_summary.unwrap_or(false),
         ),
         ChatHistoryEntry::Assistant(assistant) => (
-            if assistant.cwd.is_empty() { None } else { Some(assistant.cwd.clone()) },
-            if assistant.git_branch.is_empty() { None } else { Some(assistant.git_branch.clone()) },
+            if assistant.cwd.is_empty() {
+                None
+            } else {
+                Some(assistant.cwd.clone())
+            },
+            if assistant.git_branch.is_empty() {
+                None
+            } else {
+                Some(assistant.git_branch.clone())
+            },
             assistant.is_sidechain,
-            if assistant.user_type.is_empty() { None } else { Some(assistant.user_type.clone()) },
+            if assistant.user_type.is_empty() {
+                None
+            } else {
+                Some(assistant.user_type.clone())
+            },
             assistant.parent_uuid.clone(),
             assistant.agent_id.clone(),
             None,
@@ -203,10 +240,22 @@ fn parse_chat_history_entry(entry: &ChatHistoryEntry) -> Option<ParsedMessage> {
             false,
         ),
         ChatHistoryEntry::System(system) => (
-            if system.cwd.is_empty() { None } else { Some(system.cwd.clone()) },
-            if system.git_branch.is_empty() { None } else { Some(system.git_branch.clone()) },
+            if system.cwd.is_empty() {
+                None
+            } else {
+                Some(system.cwd.clone())
+            },
+            if system.git_branch.is_empty() {
+                None
+            } else {
+                Some(system.git_branch.clone())
+            },
             system.is_sidechain,
-            if system.user_type.is_empty() { None } else { Some(system.user_type.clone()) },
+            if system.user_type.is_empty() {
+                None
+            } else {
+                Some(system.user_type.clone())
+            },
             system.parent_uuid.clone(),
             None,
             None,
@@ -311,13 +360,9 @@ pub fn deduplicate_by_request_id(messages: &[ParsedMessage]) -> Vec<ParsedMessag
     messages
         .iter()
         .enumerate()
-        .filter(|(i, msg)| {
-            match &msg.request_id {
-                Some(rid) if !rid.is_empty() => {
-                    last_index_by_rid.get(rid) == Some(i)
-                }
-                _ => true,
-            }
+        .filter(|(i, msg)| match &msg.request_id {
+            Some(rid) if !rid.is_empty() => last_index_by_rid.get(rid) == Some(i),
+            _ => true,
         })
         .map(|(_, msg)| msg.clone())
         .collect()
@@ -534,10 +579,18 @@ mod tests {
         }
         let rt = tokio::runtime::Runtime::new().unwrap();
         let messages = rt.block_on(parse_jsonl_file(fixture_path));
-        assert!(!messages.is_empty(), "Should parse at least one message from fixture");
+        assert!(
+            !messages.is_empty(),
+            "Should parse at least one message from fixture"
+        );
     }
 
-    fn create_test_assistant_msg(uuid: &str, req_id: &str, input: u64, output: u64) -> ParsedMessage {
+    fn create_test_assistant_msg(
+        uuid: &str,
+        req_id: &str,
+        input: u64,
+        output: u64,
+    ) -> ParsedMessage {
         ParsedMessage {
             uuid: uuid.to_string(),
             parent_uuid: None,

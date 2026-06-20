@@ -48,23 +48,26 @@ impl WorktreeGrouper {
         }
 
         // 2. Group projects by repository
-        let mut repo_groups: std::collections::HashMap<
-            String,
-            RepoGroupData,
-        > = std::collections::HashMap::new();
+        let mut repo_groups: std::collections::HashMap<String, RepoGroupData> =
+            std::collections::HashMap::new();
 
         for project in projects {
             let identity = project_identities.get(&project.id).and_then(|i| i.clone());
             let branch = project_branches.get(&project.id).cloned().flatten();
 
             // Use repository ID if available, otherwise use project ID
-            let group_id = identity.as_ref().map(|i| i.id.clone()).unwrap_or_else(|| project.id.clone());
+            let group_id = identity
+                .as_ref()
+                .map(|i| i.id.clone())
+                .unwrap_or_else(|| project.id.clone());
 
-            let group = repo_groups.entry(group_id).or_insert_with(|| RepoGroupData {
-                identity: identity.clone(),
-                projects: Vec::new(),
-                branches: std::collections::HashMap::new(),
-            });
+            let group = repo_groups
+                .entry(group_id)
+                .or_insert_with(|| RepoGroupData {
+                    identity: identity.clone(),
+                    projects: Vec::new(),
+                    branches: std::collections::HashMap::new(),
+                });
 
             group.projects.push(project.clone());
             if let Some(b) = branch {
@@ -121,11 +124,16 @@ impl WorktreeGrouper {
                 } else if !a.is_main_worktree && b.is_main_worktree {
                     std::cmp::Ordering::Greater
                 } else {
-                    b.most_recent_session.unwrap_or(0).cmp(&a.most_recent_session.unwrap_or(0))
+                    b.most_recent_session
+                        .unwrap_or(0)
+                        .cmp(&a.most_recent_session.unwrap_or(0))
                 }
             });
 
-            let total_sessions: u32 = sorted_worktrees.iter().map(|wt| wt.sessions.len() as u32).sum();
+            let total_sessions: u32 = sorted_worktrees
+                .iter()
+                .map(|wt| wt.sessions.len() as u32)
+                .sum();
             let most_recent_session = sorted_worktrees
                 .iter()
                 .map(|wt| wt.most_recent_session.unwrap_or(0))
@@ -133,25 +141,33 @@ impl WorktreeGrouper {
                 .unwrap_or(0);
 
             let identity = group.identity.clone();
-            let name = group.identity.clone()
-                .map(|i| i.name)
-                .unwrap_or_else(|| {
-                    group.projects.first().map(|p| p.name.clone()).unwrap_or_default()
-                });
+            let name = group.identity.clone().map(|i| i.name).unwrap_or_else(|| {
+                group
+                    .projects
+                    .first()
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default()
+            });
 
             repository_groups.push(RepositoryGroup {
                 id: group_id,
                 identity,
                 worktrees: sorted_worktrees,
                 name,
-                most_recent_session: if most_recent_session > 0 { Some(most_recent_session) } else { None },
+                most_recent_session: if most_recent_session > 0 {
+                    Some(most_recent_session)
+                } else {
+                    None
+                },
                 total_sessions,
             });
         }
 
         // 4. Sort repository groups by most recent activity
         repository_groups.sort_by(|a, b| {
-            b.most_recent_session.unwrap_or(0).cmp(&a.most_recent_session.unwrap_or(0))
+            b.most_recent_session
+                .unwrap_or(0)
+                .cmp(&a.most_recent_session.unwrap_or(0))
         });
 
         repository_groups
@@ -203,6 +219,9 @@ mod tests {
     #[test]
     fn test_get_worktree_project_id() {
         let grouper = WorktreeGrouper::new(PathBuf::from("/tmp/projects"));
-        assert_eq!(grouper.get_worktree_project_id("worktree-123"), "worktree-123");
+        assert_eq!(
+            grouper.get_worktree_project_id("worktree-123"),
+            "worktree-123"
+        );
     }
 }

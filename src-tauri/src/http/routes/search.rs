@@ -1,10 +1,16 @@
 //! Search 路由处理器 — 薄封装层。
 
-use axum::{Json, extract::{Path, State}, http::StatusCode};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
 
 use crate::commands::guards;
 use crate::http::state::HttpState;
-use crate::types::domain::{FindSessionByIdResult, FindSessionsByPartialIdResult, SearchSessionsResult};
+use crate::types::domain::{
+    FindSessionByIdResult, FindSessionsByPartialIdResult, SearchSessionsResult,
+};
 
 use super::error_json;
 
@@ -21,14 +27,20 @@ pub async fn search_sessions(
 
     if raw_query.trim().is_empty() {
         return Ok(Json(SearchSessionsResult {
-            results: Vec::new(), total_matches: 0, sessions_searched: 0,
-            query: raw_query, is_partial: None,
+            results: Vec::new(),
+            total_matches: 0,
+            sessions_searched: 0,
+            query: raw_query,
+            is_partial: None,
         }));
     }
 
     let query = guards::validate_search_query(&raw_query).map_err(error_json)?;
 
-    state.search_service.search_sessions(&safe_id, &query, max).await
+    state
+        .search_service
+        .search_sessions(&safe_id, &query, max)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -44,14 +56,20 @@ pub async fn search_all_projects(
 
     if raw_query.trim().is_empty() {
         return Ok(Json(SearchSessionsResult {
-            results: Vec::new(), total_matches: 0, sessions_searched: 0,
-            query: raw_query, is_partial: None,
+            results: Vec::new(),
+            total_matches: 0,
+            sessions_searched: 0,
+            query: raw_query,
+            is_partial: None,
         }));
     }
 
     let query = guards::validate_search_query(&raw_query).map_err(error_json)?;
 
-    state.search_service.search_all_projects(&query, max).await
+    state
+        .search_service
+        .search_all_projects(&query, max)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -62,7 +80,10 @@ pub async fn find_session_by_id(
     Path(session_id): Path<String>,
 ) -> Result<Json<FindSessionByIdResult>, (StatusCode, Json<super::ErrorResponse>)> {
     let safe_id = guards::validate_session_id(&session_id).map_err(error_json)?;
-    state.search_service.find_session_by_id(&safe_id).await
+    state
+        .search_service
+        .find_session_by_id(&safe_id)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -75,14 +96,23 @@ pub async fn find_sessions_by_partial_id(
 ) -> Result<Json<FindSessionsByPartialIdResult>, (StatusCode, Json<super::ErrorResponse>)> {
     let frag = fragment.trim().to_string();
     if frag.len() < 3 {
-        return Ok(Json(FindSessionsByPartialIdResult { found: false, results: vec![] }));
+        return Ok(Json(FindSessionsByPartialIdResult {
+            found: false,
+            results: vec![],
+        }));
     }
 
-    let max = params.get("maxResults")
+    let max = params
+        .get("maxResults")
         .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(20).min(100).max(1);
+        .unwrap_or(20)
+        .min(100)
+        .max(1);
 
-    state.search_service.find_sessions_by_partial_id(&frag, max).await
+    state
+        .search_service
+        .find_sessions_by_partial_id(&frag, max)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }

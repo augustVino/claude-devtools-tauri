@@ -91,18 +91,12 @@ impl ProjectScanner {
     /// Check if the projects directory exists.
     #[allow(dead_code)]
     pub fn projects_dir_exists(&self) -> bool {
-        self.fs_provider
-            .exists(&self.projects_dir)
-            .unwrap_or(false)
+        self.fs_provider.exists(&self.projects_dir).unwrap_or(false)
     }
 
     /// Scan all projects and return them sorted by most recent activity.
     pub fn scan(&self) -> Vec<Project> {
-        if !self
-            .fs_provider
-            .exists(&self.projects_dir)
-            .unwrap_or(false)
-        {
+        if !self.fs_provider.exists(&self.projects_dir).unwrap_or(false) {
             return Vec::new();
         }
 
@@ -130,7 +124,9 @@ impl ProjectScanner {
 
         // Sort by most recent session (descending)
         projects.sort_by(|a, b| {
-            b.most_recent_session.unwrap_or(0).cmp(&a.most_recent_session.unwrap_or(0))
+            b.most_recent_session
+                .unwrap_or(0)
+                .cmp(&a.most_recent_session.unwrap_or(0))
         });
 
         projects
@@ -171,8 +167,7 @@ impl ProjectScanner {
             session_ids.push(session_id);
 
             if let Some(mtime) = session_file.mtime_ms {
-                most_recent_session =
-                    Some(most_recent_session.map_or(mtime, |m| m.max(mtime)));
+                most_recent_session = Some(most_recent_session.map_or(mtime, |m| m.max(mtime)));
             }
 
             if let Some(birthtime) = session_file.birthtime_ms {
@@ -182,14 +177,16 @@ impl ProjectScanner {
             // Extract cwd from the first session file that has one
             if first_cwd.is_none() {
                 let entry_path = project_path.join(&session_file.name);
-                if let Some(cwd) = self.extract_session_preview(&entry_path, session_file.mtime_ms).cwd {
+                if let Some(cwd) = self
+                    .extract_session_preview(&entry_path, session_file.mtime_ms)
+                    .cwd
+                {
                     first_cwd = Some(cwd);
                 }
             }
         }
 
-        let base_name =
-            path_decoder::extract_project_name(encoded_name, first_cwd.as_deref());
+        let base_name = path_decoder::extract_project_name(encoded_name, first_cwd.as_deref());
         let actual_path = first_cwd.unwrap_or_else(|| self.resolve_project_path(encoded_name));
 
         vec![Project {
@@ -197,7 +194,11 @@ impl ProjectScanner {
             path: actual_path,
             name: base_name,
             sessions: session_ids,
-            created_at: if created_at == u64::MAX { 0 } else { created_at },
+            created_at: if created_at == u64::MAX {
+                0
+            } else {
+                created_at
+            },
             most_recent_session,
         }]
     }
@@ -206,7 +207,9 @@ impl ProjectScanner {
     #[allow(dead_code)]
     pub fn get_project(&self, project_id: &str) -> Option<Project> {
         let base_dir = path_decoder::extract_base_dir(project_id);
-        self.scan_project(&base_dir).into_iter().find(|p| p.id == project_id)
+        self.scan_project(&base_dir)
+            .into_iter()
+            .find(|p| p.id == project_id)
     }
 
     /// List all sessions for a project.
@@ -274,7 +277,10 @@ impl ProjectScanner {
 
             // Skip noise-only sessions (local filesystem only)
             if self.fs_provider.provider_type() != "ssh" {
-                if !crate::discovery::session_content_filter::has_non_noise_messages(&entry_path, self.fs_provider.as_ref()) {
+                if !crate::discovery::session_content_filter::has_non_noise_messages(
+                    &entry_path,
+                    self.fs_provider.as_ref(),
+                ) {
                     continue;
                 }
             }
@@ -283,7 +289,10 @@ impl ProjectScanner {
 
             // Skip sessions that couldn't be read (file may have been deleted or is empty)
             if preview.message_count == 0 && preview.first_message.is_none() {
-                log::debug!("Skipping empty or unreadable session file: {}", entry_path.display());
+                log::debug!(
+                    "Skipping empty or unreadable session file: {}",
+                    entry_path.display()
+                );
                 continue;
             }
 
@@ -358,16 +367,17 @@ impl ProjectScanner {
             };
 
             let msg_type = json.get("type").and_then(|t| t.as_str()).unwrap_or("");
-            let is_sidechain = json.get("isSidechain").and_then(|v| v.as_bool()).unwrap_or(false);
+            let is_sidechain = json
+                .get("isSidechain")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let model = json.get("model").and_then(|v| v.as_str());
 
             // Extract cwd from any entry that has it (first wins)
             if preview.cwd.is_none() {
                 if let Some(cwd) = json.get("cwd").and_then(|v| v.as_str()) {
                     if !cwd.is_empty() {
-                        preview.cwd = Some(normalize_drive_letter(
-                            translate_wsl_mount_path(cwd),
-                        ));
+                        preview.cwd = Some(normalize_drive_letter(translate_wsl_mount_path(cwd)));
                     }
                 }
             }
@@ -383,8 +393,11 @@ impl ProjectScanner {
             if crate::parsing::message_classifier::is_user_chunk_message(msg_type, is_sidechain) {
                 preview.message_count += 1;
                 awaiting_ai_group = true;
-            } else if awaiting_ai_group && msg_type == "assistant"
-                && model != Some("<synthetic>") && !is_sidechain {
+            } else if awaiting_ai_group
+                && msg_type == "assistant"
+                && model != Some("<synthetic>")
+                && !is_sidechain
+            {
                 preview.message_count += 1;
                 awaiting_ai_group = false;
             }
@@ -402,7 +415,10 @@ impl ProjectScanner {
                         .iter()
                         .filter_map(|block| {
                             if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                                block.get("text").and_then(|t| t.as_str()).map(|s| s.trim().to_string())
+                                block
+                                    .get("text")
+                                    .and_then(|t| t.as_str())
+                                    .map(|s| s.trim().to_string())
                             } else {
                                 None
                             }
@@ -426,9 +442,7 @@ impl ProjectScanner {
                     {
                         // Still capture metadata even when skipping
                         if preview.first_timestamp.is_none() {
-                            if let Some(ts) =
-                                json.get("timestamp").and_then(|v| v.as_str())
-                            {
+                            if let Some(ts) = json.get("timestamp").and_then(|v| v.as_str()) {
                                 preview.first_timestamp = Some(ts.to_string());
                             }
                         }
@@ -442,8 +456,7 @@ impl ProjectScanner {
                     // extracts the display via sanitize_display_content().
                     if trimmed.starts_with("<command-name>") {
                         if preview.command_fallback.is_none() {
-                            preview.command_fallback =
-                                extract_command_display(trimmed);
+                            preview.command_fallback = extract_command_display(trimmed);
                         }
                     } else {
                         // Real user text found — sanitize and truncate to 500 chars.
@@ -451,8 +464,7 @@ impl ProjectScanner {
                         // text content are used as titles (e.g. skill invocation messages).
                         let sanitized = sanitize_display_content(trimmed);
                         if !sanitized.is_empty() {
-                            preview.first_message =
-                                Some(sanitized.chars().take(500).collect());
+                            preview.first_message = Some(sanitized.chars().take(500).collect());
                             found_first_user = true;
                         }
                     }
@@ -521,7 +533,10 @@ impl ProjectScanner {
 
         // Skip noise-only sessions (local filesystem only)
         if self.fs_provider.provider_type() != "ssh" {
-            if !crate::discovery::session_content_filter::has_non_noise_messages(&session_path, self.fs_provider.as_ref()) {
+            if !crate::discovery::session_content_filter::has_non_noise_messages(
+                &session_path,
+                self.fs_provider.as_ref(),
+            ) {
                 return None;
             }
         }
@@ -573,7 +588,9 @@ impl ProjectScanner {
     #[allow(dead_code)]
     pub fn get_session_path(&self, project_id: &str, session_id: &str) -> PathBuf {
         let base_dir = path_decoder::extract_base_dir(project_id);
-        self.projects_dir.join(&base_dir).join(format!("{}.jsonl", session_id))
+        self.projects_dir
+            .join(&base_dir)
+            .join(format!("{}.jsonl", session_id))
     }
 
     /// Resolve the project path from encoded name.
@@ -617,7 +634,12 @@ impl ProjectScanner {
                         .extension()
                         .map_or(false, |ext| ext == "jsonl")
             })
-            .map(|dirent| project_path.join(&dirent.name).to_string_lossy().to_string())
+            .map(|dirent| {
+                project_path
+                    .join(&dirent.name)
+                    .to_string_lossy()
+                    .to_string()
+            })
             .collect()
     }
 }
@@ -642,7 +664,11 @@ fn translate_wsl_mount_path(p: &str) -> String {
         if let Some(rest) = p.strip_prefix("/mnt/") {
             if let Some(drive) = rest.chars().next().filter(|c| c.is_ascii_alphabetic()) {
                 let rem = &rest[drive.len_utf8()..];
-                let sep = if rem.is_empty() || rem.starts_with('/') { "" } else { "/" };
+                let sep = if rem.is_empty() || rem.starts_with('/') {
+                    ""
+                } else {
+                    "/"
+                };
                 return format!("{}:{}{}", drive.to_ascii_uppercase(), sep, rem);
             }
         }
@@ -669,11 +695,8 @@ mod tests {
         fs::create_dir_all(&projects_dir).unwrap();
         fs::create_dir_all(&todos_dir).unwrap();
 
-        let scanner = ProjectScanner::with_paths(
-            projects_dir,
-            todos_dir,
-            Arc::new(LocalFsProvider::new()),
-        );
+        let scanner =
+            ProjectScanner::with_paths(projects_dir, todos_dir, Arc::new(LocalFsProvider::new()));
         (temp_dir, scanner)
     }
 
@@ -706,7 +729,9 @@ mod tests {
         let projects = scanner.scan();
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].id, encoded_path);
-        assert!(projects[0].sessions.contains(&"test-session-id".to_string()));
+        assert!(projects[0]
+            .sessions
+            .contains(&"test-session-id".to_string()));
     }
 
     #[test]
@@ -727,10 +752,18 @@ mod tests {
         fs::create_dir_all(&project_dir).unwrap();
 
         // Create session files (with assistant entries so noise filter passes)
-        fs::write(project_dir.join("session-1.jsonl"), r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"hello"}}
-{"type":"assistant","message":{"role":"assistant","content":"hi"}}"#).unwrap();
-        fs::write(project_dir.join("session-2.jsonl"), r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"world"}}
-{"type":"assistant","message":{"role":"assistant","content":"hi"}}"#).unwrap();
+        fs::write(
+            project_dir.join("session-1.jsonl"),
+            r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"hello"}}
+{"type":"assistant","message":{"role":"assistant","content":"hi"}}"#,
+        )
+        .unwrap();
+        fs::write(
+            project_dir.join("session-2.jsonl"),
+            r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"world"}}
+{"type":"assistant","message":{"role":"assistant","content":"hi"}}"#,
+        )
+        .unwrap();
 
         let sessions = scanner.list_sessions(encoded_path);
         assert_eq!(sessions.len(), 2);
@@ -774,9 +807,15 @@ mod tests {
 
         let project = &projects[0];
         // Name should come from cwd, not from lossy decode
-        assert_eq!(project.name, "happy-server", "name should be 'happy-server' from cwd, not 'server' from lossy decode");
+        assert_eq!(
+            project.name, "happy-server",
+            "name should be 'happy-server' from cwd, not 'server' from lossy decode"
+        );
         // Path should come from cwd
-        assert_eq!(project.path, "/Users/test/happy-server", "path should use cwd");
+        assert_eq!(
+            project.path, "/Users/test/happy-server",
+            "path should use cwd"
+        );
     }
 
     #[test]
@@ -818,9 +857,18 @@ mod tests {
 
     #[test]
     fn test_normalize_drive_letter() {
-        assert_eq!(normalize_drive_letter("c:/Users/test".to_string()), "C:/Users/test");
-        assert_eq!(normalize_drive_letter("C:/Users/test".to_string()), "C:/Users/test");
-        assert_eq!(normalize_drive_letter("/Users/test".to_string()), "/Users/test");
+        assert_eq!(
+            normalize_drive_letter("c:/Users/test".to_string()),
+            "C:/Users/test"
+        );
+        assert_eq!(
+            normalize_drive_letter("C:/Users/test".to_string()),
+            "C:/Users/test"
+        );
+        assert_eq!(
+            normalize_drive_letter("/Users/test".to_string()),
+            "/Users/test"
+        );
     }
 
     // --- Task 1: Bug reproduction test ---
@@ -860,7 +908,8 @@ mod tests {
         fs::create_dir_all(&project_dir).unwrap();
         let session_path = project_dir.join("simple.jsonl");
 
-        let jsonl = r#"{"type":"user","isMeta":false,"message":{"role":"user","content":"Hello world"}}"#;
+        let jsonl =
+            r#"{"type":"user","isMeta":false,"message":{"role":"user","content":"Hello world"}}"#;
         fs::write(&session_path, jsonl).unwrap();
 
         let preview = scanner.extract_session_preview(&session_path, None);
@@ -1017,7 +1066,10 @@ mod tests {
         fs::write(&session_path, jsonl).unwrap();
 
         let preview = scanner.extract_session_preview(&session_path, None);
-        assert_eq!(preview.first_timestamp.as_deref(), Some("2026-03-29T10:00:00Z"));
+        assert_eq!(
+            preview.first_timestamp.as_deref(),
+            Some("2026-03-29T10:00:00Z")
+        );
     }
 
     // --- Task 3: edge case tests ---
@@ -1087,6 +1139,9 @@ mod tests {
         fs::write(&session_path, &content).unwrap();
 
         let preview = scanner.extract_session_preview(&session_path, None);
-        assert!(preview.first_message.is_none(), "user message beyond 200 lines should not be found");
+        assert!(
+            preview.first_message.is_none(),
+            "user message beyond 200 lines should not be found"
+        );
     }
 }

@@ -23,7 +23,8 @@ impl ChunkBuilder {
     /// Runs the full semantic step pipeline (extract, gap-fill, context, group).
     pub fn build_chunks(messages: &[ParsedMessage], subagents: &[Process]) -> Vec<Chunk> {
         let mut chunks: Vec<Chunk> = Vec::new();
-        let main_messages: Vec<&ParsedMessage> = messages.iter().filter(|m| !m.is_sidechain).collect();
+        let main_messages: Vec<&ParsedMessage> =
+            messages.iter().filter(|m| !m.is_sidechain).collect();
         let mut ai_buffer: Vec<ParsedMessage> = Vec::new();
 
         for message in main_messages {
@@ -59,29 +60,45 @@ impl ChunkBuilder {
     ) -> SessionDetail {
         let chunks = Self::build_chunks(&messages, &subagents);
         let metrics = calculate_metrics(&messages);
-        SessionDetail { session, messages, chunks, processes: subagents, metrics, fingerprint: None }
+        SessionDetail {
+            session,
+            messages,
+            chunks,
+            processes: subagents,
+            metrics,
+            fingerprint: None,
+        }
     }
 
     /// Get total metrics for all chunks.
     #[allow(dead_code)]
     pub fn get_total_chunk_metrics(chunks: &[Chunk]) -> SessionMetrics {
-        if chunks.is_empty() { return SessionMetrics::default(); }
+        if chunks.is_empty() {
+            return SessionMetrics::default();
+        }
 
         let (mut dur, mut in_tok, mut out_tok) = (0u64, 0u64, 0u64);
         let (mut cache_read, mut cache_create, mut msg_count) = (0u64, 0u64, 0u32);
 
         for chunk in chunks {
             let m = Self::chunk_metrics(chunk);
-            dur += m.duration_ms; in_tok += m.input_tokens; out_tok += m.output_tokens;
+            dur += m.duration_ms;
+            in_tok += m.input_tokens;
+            out_tok += m.output_tokens;
             cache_read = cache_read.saturating_add(m.cache_read_tokens);
             cache_create = cache_create.saturating_add(m.cache_creation_tokens);
             msg_count += m.message_count;
         }
 
         SessionMetrics {
-            duration_ms: dur, total_tokens: in_tok + out_tok, input_tokens: in_tok,
-            output_tokens: out_tok, cache_read_tokens: cache_read, cache_creation_tokens: cache_create,
-            message_count: msg_count, cost_usd: None,
+            duration_ms: dur,
+            total_tokens: in_tok + out_tok,
+            input_tokens: in_tok,
+            output_tokens: out_tok,
+            cache_read_tokens: cache_read,
+            cache_creation_tokens: cache_create,
+            message_count: msg_count,
+            cost_usd: None,
         }
     }
 
@@ -103,11 +120,22 @@ impl ChunkBuilder {
         all_messages: &[ParsedMessage],
         chunks: &mut Vec<Chunk>,
     ) {
-        if buf.is_empty() { return; }
+        if buf.is_empty() {
+            return;
+        }
 
-        let id = format!("ai-{}", buf.first().map(|m| m.uuid.as_str()).unwrap_or("empty"));
-        let start = buf.first().and_then(|m| parse_ts_ms_opt(&m.timestamp)).unwrap_or(0);
-        let end = buf.last().and_then(|m| parse_ts_ms_opt(&m.timestamp)).unwrap_or(0);
+        let id = format!(
+            "ai-{}",
+            buf.first().map(|m| m.uuid.as_str()).unwrap_or("empty")
+        );
+        let start = buf
+            .first()
+            .and_then(|m| parse_ts_ms_opt(&m.timestamp))
+            .unwrap_or(0);
+        let end = buf
+            .last()
+            .and_then(|m| parse_ts_ms_opt(&m.timestamp))
+            .unwrap_or(0);
 
         let mut ai = AiChunk {
             id,
@@ -186,7 +214,9 @@ impl ChunkBuilder {
         messages
             .iter()
             .filter(|m| {
-                if !m.is_sidechain { return false; }
+                if !m.is_sidechain {
+                    return false;
+                }
                 let ts = parse_ts_ms_opt(&m.timestamp).unwrap_or(0);
                 ts >= chunk_start && ts <= chunk_end
             })
@@ -204,28 +234,16 @@ impl ChunkBuilder {
             _ => return String::new(),
         };
 
-        let stdout_re = regex::Regex::new(
-            r"<local-command-stdout>([\s\S]*?)</local-command-stdout>",
-        )
-        .unwrap();
+        let stdout_re =
+            regex::Regex::new(r"<local-command-stdout>([\s\S]*?)</local-command-stdout>").unwrap();
         if let Some(caps) = stdout_re.captures(content) {
-            return caps
-                .get(1)
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .to_string();
+            return caps.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
         }
 
-        let stderr_re = regex::Regex::new(
-            r"<local-command-stderr>([\s\S]*?)</local-command-stderr>",
-        )
-        .unwrap();
+        let stderr_re =
+            regex::Regex::new(r"<local-command-stderr>([\s\S]*?)</local-command-stderr>").unwrap();
         if let Some(caps) = stderr_re.captures(content) {
-            return caps
-                .get(1)
-                .map(|m| m.as_str())
-                .unwrap_or("")
-                .to_string();
+            return caps.get(1).map(|m| m.as_str()).unwrap_or("").to_string();
         }
 
         content.to_string()
@@ -233,13 +251,25 @@ impl ChunkBuilder {
 
     #[allow(dead_code)]
     fn chunk_metrics(chunk: &Chunk) -> &SessionMetrics {
-        match chunk { Chunk::User(c) => &c.metrics, Chunk::Ai(c) => &c.metrics,
-            Chunk::System(c) => &c.metrics, Chunk::Compact(c) => &c.metrics }
+        match chunk {
+            Chunk::User(c) => &c.metrics,
+            Chunk::Ai(c) => &c.metrics,
+            Chunk::System(c) => &c.metrics,
+            Chunk::Compact(c) => &c.metrics,
+        }
     }
 
     fn single_msg_metrics() -> SessionMetrics {
-        SessionMetrics { duration_ms: 0, total_tokens: 0, input_tokens: 0, output_tokens: 0,
-            cache_read_tokens: 0, cache_creation_tokens: 0, message_count: 1, cost_usd: None }
+        SessionMetrics {
+            duration_ms: 0,
+            total_tokens: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            message_count: 1,
+            cost_usd: None,
+        }
     }
 
     /// Build SubagentDetail from parsed messages and nested subagents.
@@ -297,9 +327,7 @@ impl ChunkBuilder {
             .filter(|m| m.message_type == MessageType::Assistant)
             .filter_map(|m| m.content.as_array())
             .flat_map(|blocks| blocks.iter())
-            .filter(|block| {
-                block.get("type").and_then(|t| t.as_str()) == Some("thinking")
-            })
+            .filter(|block| block.get("type").and_then(|t| t.as_str()) == Some("thinking"))
             .filter_map(|block| block.get("thinking").and_then(|t| t.as_str()))
             .map(|t| ((t.chars().count() as f64) / 4.0).ceil() as u64)
             .sum();
@@ -343,10 +371,14 @@ impl ChunkBuilder {
     }
 
     fn duration_ms(msgs: &[ParsedMessage]) -> u64 {
-        if msgs.len() < 2 { return 0; }
+        if msgs.len() < 2 {
+            return 0;
+        }
         let first = msgs.first().and_then(|m| parse_ts_ms_opt(&m.timestamp));
         let last = msgs.last().and_then(|m| parse_ts_ms_opt(&m.timestamp));
-        match (first, last) { (Some(f), Some(l)) => l.saturating_sub(f), _ => 0 }
+        match (first, last) {
+            (Some(f), Some(l)) => l.saturating_sub(f),
+            _ => 0,
+        }
     }
 }
-

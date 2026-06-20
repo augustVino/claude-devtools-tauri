@@ -13,9 +13,7 @@ pub async fn minimize(app: AppHandle) -> Result<(), String> {
 
 #[command]
 pub async fn maximize(app: AppHandle) -> Result<bool, String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or("No main window")?;
+    let window = app.get_webview_window("main").ok_or("No main window")?;
 
     if window.is_maximized().unwrap_or(false) {
         window.unmaximize().map_err(|e| e.to_string())?;
@@ -89,10 +87,7 @@ pub async fn set_dock_visible(
     let app_state = state.read().await;
     app_state
         .config_manager
-        .update_config(
-            "general",
-            serde_json::json!({ "showDockIcon": visible }),
-        )
+        .update_config("general", serde_json::json!({ "showDockIcon": visible }))
         .await
         .map_err(|e| e.to_string())?;
     Ok(())

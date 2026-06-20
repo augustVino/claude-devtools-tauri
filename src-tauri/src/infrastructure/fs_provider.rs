@@ -123,8 +123,8 @@ impl FsProvider for LocalFsProvider {
     }
 
     fn stat(&self, path: &Path) -> Result<FsStatResult, String> {
-        let metadata = fs::metadata(path)
-            .map_err(|e| format!("Failed to stat {}: {}", path.display(), e))?;
+        let metadata =
+            fs::metadata(path).map_err(|e| format!("Failed to stat {}: {}", path.display(), e))?;
         Ok(FsStatResult {
             size: metadata.len(),
             mtime_ms: crate::utils::time::time_to_ms(metadata.modified().ok()),
@@ -141,10 +141,7 @@ impl FsProvider for LocalFsProvider {
         for entry in entries {
             let entry = entry
                 .map_err(|e| format!("Failed to read dir entry in {}: {}", path.display(), e))?;
-            let name = entry
-                .file_name()
-                .to_string_lossy()
-                .to_string();
+            let name = entry.file_name().to_string_lossy().to_string();
             let metadata = entry.metadata().ok();
             let is_file = metadata.as_ref().is_some_and(|m| m.is_file());
             let is_directory = metadata.as_ref().is_some_and(|m| m.is_dir());

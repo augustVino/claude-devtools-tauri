@@ -3,24 +3,43 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use crate::error::AppError;
 use crate::infrastructure::fs_provider::FsProvider;
 use crate::types::domain::{
     FindSessionByIdResult, FindSessionsByPartialIdResult, SearchSessionsResult,
 };
+use async_trait::async_trait;
 
 /// 同步重建接口 — 用于在 claude root path 变更后重建内部搜索索引。
 pub trait SearchServiceRebuild: Send + Sync {
-    fn rebuild(&self, projects_dir: PathBuf, todos_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Result<(), AppError>;
+    fn rebuild(
+        &self,
+        projects_dir: PathBuf,
+        todos_dir: PathBuf,
+        fs_provider: Arc<dyn FsProvider>,
+    ) -> Result<(), AppError>;
 }
 
 #[async_trait]
 pub trait SearchService: Send + Sync {
-    async fn search_sessions(&self, project_id: &str, query: &str, max_results: u32) -> Result<SearchSessionsResult, AppError>;
-    async fn search_all_projects(&self, query: &str, max_results: u32) -> Result<SearchSessionsResult, AppError>;
-    async fn find_session_by_id(&self, session_id: &str) -> Result<FindSessionByIdResult, AppError>;
-    async fn find_sessions_by_partial_id(&self, fragment: &str, max_results: usize) -> Result<FindSessionsByPartialIdResult, AppError>;
+    async fn search_sessions(
+        &self,
+        project_id: &str,
+        query: &str,
+        max_results: u32,
+    ) -> Result<SearchSessionsResult, AppError>;
+    async fn search_all_projects(
+        &self,
+        query: &str,
+        max_results: u32,
+    ) -> Result<SearchSessionsResult, AppError>;
+    async fn find_session_by_id(&self, session_id: &str)
+        -> Result<FindSessionByIdResult, AppError>;
+    async fn find_sessions_by_partial_id(
+        &self,
+        fragment: &str,
+        max_results: usize,
+    ) -> Result<FindSessionsByPartialIdResult, AppError>;
 }
 
 /// Compound trait combining SearchService (async queries) and SearchServiceRebuild (sync rebuild).

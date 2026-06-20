@@ -3,13 +3,16 @@
 //! 所有业务逻辑委托给 [`SessionService`](crate::services::SessionService)。
 //! 本模块仅负责参数接收和 State 注入。
 
-use tauri::{command, State};
 use std::sync::Arc;
+use tauri::{command, State};
 
-use crate::services::{SessionService, ProjectService};
-use crate::types::domain::{DeleteSessionResult, PaginatedSessionsResult, SessionsPaginationOptions, Project, Session, SessionMetrics};
-use crate::types::chunks::{ConversationGroup, SessionDetail, SessionDetailResponse};
 use crate::infrastructure::ContextManager;
+use crate::services::{ProjectService, SessionService};
+use crate::types::chunks::{ConversationGroup, SessionDetail, SessionDetailResponse};
+use crate::types::domain::{
+    DeleteSessionResult, PaginatedSessionsResult, Project, Session, SessionMetrics,
+    SessionsPaginationOptions,
+};
 
 // AppState is defined in commands/mod.rs — re-exported here for backward compat
 pub use super::AppState;
@@ -23,7 +26,9 @@ pub async fn get_sessions(
     service: State<'_, Arc<dyn SessionService>>,
     project_id: String,
 ) -> Result<Vec<Session>, String> {
-    service.get_sessions(&project_id).await
+    service
+        .get_sessions(&project_id)
+        .await
         .map_err(|e| e.into_tauri_string())
 }
 
@@ -35,7 +40,9 @@ pub async fn get_sessions_paginated(
     limit: Option<u32>,
     options: Option<SessionsPaginationOptions>,
 ) -> Result<PaginatedSessionsResult, String> {
-    service.get_sessions_paginated(&project_id, cursor.as_deref(), limit, options).await
+    service
+        .get_sessions_paginated(&project_id, cursor.as_deref(), limit, options)
+        .await
         .map_err(|e| e.into_tauri_string())
 }
 
@@ -45,7 +52,9 @@ pub async fn get_sessions_by_ids(
     project_id: String,
     session_ids: Vec<String>,
 ) -> Result<Vec<Session>, String> {
-    service.get_sessions_by_ids(&project_id, &session_ids).await
+    service
+        .get_sessions_by_ids(&project_id, &session_ids)
+        .await
         .map_err(|e| e.into_tauri_string())
 }
 
@@ -60,7 +69,9 @@ pub async fn get_session_detail(
     session_id: String,
     known_fingerprint: Option<String>,
 ) -> Result<Option<SessionDetailResponse>, String> {
-    service.get_session_detail(&project_id, &session_id, known_fingerprint.as_deref()).await
+    service
+        .get_session_detail(&project_id, &session_id, known_fingerprint.as_deref())
+        .await
         .map_err(|e| e.into_tauri_string())
 }
 
@@ -70,7 +81,9 @@ pub async fn get_session_detail_for_export(
     project_id: String,
     session_id: String,
 ) -> Result<Option<SessionDetail>, String> {
-    service.get_session_detail_for_export(&project_id, &session_id).await
+    service
+        .get_session_detail_for_export(&project_id, &session_id)
+        .await
         .map_err(|e| e.into_tauri_string())
 }
 
@@ -80,7 +93,9 @@ pub async fn get_session_metrics(
     project_id: String,
     session_id: String,
 ) -> Result<Option<SessionMetrics>, String> {
-    service.get_session_metrics(&project_id, &session_id).await
+    service
+        .get_session_metrics(&project_id, &session_id)
+        .await
         .map_err(|e| e.into_tauri_string())
 }
 
@@ -94,7 +109,9 @@ pub async fn get_session_groups(
     project_id: String,
     session_id: String,
 ) -> Result<Vec<ConversationGroup>, String> {
-    service.get_session_groups(&project_id, &session_id).await
+    service
+        .get_session_groups(&project_id, &session_id)
+        .await
         .map_err(|e| e.into_tauri_string())
 }
 
@@ -104,7 +121,9 @@ pub async fn get_waterfall_data(
     project_id: String,
     session_id: String,
 ) -> Result<Option<crate::analysis::waterfall_builder::WaterfallData>, String> {
-    service.get_waterfall_data(&project_id, &session_id).await
+    service
+        .get_waterfall_data(&project_id, &session_id)
+        .await
         .map_err(|e| e.into_tauri_string())
 }
 
@@ -131,7 +150,9 @@ pub async fn delete_session(
         }
     }
 
-    service.delete_session(&project_id, &session_id).await
+    service
+        .delete_session(&project_id, &session_id)
+        .await
         .map_err(|e| e.into_tauri_string())
 }
 
@@ -143,5 +164,8 @@ pub async fn delete_session(
 pub async fn get_projects(
     service: State<'_, Arc<dyn ProjectService>>,
 ) -> Result<Vec<Project>, String> {
-    service.scan_projects().await.map_err(|e| e.into_tauri_string())
+    service
+        .scan_projects()
+        .await
+        .map_err(|e| e.into_tauri_string())
 }

@@ -121,8 +121,14 @@ pub fn compute_duration(start: u64, end: u64) -> Option<u64> {
 fn parse_duration_ms(start: &str, end: &str) -> Option<u64> {
     let start_dt = chrono::DateTime::parse_from_rfc3339(start).ok()?;
     let end_dt = chrono::DateTime::parse_from_rfc3339(end).ok()?;
-    let duration = end_dt.timestamp_millis().saturating_sub(start_dt.timestamp_millis()) as u64;
-    if duration > 0 { Some(duration) } else { None }
+    let duration = end_dt
+        .timestamp_millis()
+        .saturating_sub(start_dt.timestamp_millis()) as u64;
+    if duration > 0 {
+        Some(duration)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

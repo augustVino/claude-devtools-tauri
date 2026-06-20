@@ -26,7 +26,10 @@ pub struct ConnectRequest {
 impl ConnectRequest {
     pub fn new(config: SshConnectionConfig) -> Self {
         let original_host = config.host.clone();
-        Self { config, original_host }
+        Self {
+            config,
+            original_host,
+        }
     }
 }
 

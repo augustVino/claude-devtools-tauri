@@ -108,19 +108,14 @@ pub fn sanitize_display_content(text: &str) -> String {
 
 /// 检查内容是否以命令输出标签开头。
 pub fn is_command_output_content(text: &str) -> bool {
-    text.trim_start()
-        .starts_with("<local-command-stdout>")
-        || text
-            .trim_start()
-            .starts_with("<local-command-stderr>")
+    text.trim_start().starts_with("<local-command-stdout>")
+        || text.trim_start().starts_with("<local-command-stderr>")
 }
 
 /// 检查内容是否以命令消息标签开头。
 pub fn is_command_content(text: &str) -> bool {
     text.trim_start().starts_with("<command-name>")
-        || text
-            .trim_start()
-            .starts_with("<command-message>")
+        || text.trim_start().starts_with("<command-message>")
 }
 
 /// 从消息序列中提取第一条适合作为会话标题的用户消息。
@@ -173,8 +168,7 @@ where
         }
 
         // 跳过命令输出和用户中断消息
-        if is_command_output_content(trimmed)
-            || trimmed.starts_with("[Request interrupted by user")
+        if is_command_output_content(trimmed) || trimmed.starts_with("[Request interrupted by user")
         {
             continue;
         }
@@ -337,12 +331,16 @@ mod tests {
 
     #[test]
     fn test_is_command_output_content_stdout() {
-        assert!(is_command_output_content("<local-command-stdout>output</local-command-stdout>"));
+        assert!(is_command_output_content(
+            "<local-command-stdout>output</local-command-stdout>"
+        ));
     }
 
     #[test]
     fn test_is_command_output_content_stderr() {
-        assert!(is_command_output_content("<local-command-stderr>error</local-command-stderr>"));
+        assert!(is_command_output_content(
+            "<local-command-stderr>error</local-command-stderr>"
+        ));
     }
 
     #[test]
@@ -359,13 +357,11 @@ mod tests {
 
     #[test]
     fn test_extract_session_title_simple_text() {
-        let messages = vec![
-            serde_json::json!({
-                "type": "user",
-                "isMeta": false,
-                "message": { "content": "Hello, please help me with my project" }
-            }),
-        ];
+        let messages = vec![serde_json::json!({
+            "type": "user",
+            "isMeta": false,
+            "message": { "content": "Hello, please help me with my project" }
+        })];
         assert_eq!(
             extract_session_title(messages.iter()),
             Some("Hello, please help me with my project".to_string())
@@ -414,13 +410,11 @@ mod tests {
 
     #[test]
     fn test_extract_session_title_command_fallback() {
-        let messages = vec![
-            serde_json::json!({
-                "type": "user",
-                "isMeta": false,
-                "message": { "content": "<command-name>/model</command-name><command-args>sonnet</command-args>" }
-            }),
-        ];
+        let messages = vec![serde_json::json!({
+            "type": "user",
+            "isMeta": false,
+            "message": { "content": "<command-name>/model</command-name><command-args>sonnet</command-args>" }
+        })];
         assert_eq!(
             extract_session_title(messages.iter()),
             Some("/model sonnet".to_string())
@@ -450,18 +444,16 @@ mod tests {
 
     #[test]
     fn test_extract_session_title_array_content() {
-        let messages = vec![
-            serde_json::json!({
-                "type": "user",
-                "isMeta": false,
-                "message": {
-                    "content": [
-                        { "type": "text", "text": "Hello " },
-                        { "type": "text", "text": "world" }
-                    ]
-                }
-            }),
-        ];
+        let messages = vec![serde_json::json!({
+            "type": "user",
+            "isMeta": false,
+            "message": {
+                "content": [
+                    { "type": "text", "text": "Hello " },
+                    { "type": "text", "text": "world" }
+                ]
+            }
+        })];
         assert_eq!(
             extract_session_title(messages.iter()),
             Some("Hello world".to_string())
@@ -547,9 +539,10 @@ mod tests {
 
     #[test]
     fn test_extract_session_title_from_parsed_basic() {
-        let messages = vec![
-            make_parsed_user_msg(false, "Hello, please help me with my project"),
-        ];
+        let messages = vec![make_parsed_user_msg(
+            false,
+            "Hello, please help me with my project",
+        )];
         assert_eq!(
             extract_session_title_from_parsed(&messages),
             Some("Hello, please help me with my project".to_string())
@@ -571,9 +564,7 @@ mod tests {
     #[test]
     fn test_extract_session_title_from_parsed_truncates() {
         let long_text = "a".repeat(600);
-        let messages = vec![
-            make_parsed_user_msg(false, &long_text),
-        ];
+        let messages = vec![make_parsed_user_msg(false, &long_text)];
         let result = extract_session_title_from_parsed(&messages).unwrap();
         assert_eq!(result.len(), 500);
         assert_eq!(result, "a".repeat(500));

@@ -30,11 +30,12 @@ pub(super) fn enrich_subagent_from_task(subagent: &mut super::Process, task_call
 
 /// Extract the summary attribute from a teammate-message tag in the first user message.
 pub(super) fn extract_team_message_summary(messages: &[ParsedMessage]) -> Option<String> {
-    let first_user = messages.iter().find(|m| m.message_type == MessageType::User)?;
+    let first_user = messages
+        .iter()
+        .find(|m| m.message_type == MessageType::User)?;
     let content_str = first_user.content.as_str().unwrap_or("");
     let re = regex::Regex::new(r#"<teammate-message[^>]*\bsummary="([^"]+)""#).ok()?;
-    re.captures(content_str)
-        .map(|cap| cap[1].to_string())
+    re.captures(content_str).map(|cap| cap[1].to_string())
 }
 
 /// Link subagents to their parent Task calls using a 3-phase matching algorithm.
@@ -58,7 +59,9 @@ pub(super) fn link_to_task_calls(
                 .or_else(|| result.get("agent_id"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
-            let task_call_id = msg.source_tool_use_id.clone()
+            let task_call_id = msg
+                .source_tool_use_id
+                .clone()
                 .or_else(|| msg.tool_results.first().map(|tr| tr.tool_use_id.clone()));
             if let (Some(aid), Some(tcid)) = (agent_id, task_call_id) {
                 agent_id_to_task_id.insert(aid, tcid);
@@ -117,7 +120,11 @@ pub(super) fn link_to_task_calls(
                 if matched_subagent_ids.contains(&subagent.id) {
                     continue;
                 }
-                if subagent_summaries.get(&subagent.id).map(|s| s == &desc).unwrap_or(false) {
+                if subagent_summaries
+                    .get(&subagent.id)
+                    .map(|s| s == &desc)
+                    .unwrap_or(false)
+                {
                     if subagent.start_time_ms < best_match_time {
                         best_match_time = subagent.start_time_ms;
                         best_match_idx = Some(i);
@@ -174,7 +181,11 @@ pub(super) fn propagate_team_metadata(subagents: &mut [super::Process]) {
             continue;
         }
 
-        let first_parent_uuid = match subagent.messages.first().and_then(|m| m.parent_uuid.as_ref()) {
+        let first_parent_uuid = match subagent
+            .messages
+            .first()
+            .and_then(|m| m.parent_uuid.as_ref())
+        {
             Some(uuid) if !uuid.is_empty() => uuid.clone(),
             _ => continue,
         };
@@ -206,22 +217,27 @@ pub(super) fn propagate_team_metadata(subagents: &mut [super::Process]) {
 
     // Phase 2: Apply inheritance
     // Collect cloned data to avoid simultaneous borrow of different indices in the slice
-    let inherited: Vec<(usize, Option<TeamInfo>, Option<String>, Option<String>, Option<String>)> =
-        inherit_from
-            .iter()
-            .enumerate()
-            .filter_map(|(i, anc)| {
-                let anc = (*anc)?;
-                let ancestor = &subagents[anc];
-                Some((
-                    i,
-                    ancestor.team.clone(),
-                    ancestor.task_id.clone(),
-                    ancestor.description.clone(),
-                    ancestor.subagent_type.clone(),
-                ))
-            })
-            .collect();
+    let inherited: Vec<(
+        usize,
+        Option<TeamInfo>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = inherit_from
+        .iter()
+        .enumerate()
+        .filter_map(|(i, anc)| {
+            let anc = (*anc)?;
+            let ancestor = &subagents[anc];
+            Some((
+                i,
+                ancestor.team.clone(),
+                ancestor.task_id.clone(),
+                ancestor.description.clone(),
+                ancestor.subagent_type.clone(),
+            ))
+        })
+        .collect();
 
     for (i, team, task_id, description, subagent_type) in inherited {
         subagents[i].team = team;

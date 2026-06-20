@@ -13,8 +13,8 @@
 use crate::constants::*;
 use crate::types::domain::{RepositoryIdentity, WorktreeSource};
 use sha2::{Digest, Sha256};
-use std::path::{Component, Path, PathBuf};
 use std::fs;
+use std::path::{Component, Path, PathBuf};
 
 /// GitIdentityResolver resolves repository identity from project paths.
 pub struct GitIdentityResolver;
@@ -67,7 +67,8 @@ impl GitIdentityResolver {
             let remote_url = self.get_remote_url(&normalized_git_dir);
 
             // Generate consistent repository ID
-            let repo_id = self.generate_repo_id(remote_url.as_deref(), &normalized_git_dir.to_string_lossy());
+            let repo_id =
+                self.generate_repo_id(remote_url.as_deref(), &normalized_git_dir.to_string_lossy());
 
             // Extract repository name
             let repo_name = self.extract_repo_name(&normalized_git_dir.to_string_lossy());
@@ -167,7 +168,8 @@ impl GitIdentityResolver {
     /// Generate consistent repository ID.
     /// Uses the LOCAL DIRECTORY NAME as the primary identifier.
     fn generate_repo_id(&self, remote_url: Option<&str>, main_git_dir_or_name: &str) -> String {
-        let identity = if main_git_dir_or_name.contains('/') || main_git_dir_or_name.contains('\\') {
+        let identity = if main_git_dir_or_name.contains('/') || main_git_dir_or_name.contains('\\')
+        {
             if remote_url.is_some() {
                 // Has remote → use dir name (allows worktree grouping)
                 let parent_dir = Path::new(main_git_dir_or_name)
@@ -304,13 +306,16 @@ impl GitIdentityResolver {
         if parts.iter().any(|&p| p == CURSOR_DIR) && parts.iter().any(|&p| p == WORKTREES_DIR) {
             return true;
         }
-        if parts.iter().any(|&p| p == VIBE_KANBAN_DIR) && parts.iter().any(|&p| p == WORKTREES_DIR) {
+        if parts.iter().any(|&p| p == VIBE_KANBAN_DIR) && parts.iter().any(|&p| p == WORKTREES_DIR)
+        {
             return true;
         }
-        if parts.iter().any(|&p| p == AUTO_CLAUDE_DIR) && parts.iter().any(|&p| p == WORKTREES_DIR) {
+        if parts.iter().any(|&p| p == AUTO_CLAUDE_DIR) && parts.iter().any(|&p| p == WORKTREES_DIR)
+        {
             return true;
         }
-        if parts.iter().any(|&p| p == TWENTYFIRST_DIR) && parts.iter().any(|&p| p == WORKTREES_DIR) {
+        if parts.iter().any(|&p| p == TWENTYFIRST_DIR) && parts.iter().any(|&p| p == WORKTREES_DIR)
+        {
             return true;
         }
         if parts.iter().any(|&p| p == CLAUDE_WORKTREES_DIR) {
@@ -375,7 +380,8 @@ impl GitIdentityResolver {
             .filter(|s| !s.is_empty())
             .collect();
 
-        if parts.iter().any(|&p| p == VIBE_KANBAN_DIR) && parts.iter().any(|&p| p == WORKTREES_DIR) {
+        if parts.iter().any(|&p| p == VIBE_KANBAN_DIR) && parts.iter().any(|&p| p == WORKTREES_DIR)
+        {
             return WorktreeSource::VibeKanban;
         }
 
@@ -383,11 +389,13 @@ impl GitIdentityResolver {
             return WorktreeSource::Conductor;
         }
 
-        if parts.iter().any(|&p| p == AUTO_CLAUDE_DIR) && parts.iter().any(|&p| p == WORKTREES_DIR) {
+        if parts.iter().any(|&p| p == AUTO_CLAUDE_DIR) && parts.iter().any(|&p| p == WORKTREES_DIR)
+        {
             return WorktreeSource::AutoClaude;
         }
 
-        if parts.iter().any(|&p| p == TWENTYFIRST_DIR) && parts.iter().any(|&p| p == WORKTREES_DIR) {
+        if parts.iter().any(|&p| p == TWENTYFIRST_DIR) && parts.iter().any(|&p| p == WORKTREES_DIR)
+        {
             return WorktreeSource::TwentyFirst;
         }
 
@@ -471,7 +479,8 @@ impl GitIdentityResolver {
                 // Pattern: .ccswitch/worktrees/{repo}/{name}
                 if let Some(ccswitch_idx) = parts.iter().position(|&p| p == CCSWITCH_DIR) {
                     let remaining = &parts[ccswitch_idx..];
-                    if let Some(worktrees_idx) = remaining.iter().position(|&p| p == WORKTREES_DIR) {
+                    if let Some(worktrees_idx) = remaining.iter().position(|&p| p == WORKTREES_DIR)
+                    {
                         if worktrees_idx + 2 < remaining.len() {
                             return remaining[worktrees_idx + 2].to_string();
                         }
@@ -487,17 +496,22 @@ impl GitIdentityResolver {
                 if let Some(name) = self.get_git_worktree_name(project_path) {
                     return name;
                 }
-                return branch.map(|s| s.to_string())
+                return branch
+                    .map(|s| s.to_string())
                     .or_else(|| parts.last().map(|s| s.to_string()))
                     .unwrap_or_default();
             }
             WorktreeSource::Unknown => {
-                return parts.last().map(|s| s.to_string()).unwrap_or_else(|| "unknown".to_string());
+                return parts
+                    .last()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
             }
         }
 
         // Fallback for any case that didn't return
-        branch.map(|s| s.to_string())
+        branch
+            .map(|s| s.to_string())
             .or_else(|| parts.last().map(|s| s.to_string()))
             .unwrap_or_else(|| "unknown".to_string())
     }
@@ -540,7 +554,10 @@ mod tests {
         let resolver = GitIdentityResolver::new();
         let content = "gitdir: /path/to/main/.git/worktrees/my-worktree";
         let result = resolver.parse_gitdir(content);
-        assert_eq!(result, Some("/path/to/main/.git/worktrees/my-worktree".to_string()));
+        assert_eq!(
+            result,
+            Some("/path/to/main/.git/worktrees/my-worktree".to_string())
+        );
     }
 
     #[test]
@@ -548,7 +565,10 @@ mod tests {
         let resolver = GitIdentityResolver::new();
         let content = "gitdir:   /path/to/main/.git/worktrees/my-worktree  ";
         let result = resolver.parse_gitdir(content);
-        assert_eq!(result, Some("/path/to/main/.git/worktrees/my-worktree".to_string()));
+        assert_eq!(
+            result,
+            Some("/path/to/main/.git/worktrees/my-worktree".to_string())
+        );
     }
 
     #[test]
@@ -566,11 +586,11 @@ mod tests {
         // Same remote URL and main git dir should produce the same ID
         let id1 = resolver.generate_repo_id(
             Some("https://github.com/user/repo.git"),
-            "/Users/test/project/.git"
+            "/Users/test/project/.git",
         );
         let id2 = resolver.generate_repo_id(
             Some("https://github.com/user/repo.git"),
-            "/Users/test/project/.git"
+            "/Users/test/project/.git",
         );
         assert_eq!(id1, id2);
     }

@@ -23,8 +23,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
-use crate::types::config::DetectedError;
 use crate::infrastructure::ConfigManager;
+use crate::types::config::DetectedError;
 
 // =============================================================================
 // 常量
@@ -102,11 +102,10 @@ impl NotificationManager {
     /// 创建无 Tauri 应用句柄的 NotificationManager（用于测试）。
     #[cfg(test)]
     pub fn new_for_test(config_manager: Arc<ConfigManager>) -> Self {
-        let persistence_path = std::env::temp_dir()
-            .join(format!(
-                "claude-devtools-test-notifications-{}.json",
-                uuid::Uuid::new_v4()
-            ));
+        let persistence_path = std::env::temp_dir().join(format!(
+            "claude-devtools-test-notifications-{}.json",
+            uuid::Uuid::new_v4()
+        ));
 
         Self {
             app_handle: None,
@@ -141,11 +140,7 @@ impl NotificationManager {
         self.save_notifications().await;
         self.is_initialized = true;
 
-        let count = self
-            .notifications
-            .read()
-            .map(|n| n.len())
-            .unwrap_or(0);
+        let count = self.notifications.read().map(|n| n.len()).unwrap_or(0);
         log::info!("NotificationManager: Initialized with {count} notifications");
     }
 }

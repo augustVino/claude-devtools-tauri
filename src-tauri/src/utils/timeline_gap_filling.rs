@@ -43,9 +43,7 @@ pub fn fill_timeline_gaps(input: GapFillingInput<'_>) {
         if step.step_type == SemanticStepType::Subagent
             && step.duration_ms > MEANINGFUL_SUBAGENT_DURATION_MS
         {
-            let effective_end = step
-                .end_time
-                .unwrap_or(step.start_time + step.duration_ms);
+            let effective_end = step.end_time.unwrap_or(step.start_time + step.duration_ms);
 
             let start_ms = step.start_time;
             let effective_duration = effective_end.saturating_sub(start_ms);
@@ -149,13 +147,7 @@ mod tests {
         let start = ts("2026-03-25T10:00:00.000Z");
         let chunk_end = ts("2026-03-25T10:00:05.000Z");
 
-        let mut steps = vec![make_step(
-            "s1",
-            start,
-            None,
-            50,
-            SemanticStepType::Thinking,
-        )];
+        let mut steps = vec![make_step("s1", start, None, 50, SemanticStepType::Thinking)];
 
         fill_timeline_gaps(GapFillingInput {
             steps: &mut steps,
@@ -169,10 +161,7 @@ mod tests {
             Some(5000),
             "Single step should extend to chunk end (5000ms)"
         );
-        assert_eq!(
-            steps[0].effective_end_time,
-            Some(chunk_end)
-        );
+        assert_eq!(steps[0].effective_end_time, Some(chunk_end));
     }
 
     #[test]
@@ -276,13 +265,7 @@ mod tests {
     fn fill_gaps_all_flags_set() {
         let start = ts("2026-03-25T10:00:00.000Z");
 
-        let mut steps = vec![make_step(
-            "s1",
-            start,
-            None,
-            50,
-            SemanticStepType::Output,
-        )];
+        let mut steps = vec![make_step("s1", start, None, 50, SemanticStepType::Output)];
 
         fill_timeline_gaps(GapFillingInput {
             steps: &mut steps,

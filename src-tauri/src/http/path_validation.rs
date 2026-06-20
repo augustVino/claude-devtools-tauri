@@ -55,7 +55,12 @@ static SENSITIVE_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
     ];
     patterns
         .iter()
-        .map(|p| RegexBuilder::new(p).case_insensitive(true).build().expect(&format!("Invalid regex: {}", p)))
+        .map(|p| {
+            RegexBuilder::new(p)
+                .case_insensitive(true)
+                .build()
+                .expect(&format!("Invalid regex: {}", p))
+        })
         .collect()
 });
 
@@ -184,10 +189,7 @@ pub struct PathValidationResult {
 /// 3. 路径必须在允许目录内（项目目录或 `~/.claude`）
 /// 4. 路径不能匹配敏感文件模式
 /// 5. 符号链接解析后重新检查 3 & 4
-pub fn validate_file_path(
-    file_path: &str,
-    project_root: Option<&str>,
-) -> PathValidationResult {
+pub fn validate_file_path(file_path: &str, project_root: Option<&str>) -> PathValidationResult {
     // Layer 1: Must be a non-empty string.
     if file_path.is_empty() {
         return PathValidationResult {
@@ -233,9 +235,7 @@ pub fn validate_file_path(
     if !is_path_within_allowed_dirs(&normalized, project_path) {
         return PathValidationResult {
             valid: false,
-            error: Some(
-                "Path is outside allowed directories (project or Claude root)".to_string(),
-            ),
+            error: Some("Path is outside allowed directories (project or Claude root)".to_string()),
             normalized_path: None,
         };
     }
@@ -335,7 +335,10 @@ mod tests {
     #[test]
     fn is_path_contained_rejects_prefix_false_positive() {
         // /app should NOT match /application.
-        assert!(!is_path_contained(Path::new("/application"), Path::new("/app")));
+        assert!(!is_path_contained(
+            Path::new("/application"),
+            Path::new("/app")
+        ));
     }
 
     #[test]
@@ -399,14 +402,23 @@ mod tests {
         let result = validate_file_path(&session_file.to_string_lossy(), None);
         // May fail if the file does not exist, but layers 1-4 should pass.
         // Layer 5 (symlink) is skipped when file doesn't exist.
-        assert!(result.valid, "expected valid, got error: {:?}", result.error);
+        assert!(
+            result.valid,
+            "expected valid, got error: {:?}",
+            result.error
+        );
     }
 
     #[test]
     fn validate_allows_project_dir() {
-        let result = validate_file_path("/home/user/project/src/main.rs", Some("/home/user/project"));
+        let result =
+            validate_file_path("/home/user/project/src/main.rs", Some("/home/user/project"));
         // Layers 1-4 should pass; layer 5 depends on fs.
-        assert!(result.valid, "expected valid, got error: {:?}", result.error);
+        assert!(
+            result.valid,
+            "expected valid, got error: {:?}",
+            result.error
+        );
     }
 
     #[test]
@@ -473,7 +485,11 @@ mod tests {
     #[test]
     fn sensitive_pattern_rejects_false_positives() {
         assert!(!matches_sensitive_pattern("/home/u/project/src/main.rs"));
-        assert!(!matches_sensitive_pattern("/home/u/.claude/projects/data.jsonl"));
-        assert!(!matches_sensitive_pattern("/home/u/documents/env_notes.txt"));
+        assert!(!matches_sensitive_pattern(
+            "/home/u/.claude/projects/data.jsonl"
+        ));
+        assert!(!matches_sensitive_pattern(
+            "/home/u/documents/env_notes.txt"
+        ));
     }
 }

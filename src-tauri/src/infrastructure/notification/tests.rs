@@ -5,15 +5,15 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use crate::types::config::{
-        DetectedError, ErrorContext, StoredNotification, AppConfig, DisplayConfig,
-        GeneralConfig, GetNotificationsOptions, NotificationConfig, SessionConfig,
-    };
     use crate::infrastructure::ConfigManager;
+    use crate::types::config::{
+        AppConfig, DetectedError, DisplayConfig, ErrorContext, GeneralConfig,
+        GetNotificationsOptions, NotificationConfig, SessionConfig, StoredNotification,
+    };
 
-    use super::super::{NotificationManager, MAX_NOTIFICATIONS};
     use super::super::emission::{now_millis, truncate_str};
     use super::super::filtering::NotificationManagerExt;
+    use super::super::{NotificationManager, MAX_NOTIFICATIONS};
 
     /// 创建用于测试的默认 AppConfig。
     fn default_app_config() -> AppConfig {
@@ -90,12 +90,9 @@ mod tests {
 
     /// 创建用于测试的 NotificationManager。
     async fn make_manager() -> NotificationManager {
-        let cm = Arc::new(ConfigManager::with_path(
-            std::env::temp_dir().join(format!(
-                "claude-devtools-test-config-{}.json",
-                uuid::Uuid::new_v4()
-            )),
-        ));
+        let cm = Arc::new(ConfigManager::with_path(std::env::temp_dir().join(
+            format!("claude-devtools-test-config-{}.json", uuid::Uuid::new_v4()),
+        )));
         NotificationManager::new_for_test(cm)
     }
 
@@ -106,10 +103,7 @@ mod tests {
         let mut mgr = make_manager().await;
         // 缺失文件不应 panic，通知列表应为空
         mgr.initialize().await;
-        assert_eq!(
-            mgr.notifications.read().unwrap().len(),
-            0
-        );
+        assert_eq!(mgr.notifications.read().unwrap().len(), 0);
     }
 
     #[tokio::test]
@@ -227,11 +221,13 @@ mod tests {
         assert!(result1.is_some());
 
         // 第二个: 有子代理 — 应替换
-        let error2 =
-            make_error_with_tool("e2", "proj-1", "error msg v2", "tool-1", Some("sub-1"));
+        let error2 = make_error_with_tool("e2", "proj-1", "error msg v2", "tool-1", Some("sub-1"));
         let result2 = mgr.add_error(error2).await;
         assert!(result2.is_some());
-        assert_eq!(result2.unwrap().error.subagent_id, Some("sub-1".to_string()));
+        assert_eq!(
+            result2.unwrap().error.subagent_id,
+            Some("sub-1".to_string())
+        );
 
         assert_eq!(mgr.notifications.read().unwrap().len(), 1);
     }
@@ -242,8 +238,7 @@ mod tests {
         mgr.initialize().await;
 
         // 第一个: 有子代理
-        let error1 =
-            make_error_with_tool("e1", "proj-1", "error msg", "tool-1", Some("sub-1"));
+        let error1 = make_error_with_tool("e1", "proj-1", "error msg", "tool-1", Some("sub-1"));
         let result1 = mgr.add_error(error1).await;
         assert!(result1.is_some());
 
@@ -507,13 +502,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_ignored_regex_filtering() {
-        let cm = Arc::new(ConfigManager::with_path(
-            std::env::temp_dir().join(format!(
-                "claude-devtools-test-config-{}.json",
-                uuid::Uuid::new_v4()
-            )),
-        ));
-        cm.add_ignore_regex("permission denied".to_string()).await.unwrap();
+        let cm = Arc::new(ConfigManager::with_path(std::env::temp_dir().join(
+            format!("claude-devtools-test-config-{}.json", uuid::Uuid::new_v4()),
+        )));
+        cm.add_ignore_regex("permission denied".to_string())
+            .await
+            .unwrap();
 
         let mut mgr = NotificationManager::new_for_test(cm);
         mgr.initialize().await;

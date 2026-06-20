@@ -5,9 +5,9 @@
 
 use tauri::{AppHandle, Emitter};
 
+use crate::infrastructure::context_manager::ContextInfo;
 use crate::types::config::StoredNotification;
 use crate::types::domain::FileChangeEvent;
-use crate::infrastructure::context_manager::ContextInfo;
 
 /// 通知前端文件变更事件。
 pub fn emit_file_change(app: &AppHandle, event: FileChangeEvent) {
@@ -48,12 +48,11 @@ pub struct NotificationUpdatedPayload {
 
 /// 通知前端通知状态变更事件（包含总数和未读数）。
 #[allow(dead_code)]
-pub fn emit_notification_updated(
-    app: &AppHandle,
-    total: usize,
-    unread_count: usize,
-) {
-    let payload = NotificationUpdatedPayload { total, unread_count };
+pub fn emit_notification_updated(app: &AppHandle, total: usize, unread_count: usize) {
+    let payload = NotificationUpdatedPayload {
+        total,
+        unread_count,
+    };
     if let Err(e) = app.emit("notification:updated", &payload) {
         log::error!("Failed to emit notification:updated event: {}", e);
     }

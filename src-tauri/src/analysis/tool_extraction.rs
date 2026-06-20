@@ -88,8 +88,10 @@ pub fn estimate_tokens(content: &serde_json::Value) -> usize {
         _ => content.to_string(),
     };
 
-    if text.is_empty() { return 0; }
-    (text.len() + 3) / 4  // 等价于 Math.ceil(len / 4)
+    if text.is_empty() {
+        return 0;
+    }
+    (text.len() + 3) / 4 // 等价于 Math.ceil(len / 4)
 }
 
 /// Extract tool results from a single message.

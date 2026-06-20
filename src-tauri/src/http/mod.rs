@@ -6,17 +6,17 @@
 pub mod cors;
 pub mod path_validation;
 pub mod routes;
-pub mod sse;
 pub mod server;
+pub mod sse;
 pub mod state;
 
 use std::path::PathBuf;
 
 use axum::{
-    Router,
-    routing::{any_service, get},
-    http::{StatusCode, header},
+    http::{header, StatusCode},
     response::IntoResponse,
+    routing::{any_service, get},
+    Router,
 };
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -34,9 +34,10 @@ pub fn build_router(http_state: HttpState, dist_dir: PathBuf) -> Router {
     let serve_dir = ServeDir::new(&dist_dir).not_found_service(ServeFile::new(index_html));
     Router::new()
         .merge(api_routes)
-        .route("/", get(move || async move {
-            spa_handler(&spa_index).await
-        }))
+        .route(
+            "/",
+            get(move || async move { spa_handler(&spa_index).await }),
+        )
         .fallback_service(any_service(serve_dir))
         .layer(cors::cors_layer())
         .with_state(http_state)

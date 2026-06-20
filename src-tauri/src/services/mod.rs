@@ -18,33 +18,33 @@
 //! - [`config_service_trait`] — ConfigService trait definition (Phase B-B3)
 //! - [`memory_service_trait`] — MemoryService trait definition
 
-pub mod project_service;
-pub mod search_service;
-pub mod session_service;
-pub mod project_service_trait;
-pub mod search_service_trait;
-pub mod session_service_trait;
-pub mod subagent_service_trait;
-pub mod subagent_service;
-pub mod ssh_service_trait;
-pub mod ssh_service;
-pub mod config_service_trait;
 pub mod config_service_impl;
-pub mod memory_service_trait;
+pub mod config_service_trait;
 pub mod memory_service;
+pub mod memory_service_trait;
+pub mod project_service;
+pub mod project_service_trait;
+pub mod search_service;
+pub mod search_service_trait;
+pub mod session_service;
+pub mod session_service_trait;
+pub mod ssh_service;
+pub mod ssh_service_trait;
+pub mod subagent_service;
+pub mod subagent_service_trait;
 
 // Re-exports: traits take original name, Impl gets suffix
-pub use session_service_trait::SessionService;
-pub use search_service_trait::{SearchService, SearchServiceFull, SearchServiceRebuild};
-pub use project_service_trait::ProjectService;
-pub use subagent_service_trait::SubagentService;
-pub use ssh_service_trait::SshService;
-pub use config_service_trait::ConfigService;
-pub use session_service::SessionServiceImpl;
-pub use search_service::SearchServiceImpl;
-pub use project_service::ProjectServiceImpl;
-pub use subagent_service::SubagentServiceImpl;
-pub use ssh_service::SshServiceImpl;
-pub use memory_service_trait::MemoryService;
-pub use memory_service::MemoryServiceImpl;
 pub use config_service_impl::ConfigServiceImpl;
+pub use config_service_trait::ConfigService;
+pub use memory_service::MemoryServiceImpl;
+pub use memory_service_trait::MemoryService;
+pub use project_service::ProjectServiceImpl;
+pub use project_service_trait::ProjectService;
+pub use search_service::SearchServiceImpl;
+pub use search_service_trait::{SearchService, SearchServiceFull, SearchServiceRebuild};
+pub use session_service::SessionServiceImpl;
+pub use session_service_trait::SessionService;
+pub use ssh_service::SshServiceImpl;
+pub use ssh_service_trait::SshService;
+pub use subagent_service::SubagentServiceImpl;
+pub use subagent_service_trait::SubagentService;

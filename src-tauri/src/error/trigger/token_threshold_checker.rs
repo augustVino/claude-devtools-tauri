@@ -4,9 +4,7 @@ use std::collections::HashMap;
 
 use crate::analysis::tool_extraction::{estimate_tokens, ToolResultInfo};
 use crate::analysis::tool_summary_formatter::{format_tokens, get_tool_summary};
-use crate::error::error_message_builder::{
-    create_detected_error, CreateDetectedErrorParams,
-};
+use crate::error::error_message_builder::{create_detected_error, CreateDetectedErrorParams};
 use crate::error::trigger_matcher::matches_ignore_patterns;
 use crate::types::config::{NotificationTrigger, TriggerMode, TriggerTokenType};
 use crate::types::domain::MessageType;
@@ -61,7 +59,10 @@ pub fn check_token_threshold_trigger(
         return errors;
     }
 
-    let token_type = trigger.token_type.as_ref().unwrap_or(&TriggerTokenType::Total);
+    let token_type = trigger
+        .token_type
+        .as_ref()
+        .unwrap_or(&TriggerTokenType::Total);
     let ignore_patterns: &[String] = trigger.ignore_patterns.as_deref().unwrap_or(&[]);
     let timestamp_ms = parse_timestamp_to_ms(&message.timestamp);
 
@@ -295,7 +296,11 @@ mod tests {
 
         let msg = make_assistant_message(
             content,
-            vec![make_tool_call("tu1", "Read", json!({"file_path": "/test.rs"}))],
+            vec![make_tool_call(
+                "tu1",
+                "Read",
+                json!({"file_path": "/test.rs"}),
+            )],
             vec![make_tool_result("tu1", large_result, false)],
         );
 
@@ -435,7 +440,11 @@ mod tests {
 
         let msg = make_assistant_message(
             content,
-            vec![make_tool_call("tu1", "Bash", json!({"command": "a".repeat(1000)}))],
+            vec![make_tool_call(
+                "tu1",
+                "Bash",
+                json!({"command": "a".repeat(1000)}),
+            )],
             vec![],
         );
 
@@ -474,7 +483,11 @@ mod tests {
 
         let msg = make_assistant_message(
             content,
-            vec![make_tool_call("tu1", "Read", json!({"file_path": "/test.rs"}))],
+            vec![make_tool_call(
+                "tu1",
+                "Read",
+                json!({"file_path": "/test.rs"}),
+            )],
             vec![make_tool_result("tu1", json!(large_content), false)],
         );
 
@@ -514,7 +527,11 @@ mod tests {
         ]);
         let msg = make_assistant_message(
             content,
-            vec![make_tool_call("tu1", "Read", json!({"file_path": "/test.rs"}))],
+            vec![make_tool_call(
+                "tu1",
+                "Read",
+                json!({"file_path": "/test.rs"}),
+            )],
             vec![make_tool_result("tu1", json!("some content"), false)],
         );
         let tool_result_map = HashMap::new();
@@ -609,7 +626,11 @@ mod tests {
         let large_content = "a".repeat(2000);
         let msg = make_assistant_message(
             content,
-            vec![make_tool_call("tu1", "Read", json!({"file_path": "/test.rs"}))],
+            vec![make_tool_call(
+                "tu1",
+                "Read",
+                json!({"file_path": "/test.rs"}),
+            )],
             vec![make_tool_result("tu1", json!(large_content), false)],
         );
 

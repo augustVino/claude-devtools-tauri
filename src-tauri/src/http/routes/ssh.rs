@@ -4,9 +4,9 @@
 //! All services accessed via HttpState fields (Axum single-State constraint).
 
 use axum::{
-    Json,
     extract::State,
     routing::{get, post},
+    Json,
 };
 use serde::Deserialize;
 
@@ -51,9 +51,7 @@ pub async fn ssh_disconnect(
 }
 
 /// GET /api/ssh/state
-pub async fn ssh_get_state(
-    State(state): State<HttpState>,
-) -> Json<SshConnectionStatus> {
+pub async fn ssh_get_state(State(state): State<HttpState>) -> Json<SshConnectionStatus> {
     // get_active_state 是 async 方法，需 .await；返回值非 Result，直接包装
     Json(state.ssh_svc.get_active_state().await)
 }
@@ -107,9 +105,16 @@ pub async fn ssh_save_last_connection(
             "privateKeyPath": body.private_key_path,
         }
     });
-    match state.config_manager.update_config("ssh", connection_value).await {
+    match state
+        .config_manager
+        .update_config("ssh", connection_value)
+        .await
+    {
         Ok(_) => success_json(serde_json::Value::Null),
-        Err(e) => (axum::http::StatusCode::OK, Json(serde_json::json!({"success": false, "error": e.to_string()}))),
+        Err(e) => (
+            axum::http::StatusCode::OK,
+            Json(serde_json::json!({"success": false, "error": e.to_string()})),
+        ),
     }
 }
 
@@ -142,6 +147,9 @@ pub fn routes() -> axum::Router<HttpState> {
         .route("/api/ssh/test", post(ssh_test))
         .route("/api/ssh/config-hosts", get(ssh_get_config_hosts))
         .route("/api/ssh/resolve-host", post(ssh_resolve_host))
-        .route("/api/ssh/save-last-connection", post(ssh_save_last_connection))
+        .route(
+            "/api/ssh/save-last-connection",
+            post(ssh_save_last_connection),
+        )
         .route("/api/ssh/last-connection", get(ssh_get_last_connection))
 }

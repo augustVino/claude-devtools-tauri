@@ -3,11 +3,10 @@
 //! 将所有 REST 端点注册到 Axum Router。
 
 use axum::{
-    Json,
-    Router,
     extract::Path as AxumPath,
     http::StatusCode,
     routing::{delete, get, post, put},
+    Json, Router,
 };
 
 use crate::http::state::HttpState;
@@ -53,10 +52,7 @@ pub(crate) fn error_json(msg: impl Into<String>) -> (StatusCode, Json<ErrorRespo
 
 #[allow(dead_code)]
 pub(crate) fn success_response() -> (StatusCode, Json<SuccessResponse>) {
-    (
-        StatusCode::OK,
-        Json(SuccessResponse { success: true }),
-    )
+    (StatusCode::OK, Json(SuccessResponse { success: true }))
 }
 
 /// "Not available in browser mode" 响应 — 对齐 Electron HTTP no-op 语义。
@@ -202,14 +198,17 @@ pub fn build_routes() -> Router<HttpState> {
             "/api/notifications/unread-count",
             get(notifications::get_unread_count),
         )
-        .route(
-            "/api/notifications/stats",
-            get(notifications::get_stats),
-        )
+        .route("/api/notifications/stats", get(notifications::get_stats))
         // Validation
         .route("/api/validate/path", post(validation::validate_path))
-        .route("/api/validate/mentions", post(validation::validate_mentions))
-        .route("/api/session/scroll-to-line", post(validation::scroll_to_line))
+        .route(
+            "/api/validate/mentions",
+            post(validation::validate_mentions),
+        )
+        .route(
+            "/api/session/scroll-to-line",
+            post(validation::scroll_to_line),
+        )
         // Utility
         .route("/api/version", get(utility::get_version))
         .route("/api/read-claude-md", post(utility::read_claude_md))

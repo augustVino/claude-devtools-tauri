@@ -3,18 +3,18 @@
 //! 对应 Tauri 命令：context.rs 中的上下文管理命令。
 
 use axum::{
-    Json,
     extract::State,
     routing::{get, post},
+    Json,
 };
 use serde::Deserialize;
 use tauri::Manager;
 
-use crate::http::state::HttpState;
 use crate::http::sse::BackendEvent;
+use crate::http::state::HttpState;
 use crate::infrastructure::context_manager::{ContextInfo, SwitchResponse};
 
-use super::{ErrorResponse, error_json};
+use super::{error_json, ErrorResponse};
 
 /// 切换上下文请求体。
 #[derive(Deserialize)]
@@ -24,17 +24,20 @@ pub struct SwitchRequest {
 }
 
 /// GET /api/contexts — 列出所有已注册的上下文。
-pub async fn context_list(
-    State(state): State<HttpState>,
-) -> Json<Vec<ContextInfo>> {
+pub async fn context_list(State(state): State<HttpState>) -> Json<Vec<ContextInfo>> {
     Json(state.context_manager.read().await.list())
 }
 
 /// GET /api/contexts/active — 获取当前活跃上下文 ID。
-pub async fn context_active(
-    State(state): State<HttpState>,
-) -> Json<String> {
-    Json(state.context_manager.read().await.get_active_id().to_string())
+pub async fn context_active(State(state): State<HttpState>) -> Json<String> {
+    Json(
+        state
+            .context_manager
+            .read()
+            .await
+            .get_active_id()
+            .to_string(),
+    )
 }
 
 /// POST /api/contexts/switch — 切换到指定上下文。
@@ -50,12 +53,14 @@ pub async fn context_switch(
     let mut mgr = state.context_manager.write().await;
 
     // Use switch_with_watcher_actions (Batch 1 Task 1)
-    let (result, actions) = mgr.switch_with_watcher_actions(context_id)
+    let (result, actions) = mgr
+        .switch_with_watcher_actions(context_id)
         .map_err(|e| error_json(e.to_string()))?;
 
     // Execute watcher lifecycle based on actions
     if actions.should_stop_old || actions.should_start_new {
-        let cm = state.app_handle
+        let cm = state
+            .app_handle
             .state::<std::sync::Arc<crate::infrastructure::ConfigManager>>()
             .inner()
             .clone();
@@ -71,7 +76,8 @@ pub async fn context_switch(
         if actions.should_start_new {
             if let Some(new_ctx) = mgr.get(&actions.new_context_id) {
                 let new = new_ctx.read().await;
-                new.spawn_watcher_tasks(state.app_handle.clone(), cm, nm).await;
+                new.spawn_watcher_tasks(state.app_handle.clone(), cm, nm)
+                    .await;
             }
         }
     }
@@ -80,13 +86,15 @@ pub async fn context_switch(
     if result.previous_id != result.current_id {
         let new_ctx = mgr.get(&result.current_id).unwrap();
         let info = ContextInfo::from_context(&*new_ctx.read().await);
-        drop(mgr);  // ← BUG FIX: release lock before broadcast
+        drop(mgr); // ← BUG FIX: release lock before broadcast
         state.broadcaster.send(BackendEvent::ContextChanged(info));
     } else {
         drop(mgr);
     }
 
-    Ok(Json(SwitchResponse { context_id: result.current_id }))
+    Ok(Json(SwitchResponse {
+        context_id: result.current_id,
+    }))
 }
 
 /// 构建上下文路由。

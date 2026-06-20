@@ -114,7 +114,10 @@ mod tests {
             "file-change"
         );
         assert_eq!(
-            BackendEvent::TodoChange(TodoChangeEvent { session_id: "".into() }).event_name(),
+            BackendEvent::TodoChange(TodoChangeEvent {
+                session_id: "".into()
+            })
+            .event_name(),
             "todo-change"
         );
     }

@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 use crate::error::AppError;
 use crate::infrastructure::{ContextManager, FsProvider};
 use crate::types::domain::{
-    FindSessionsByPartialIdResult, FindSessionByIdResult, SearchSessionsResult,
+    FindSessionByIdResult, FindSessionsByPartialIdResult, SearchSessionsResult,
 };
 
 /// 搜索服务 — 会话搜索与 ID 定位（具体实现）。
@@ -28,7 +28,10 @@ impl SearchServiceImpl {
     }
 
     /// 取 active ServiceContext 的 searcher Arc。
-    async fn searcher(&self) -> Result<std::sync::Arc<tokio::sync::Mutex<crate::discovery::SessionSearcher>>, AppError> {
+    async fn searcher(
+        &self,
+    ) -> Result<std::sync::Arc<tokio::sync::Mutex<crate::discovery::SessionSearcher>>, AppError>
+    {
         let active_arc = {
             let mgr = self.context_manager.read().await;
             mgr.get_active()
@@ -41,7 +44,12 @@ impl SearchServiceImpl {
 
 #[async_trait]
 impl super::search_service_trait::SearchService for SearchServiceImpl {
-    async fn search_sessions(&self, project_id: &str, query: &str, max_results: u32) -> Result<SearchSessionsResult, AppError> {
+    async fn search_sessions(
+        &self,
+        project_id: &str,
+        query: &str,
+        max_results: u32,
+    ) -> Result<SearchSessionsResult, AppError> {
         let max = max_results.min(200).max(1);
         if query.trim().is_empty() {
             return Ok(SearchSessionsResult {
@@ -59,7 +67,11 @@ impl super::search_service_trait::SearchService for SearchServiceImpl {
         Ok(searcher.search_sessions(project_id, query, max))
     }
 
-    async fn search_all_projects(&self, query: &str, max_results: u32) -> Result<SearchSessionsResult, AppError> {
+    async fn search_all_projects(
+        &self,
+        query: &str,
+        max_results: u32,
+    ) -> Result<SearchSessionsResult, AppError> {
         let max = max_results.min(200).max(1);
         if query.trim().is_empty() {
             return Ok(SearchSessionsResult {
@@ -76,13 +88,20 @@ impl super::search_service_trait::SearchService for SearchServiceImpl {
         Ok(searcher.search_all_projects(query, max))
     }
 
-    async fn find_session_by_id(&self, session_id: &str) -> Result<FindSessionByIdResult, AppError> {
+    async fn find_session_by_id(
+        &self,
+        session_id: &str,
+    ) -> Result<FindSessionByIdResult, AppError> {
         let searcher_arc = self.searcher().await?;
         let mut searcher = searcher_arc.lock().await;
         Ok(searcher.find_session_by_id(session_id))
     }
 
-    async fn find_sessions_by_partial_id(&self, fragment: &str, max_results: usize) -> Result<FindSessionsByPartialIdResult, AppError> {
+    async fn find_sessions_by_partial_id(
+        &self,
+        fragment: &str,
+        max_results: usize,
+    ) -> Result<FindSessionsByPartialIdResult, AppError> {
         let max = max_results.min(100).max(1);
         if fragment.trim().len() < 3 {
             return Ok(FindSessionsByPartialIdResult {
@@ -128,7 +147,9 @@ mod tests {
         projects_dir: PathBuf,
         todos_dir: PathBuf,
     ) -> Arc<RwLock<ContextManager>> {
-        use crate::infrastructure::service_context::{ContextType, ServiceContext, ServiceContextConfig};
+        use crate::infrastructure::service_context::{
+            ContextType, ServiceContext, ServiceContextConfig,
+        };
         use crate::infrastructure::LocalFsProvider;
         let mut mgr = ContextManager::new();
         mgr.register_context(ServiceContext::new(ServiceContextConfig {
@@ -147,6 +168,8 @@ mod tests {
     async fn test_search_sessions_returns_error_when_no_active_context() {
         let svc = SearchServiceImpl::new(make_empty_context_manager());
         let result = svc.search_sessions("proj", "query", 10).await;
-        assert!(matches!(result, Err(AppError::Internal(msg)) if msg.contains("No active ServiceContext")));
+        assert!(
+            matches!(result, Err(AppError::Internal(msg)) if msg.contains("No active ServiceContext"))
+        );
     }
 }

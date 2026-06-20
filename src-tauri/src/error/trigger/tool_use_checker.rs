@@ -1,8 +1,6 @@
 //! 工具调用触发器检查 —— check_tool_use_trigger()。
 
-use crate::error::error_message_builder::{
-    create_detected_error, CreateDetectedErrorParams,
-};
+use crate::error::error_message_builder::{create_detected_error, CreateDetectedErrorParams};
 use crate::error::trigger_matcher::{
     extract_tool_use_field, get_content_blocks, matches_ignore_patterns, matches_pattern,
 };
@@ -53,7 +51,10 @@ pub fn check_tool_use_trigger(
         // 从 JSON 块中提取 tool_use 字段
         let tool_use_id = block.get("id").and_then(|v| v.as_str()).unwrap_or("");
         let tool_use_name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        let tool_use_input = block.get("input").cloned().unwrap_or(serde_json::Value::Null);
+        let tool_use_input = block
+            .get("input")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
 
         // 构建 ToolCall 用于字段提取
         let tool_call = ToolCall {
@@ -104,10 +105,7 @@ pub fn check_tool_use_trigger(
         }
 
         // 匹配成功！
-        let field_label = trigger
-            .match_field
-            .as_deref()
-            .unwrap_or("tool_use");
+        let field_label = trigger.match_field.as_deref().unwrap_or("tool_use");
         let truncated = truncate_content(&field_value, 200);
         let error_msg = format!("{}: {}", field_label, truncated);
 

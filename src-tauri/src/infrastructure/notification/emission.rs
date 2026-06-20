@@ -41,7 +41,12 @@ impl NotificationManager {
             });
         }
 
-        let sound_enabled = self.config_manager.get_config().await.notifications.sound_enabled;
+        let sound_enabled = self
+            .config_manager
+            .get_config()
+            .await
+            .notifications
+            .sound_enabled;
         let body = truncate_str(&error.message, 200);
         let subtitle = &error.context.project_name;
 
@@ -61,13 +66,11 @@ impl NotificationManager {
 
             #[cfg(target_os = "macos")]
             {
-                let _ = notify_rust::set_application(
-                    if tauri::is_dev() {
-                        "com.apple.Terminal"
-                    } else {
-                        app_handle.config().identifier.as_str()
-                    },
-                );
+                let _ = notify_rust::set_application(if tauri::is_dev() {
+                    "com.apple.Terminal"
+                } else {
+                    app_handle.config().identifier.as_str()
+                });
             }
 
             if let Err(e) = notification.show() {

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
 use super::*;
-use crate::infrastructure::fs_provider::{FsDirent, FsStatResult, FsProvider, LocalFsProvider};
+use crate::infrastructure::fs_provider::{FsDirent, FsProvider, FsStatResult, LocalFsProvider};
 
 fn local_provider() -> Arc<dyn FsProvider> {
     Arc::new(LocalFsProvider::new())
@@ -57,11 +57,7 @@ impl FsProvider for MockFsProvider {
     fn read_file(&self, _path: &std::path::Path) -> Result<String, String> {
         Ok(String::new())
     }
-    fn read_file_head(
-        &self,
-        _path: &std::path::Path,
-        _max_lines: usize,
-    ) -> Result<String, String> {
+    fn read_file_head(&self, _path: &std::path::Path, _max_lines: usize) -> Result<String, String> {
         Ok(String::new())
     }
     fn stat(&self, _path: &std::path::Path) -> Result<FsStatResult, String> {
@@ -215,8 +211,7 @@ async fn test_ssh_poll_baseline_priming() {
             size: Some(1000),
         }],
     );
-    let mut watcher =
-        FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
+    let mut watcher = FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
     let mut rx = watcher.receiver();
 
     watcher
@@ -251,8 +246,7 @@ async fn test_ssh_poll_detects_new_file() {
             size: Some(500),
         }],
     );
-    let mut watcher =
-        FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
+    let mut watcher = FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
     let mut rx = watcher.receiver();
 
     watcher
@@ -339,8 +333,7 @@ async fn test_ssh_poll_detects_file_change() {
             size: Some(1000),
         }],
     );
-    let mut watcher =
-        FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
+    let mut watcher = FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
     let mut rx = watcher.receiver();
 
     watcher
@@ -368,10 +361,7 @@ async fn test_ssh_poll_detects_file_change() {
         .expect("Should receive Change event after size increase");
     assert_eq!(event.event_type, FileChangeType::Change);
     assert_eq!(event.session_id.as_deref(), Some("session-abc"));
-    assert_eq!(
-        event.project_id.as_deref(),
-        Some("proj1")
-    );
+    assert_eq!(event.project_id.as_deref(), Some("proj1"));
 
     watcher.stop().await;
 }
@@ -409,8 +399,7 @@ async fn test_ssh_poll_detects_file_deletion() {
             },
         ],
     );
-    let mut watcher =
-        FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
+    let mut watcher = FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
     let mut rx = watcher.receiver();
 
     watcher
@@ -437,10 +426,7 @@ async fn test_ssh_poll_detects_file_deletion() {
         .await
         .expect("Should receive Unlink event after file removal");
     assert_eq!(event.event_type, FileChangeType::Unlink);
-    assert_eq!(
-        event.session_id.as_deref(),
-        Some("session-delete-me")
-    );
+    assert_eq!(event.session_id.as_deref(), Some("session-delete-me"));
 
     watcher.stop().await;
 }
@@ -460,8 +446,7 @@ async fn test_ssh_poll_detects_file_deletion() {
 async fn test_ssh_poll_guard_flag_lifecycle() {
     let provider = Arc::new(MockFsProvider::new("ssh"));
     provider.set_entries("/projects", vec![]);
-    let mut watcher =
-        FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
+    let mut watcher = FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
 
     // Before watching: guard should be false
     {
@@ -480,7 +465,10 @@ async fn test_ssh_poll_guard_flag_lifecycle() {
     // After baseline: primed=true, poll_in_progress=false (guard released)
     {
         let state = watcher.ssh_poll_state.lock().await;
-        assert!(!state.poll_in_progress, "Guard should be released after poll completes");
+        assert!(
+            !state.poll_in_progress,
+            "Guard should be released after poll completes"
+        );
         assert!(state.primed, "Should be primed after baseline");
     }
 
@@ -519,8 +507,7 @@ async fn test_ssh_poll_stop_during_active_poll() {
             size: Some(100),
         }],
     );
-    let mut watcher =
-        FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
+    let mut watcher = FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
     let mut rx = watcher.receiver();
 
     watcher
@@ -573,8 +560,7 @@ async fn test_ssh_poll_io_error_recovery() {
         }],
     );
 
-    let mut watcher =
-        FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
+    let mut watcher = FileWatcher::with_poll_interval(provider.clone(), TEST_POLL_INTERVAL_MS);
     let mut rx = watcher.receiver();
 
     watcher
@@ -600,18 +586,12 @@ async fn test_ssh_poll_io_error_recovery() {
     );
 
     // Next poll should detect the new file
-    let event = tokio::time::timeout(
-        std::time::Duration::from_millis(200),
-        rx.recv(),
-    )
-    .await
-    .expect("Timeout waiting for recovery event")
-    .expect("Should receive Add event after recovery");
+    let event = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv())
+        .await
+        .expect("Timeout waiting for recovery event")
+        .expect("Should receive Add event after recovery");
     assert_eq!(event.event_type, FileChangeType::Add);
-    assert_eq!(
-        event.session_id.as_deref(),
-        Some("session-recovered")
-    );
+    assert_eq!(event.session_id.as_deref(), Some("session-recovered"));
 
     watcher.stop().await;
 }
@@ -670,10 +650,7 @@ async fn test_context_switch_local_to_ssh_to_local() {
         // Wait for baseline, verify no spurious events
         let mut rx = ssh_watcher.receiver();
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        assert!(
-            rx.try_recv().is_err(),
-            "Baseline should produce no events"
-        );
+        assert!(rx.try_recv().is_err(), "Baseline should produce no events");
 
         ssh_watcher.stop().await;
         assert!(!ssh_watcher.is_watching().await);

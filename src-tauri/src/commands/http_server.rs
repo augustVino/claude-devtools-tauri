@@ -24,14 +24,22 @@ pub struct IpcResponse<T: serde::Serialize> {
 
 impl<T: serde::Serialize> IpcResponse<T> {
     fn ok(data: T) -> Self {
-        Self { success: true, data: Some(data), error: None }
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
     }
 }
 
 impl IpcResponse<()> {
     #[allow(dead_code)]
     fn err(msg: impl Into<String>) -> IpcResponse<serde_json::Value> {
-        IpcResponse { success: false, data: None, error: Some(msg.into()) }
+        IpcResponse {
+            success: false,
+            data: None,
+            error: Some(msg.into()),
+        }
     }
 }
 
@@ -41,8 +49,14 @@ pub async fn get_status(app: AppHandle) -> Result<IpcResponse<HttpServerStatus>,
     let handle = app.state::<Mutex<Option<HttpServerHandle>>>();
     let guard = handle.lock().map_err(|e| e.to_string())?;
     match guard.as_ref() {
-        Some(h) => Ok(IpcResponse::ok(HttpServerStatus { running: true, port: h.port })),
-        None => Ok(IpcResponse::ok(HttpServerStatus { running: false, port: 3456 })),
+        Some(h) => Ok(IpcResponse::ok(HttpServerStatus {
+            running: true,
+            port: h.port,
+        })),
+        None => Ok(IpcResponse::ok(HttpServerStatus {
+            running: false,
+            port: 3456,
+        })),
     }
 }
 
@@ -85,29 +99,38 @@ pub async fn start(
             .inner()
             .clone();
 
-        let context_manager = app
-            .state::<Arc<RwLock<ContextManager>>>()
-            .inner()
-            .clone();
+        let context_manager = app.state::<Arc<RwLock<ContextManager>>>().inner().clone();
 
         let http_state = HttpState {
             app_handle: app.clone(),
             app_state: state.inner().clone(),
             broadcaster,
-            config_manager: app
-                .state::<Arc<ConfigManager>>()
-                .inner()
-                .clone(),
+            config_manager: app.state::<Arc<ConfigManager>>().inner().clone(),
             notification_manager,
             context_manager,
             session_service: app.state::<Arc<dyn SessionService>>().inner().clone(),
-            project_service: app.state::<Arc<dyn crate::services::ProjectService>>().inner().clone(),
+            project_service: app
+                .state::<Arc<dyn crate::services::ProjectService>>()
+                .inner()
+                .clone(),
             search_service: app.state::<Arc<dyn SearchServiceFull>>().inner().clone(),
             // Phase B services (Batch 3 atomic expansion)
-            subagent_svc: app.state::<Arc<dyn crate::services::SubagentService>>().inner().clone(),
-            ssh_svc: app.state::<Arc<dyn crate::services::SshService>>().inner().clone(),
-            config_svc: app.state::<Arc<dyn crate::services::ConfigService>>().inner().clone(),
-            memory_svc: app.state::<Arc<dyn crate::services::MemoryService>>().inner().clone(),
+            subagent_svc: app
+                .state::<Arc<dyn crate::services::SubagentService>>()
+                .inner()
+                .clone(),
+            ssh_svc: app
+                .state::<Arc<dyn crate::services::SshService>>()
+                .inner()
+                .clone(),
+            config_svc: app
+                .state::<Arc<dyn crate::services::ConfigService>>()
+                .inner()
+                .clone(),
+            memory_svc: app
+                .state::<Arc<dyn crate::services::MemoryService>>()
+                .inner()
+                .clone(),
         };
 
         // 前端构建产物目录：RENDERER_PATH 环境变量优先，fallback 到 CARGO_MANIFEST_DIR/../dist
@@ -130,7 +153,13 @@ pub async fn start(
 
     // Persist enabled state to config
     let config_mgr = app.state::<Arc<ConfigManager>>().inner().clone();
-    if let Err(e) = config_mgr.update_config("httpServer", serde_json::json!({"enabled": true, "port": port})).await {
+    if let Err(e) = config_mgr
+        .update_config(
+            "httpServer",
+            serde_json::json!({"enabled": true, "port": port}),
+        )
+        .await
+    {
         log::error!("Failed to persist httpServer.enabled=true: {e}");
     }
 
@@ -159,7 +188,10 @@ pub async fn stop(app: AppHandle) -> Result<IpcResponse<HttpServerStatus>, Strin
     // Persist disabled state to config
     if stopped {
         let config_mgr = app.state::<Arc<ConfigManager>>().inner().clone();
-        if let Err(e) = config_mgr.update_config("httpServer", serde_json::json!({"enabled": false})).await {
+        if let Err(e) = config_mgr
+            .update_config("httpServer", serde_json::json!({"enabled": false}))
+            .await
+        {
             log::error!("Failed to persist httpServer.enabled=false: {e}");
         }
     }

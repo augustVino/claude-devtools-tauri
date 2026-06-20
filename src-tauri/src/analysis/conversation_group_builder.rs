@@ -48,8 +48,7 @@ pub fn build_groups(messages: &[ParsedMessage], subagents: &[Process]) -> Vec<Co
         let group_subagents = link_subagents_to_group(user_msg, next_user_msg, subagents);
 
         // Calculate timing
-        let (start_time, end_time, duration_ms) =
-            calculate_group_timing(user_msg, &ai_responses);
+        let (start_time, end_time, duration_ms) = calculate_group_timing(user_msg, &ai_responses);
 
         // Calculate metrics
         let mut all_group_messages: Vec<ParsedMessage> = vec![(*user_msg).clone()];

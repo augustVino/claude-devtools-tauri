@@ -3,12 +3,16 @@
 //! 所有业务逻辑委托给 [`SessionService`](crate::services::SessionService)。
 //! 本模块仅负责 Axum 参数提取、校验和格式转换。
 
-use axum::{Json, extract::{Path, Query, State}, http::StatusCode};
+use axum::{
+    extract::{Path, Query, State},
+    http::StatusCode,
+    Json,
+};
 
 use crate::commands::guards;
 use crate::http::state::HttpState;
-use crate::types::domain::{PaginatedSessionsResult, Session, SessionMetrics};
 use crate::types::chunks::{ConversationGroup, SessionDetail, SessionDetailResponse};
+use crate::types::domain::{PaginatedSessionsResult, Session, SessionMetrics};
 
 use super::error_json;
 
@@ -33,7 +37,10 @@ pub async fn get_sessions(
     Path(project_id): Path<String>,
 ) -> Result<Json<Vec<Session>>, (StatusCode, Json<super::ErrorResponse>)> {
     let safe_id = guards::validate_project_id(&project_id).map_err(error_json)?;
-    state.session_service.get_sessions(&safe_id).await
+    state
+        .session_service
+        .get_sessions(&safe_id)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -48,9 +55,10 @@ pub async fn get_sessions_paginated(
     let limit = params.get("limit").and_then(|v| v.parse::<u32>().ok());
     let page_limit = guards::coerce_limit(limit, 50, 100) as u32;
 
-    state.session_service.get_sessions_paginated(
-        &safe_id, cursor, Some(page_limit), None,
-    ).await
+    state
+        .session_service
+        .get_sessions_paginated(&safe_id, cursor, Some(page_limit), None)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -74,7 +82,10 @@ pub async fn get_sessions_by_ids(
     const MAX: usize = 50;
     let ids: Vec<String> = body.session_ids.into_iter().take(MAX).collect();
 
-    state.session_service.get_sessions_by_ids(&safe_id, &ids).await
+    state
+        .session_service
+        .get_sessions_by_ids(&safe_id, &ids)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -91,7 +102,10 @@ pub async fn get_session_detail(
     let safe_pid = guards::validate_project_id(&path.project_id).map_err(error_json)?;
     let safe_sid = guards::validate_session_id(&path.session_id).map_err(error_json)?;
 
-    state.session_service.get_session_detail(&safe_pid, &safe_sid, query.known_fingerprint.as_deref()).await
+    state
+        .session_service
+        .get_session_detail(&safe_pid, &safe_sid, query.known_fingerprint.as_deref())
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -103,7 +117,10 @@ pub async fn get_session_detail_for_export(
     let safe_pid = guards::validate_project_id(&path.project_id).map_err(error_json)?;
     let safe_sid = guards::validate_session_id(&path.session_id).map_err(error_json)?;
 
-    state.session_service.get_session_detail_for_export(&safe_pid, &safe_sid).await
+    state
+        .session_service
+        .get_session_detail_for_export(&safe_pid, &safe_sid)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -115,7 +132,10 @@ pub async fn get_session_metrics(
     let safe_pid = guards::validate_project_id(&path.project_id).map_err(error_json)?;
     let safe_sid = guards::validate_session_id(&path.session_id).map_err(error_json)?;
 
-    state.session_service.get_session_metrics(&safe_pid, &safe_sid).await
+    state
+        .session_service
+        .get_session_metrics(&safe_pid, &safe_sid)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -131,7 +151,10 @@ pub async fn get_session_groups(
     let safe_pid = guards::validate_project_id(&path.project_id).map_err(error_json)?;
     let safe_sid = guards::validate_session_id(&path.session_id).map_err(error_json)?;
 
-    state.session_service.get_session_groups(&safe_pid, &safe_sid).await
+    state
+        .session_service
+        .get_session_groups(&safe_pid, &safe_sid)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -146,7 +169,10 @@ pub async fn get_waterfall_data(
     let safe_pid = guards::validate_project_id(&path.project_id).map_err(error_json)?;
     let safe_sid = guards::validate_session_id(&path.session_id).map_err(error_json)?;
 
-    state.session_service.get_waterfall_data(&safe_pid, &safe_sid).await
+    state
+        .session_service
+        .get_waterfall_data(&safe_pid, &safe_sid)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }

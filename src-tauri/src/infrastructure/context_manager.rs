@@ -84,18 +84,31 @@ impl ContextManager {
     pub fn register_context(&mut self, context: ServiceContext) -> Result<(), AppError> {
         let id = context.id.clone();
         if self.contexts.contains_key(&id) {
-            return Err(AppError::Internal(format!("Context '{}' already registered", id)));
+            return Err(AppError::Internal(format!(
+                "Context '{}' already registered",
+                id
+            )));
         }
         self.contexts.insert(id, Arc::new(RwLock::new(context)));
         Ok(())
     }
 
-    pub async fn replace_context(&mut self, context_id: &str, replacement: ServiceContext) -> Result<(), AppError> {
+    pub async fn replace_context(
+        &mut self,
+        context_id: &str,
+        replacement: ServiceContext,
+    ) -> Result<(), AppError> {
         if replacement.id != context_id {
-            return Err(AppError::Internal(format!("Replacement ID '{}' does not match '{}'", replacement.id, context_id)));
+            return Err(AppError::Internal(format!(
+                "Replacement ID '{}' does not match '{}'",
+                replacement.id, context_id
+            )));
         }
         if !self.contexts.contains_key(context_id) {
-            return Err(AppError::NotFound(format!("Context '{}' not found", context_id)));
+            return Err(AppError::NotFound(format!(
+                "Context '{}' not found",
+                context_id
+            )));
         }
         if let Some(old) = self.contexts.get(context_id) {
             let read_guard = old.read().await;
@@ -111,11 +124,17 @@ impl ContextManager {
 
     pub fn switch(&mut self, target_id: &str) -> Result<SwitchResult, AppError> {
         if !self.contexts.contains_key(target_id) {
-            return Err(AppError::NotFound(format!("Context '{}' not found", target_id)));
+            return Err(AppError::NotFound(format!(
+                "Context '{}' not found",
+                target_id
+            )));
         }
         // 与 Electron 对齐：切换到已激活的 context 时 no-op 成功
         let previous_id = std::mem::replace(&mut self.active_id, target_id.to_string());
-        Ok(SwitchResult { previous_id, current_id: target_id.to_string() })
+        Ok(SwitchResult {
+            previous_id,
+            current_id: target_id.to_string(),
+        })
     }
 
     /// 执行上下文切换，返回是否需要进行 watcher 生命周期管理。
@@ -152,9 +171,13 @@ impl ContextManager {
 
     pub async fn destroy_context(&mut self, context_id: &str) -> Result<(), AppError> {
         if context_id == "local" {
-            return Err(AppError::Internal("Cannot destroy the local context".into()));
+            return Err(AppError::Internal(
+                "Cannot destroy the local context".into(),
+            ));
         }
-        let context = self.contexts.remove(context_id)
+        let context = self
+            .contexts
+            .remove(context_id)
             .ok_or_else(|| AppError::NotFound(format!("Context '{}' not found", context_id)))?;
         {
             let read_guard = context.read().await;
@@ -183,7 +206,9 @@ impl ContextManager {
     }
 
     pub fn list(&self) -> Vec<ContextInfo> {
-        let mut infos: Vec<ContextInfo> = self.contexts.values()
+        let mut infos: Vec<ContextInfo> = self
+            .contexts
+            .values()
             .filter_map(|ctx| ctx.try_read().ok())
             .map(|guard| ContextInfo::from_context(&*guard))
             .collect();
@@ -241,7 +266,11 @@ mod tests {
     #[tokio::test]
     async fn test_register_and_get() {
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
         assert!(mgr.has("local"));
         assert!(mgr.get("local").is_some());
     }
@@ -249,16 +278,33 @@ mod tests {
     #[tokio::test]
     async fn test_duplicate_registration_fails() {
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
-        let result = mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local)));
-        assert!(matches!(result, Err(AppError::Internal(msg)) if msg.contains("already registered")));
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
+        let result = mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )));
+        assert!(
+            matches!(result, Err(AppError::Internal(msg)) if msg.contains("already registered"))
+        );
     }
 
     #[tokio::test]
     async fn test_switch_context() {
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
-        mgr.register_context(ServiceContext::new(make_config("ssh-test", ContextType::Ssh))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "ssh-test",
+            ContextType::Ssh,
+        )))
+        .unwrap();
         let result = mgr.switch("ssh-test").unwrap();
         assert_eq!(result.previous_id, "local");
         assert_eq!(result.current_id, "ssh-test");
@@ -268,7 +314,11 @@ mod tests {
     #[tokio::test]
     async fn test_switch_to_nonexistent_fails() {
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
         let result = mgr.switch("nonexistent");
         assert!(matches!(result, Err(AppError::NotFound(msg)) if msg.contains("not found")));
     }
@@ -276,7 +326,11 @@ mod tests {
     #[tokio::test]
     async fn test_switch_to_same_is_noop() {
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
         // 与 Electron 对齐：切换到已激活 context 时 no-op 成功
         let result = mgr.switch("local");
         assert!(result.is_ok());
@@ -289,8 +343,16 @@ mod tests {
     #[tokio::test]
     async fn test_destroy_non_local() {
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
-        mgr.register_context(ServiceContext::new(make_config("ssh-test", ContextType::Ssh))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "ssh-test",
+            ContextType::Ssh,
+        )))
+        .unwrap();
         mgr.switch("ssh-test").unwrap();
         mgr.destroy_context("ssh-test").await.unwrap();
         assert!(!mgr.has("ssh-test"));
@@ -300,7 +362,11 @@ mod tests {
     #[tokio::test]
     async fn test_destroy_local_fails() {
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
         let result = mgr.destroy_context("local").await;
         assert!(matches!(result, Err(AppError::Internal(msg)) if msg.contains("Cannot destroy")));
     }
@@ -308,8 +374,16 @@ mod tests {
     #[tokio::test]
     async fn test_list_returns_context_infos() {
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
-        mgr.register_context(ServiceContext::new(make_config("ssh-test", ContextType::Ssh))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "ssh-test",
+            ContextType::Ssh,
+        )))
+        .unwrap();
         let list = mgr.list();
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].id, "local");
@@ -321,7 +395,11 @@ mod tests {
     #[tokio::test]
     async fn test_replace_context() {
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
         let replacement = ServiceContext::new(make_config("local", ContextType::Local));
         mgr.replace_context("local", replacement).await.unwrap();
         assert!(mgr.has("local"));
@@ -330,7 +408,11 @@ mod tests {
     #[tokio::test]
     async fn test_replace_mismatched_id_fails() {
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
         let replacement = ServiceContext::new(make_config("wrong-id", ContextType::Local));
         let result = mgr.replace_context("local", replacement).await;
         assert!(matches!(result, Err(AppError::Internal(_))));
@@ -339,7 +421,11 @@ mod tests {
     #[tokio::test]
     async fn test_switch_with_watcher_actions_same_context() {
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
         let (result, actions) = mgr.switch_with_watcher_actions("local").unwrap();
         assert_eq!(result.previous_id, "local");
         assert_eq!(result.current_id, "local");
@@ -351,8 +437,16 @@ mod tests {
     #[tokio::test]
     async fn test_switch_with_watcher_actions_different_context() {
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
-        mgr.register_context(ServiceContext::new(make_config("ssh-test", ContextType::Ssh))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "ssh-test",
+            ContextType::Ssh,
+        )))
+        .unwrap();
         let (_result, actions) = mgr.switch_with_watcher_actions("ssh-test").unwrap();
         // 切换到不同 context → 需要 stop old + start new
         assert!(actions.should_stop_old);
@@ -365,7 +459,11 @@ mod tests {
     async fn test_switch_with_watcher_actions_nonexistent_context() {
         // 错误路径测试 — 切换到不存在的 context 应返回 Err
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
         let result = mgr.switch_with_watcher_actions("nonexistent");
         assert!(result.is_err());
         // Error 应包含上下文信息
@@ -377,7 +475,11 @@ mod tests {
     async fn test_switch_with_watcher_actions_same_context_id_precision() {
         // no-op 切换时，old_context_id 和 new_context_id 均应等于目标 ID
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
         let (_result, actions) = mgr.switch_with_watcher_actions("local").unwrap();
         assert_eq!(actions.old_context_id, "local");
         assert_eq!(actions.new_context_id, "local");
@@ -387,9 +489,15 @@ mod tests {
     async fn test_switch_with_watcher_actions_consecutive_switches() {
         // 连续切换 A→B→C：验证第二次切换的 old_context_id 为 B 而非 A
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
-        mgr.register_context(ServiceContext::new(make_config("ssh-a", ContextType::Ssh))).unwrap();
-        mgr.register_context(ServiceContext::new(make_config("ssh-b", ContextType::Ssh))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
+        mgr.register_context(ServiceContext::new(make_config("ssh-a", ContextType::Ssh)))
+            .unwrap();
+        mgr.register_context(ServiceContext::new(make_config("ssh-b", ContextType::Ssh)))
+            .unwrap();
 
         // 第一次切换: local → ssh-a
         let (_r1, a1) = mgr.switch_with_watcher_actions("ssh-a").unwrap();
@@ -406,8 +514,16 @@ mod tests {
     async fn test_watcher_lifecycle_actions_clone() {
         // 验证 Clone trait 可用（调用方可能需要跨作用域传递）
         let mut mgr = ContextManager::new();
-        mgr.register_context(ServiceContext::new(make_config("local", ContextType::Local))).unwrap();
-        mgr.register_context(ServiceContext::new(make_config("ssh-test", ContextType::Ssh))).unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "local",
+            ContextType::Local,
+        )))
+        .unwrap();
+        mgr.register_context(ServiceContext::new(make_config(
+            "ssh-test",
+            ContextType::Ssh,
+        )))
+        .unwrap();
         let (_result, actions) = mgr.switch_with_watcher_actions("ssh-test").unwrap();
         let cloned = actions.clone();
         assert_eq!(cloned.should_stop_old, actions.should_stop_old);

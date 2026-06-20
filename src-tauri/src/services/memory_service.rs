@@ -1,12 +1,12 @@
 //! Memory Service implementation — reads from local filesystem.
 
-use async_trait::async_trait;
-use std::path::PathBuf;
-use std::io::Read;
 use crate::error::AppError;
-use crate::types::memory::{MemoryFile, MemoryIndex, parse_memory_index};
-use crate::utils::path_decoder;
+use crate::types::memory::{parse_memory_index, MemoryFile, MemoryIndex};
 use crate::utils::app_opener;
+use crate::utils::path_decoder;
+use async_trait::async_trait;
+use std::io::Read;
+use std::path::PathBuf;
 
 use super::memory_service_trait::MemoryService;
 
@@ -126,7 +126,12 @@ impl MemoryService for MemoryServiceImpl {
             };
             while let Some(entry) = rd.next().transpose().ok().flatten() {
                 if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
-                    if entry.file_name().to_string_lossy().to_lowercase().ends_with(".md") {
+                    if entry
+                        .file_name()
+                        .to_string_lossy()
+                        .to_lowercase()
+                        .ends_with(".md")
+                    {
                         return Ok::<bool, std::io::Error>(true);
                     }
                 }
@@ -158,19 +163,20 @@ impl MemoryService for MemoryServiceImpl {
             }
             let index_path = canonical_dir.join(INDEX_FILE_NAME);
             let raw = if index_path.exists() {
-                let canonical_index = std::fs::canonicalize(&index_path)
-                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::NotFound, "Index file not found"))?;
+                let canonical_index = std::fs::canonicalize(&index_path).map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::NotFound, "Index file not found")
+                })?;
                 if !canonical_index.starts_with(&canonical_dir) {
-                    return Ok::<Option<MemoryIndex>, std::io::Error>(Some(
-                        parse_memory_index("", &names),
-                    ));
+                    return Ok::<Option<MemoryIndex>, std::io::Error>(Some(parse_memory_index(
+                        "", &names,
+                    )));
                 }
                 let f = std::fs::File::open(&canonical_index)?;
                 let meta = f.metadata()?;
                 if meta.len() > MAX_FILE_SIZE {
-                    return Ok::<Option<MemoryIndex>, std::io::Error>(Some(
-                        parse_memory_index("", &names),
-                    ));
+                    return Ok::<Option<MemoryIndex>, std::io::Error>(Some(parse_memory_index(
+                        "", &names,
+                    )));
                 }
                 let mut buf = String::with_capacity(meta.len() as usize);
                 std::io::BufReader::new(f).read_to_string(&mut buf)?;
@@ -215,8 +221,12 @@ impl MemoryService for MemoryServiceImpl {
             // resolve dir, verify containment, resolve file, verify containment, then read.
             let canonical_dir = Self::re_canonicalize_dir(&dir, &projects)?;
             let resolved = canonical_dir.join(&trimmed);
-            let canonical = std::fs::canonicalize(&resolved)
-                .map_err(|_| std::io::Error::new(std::io::ErrorKind::NotFound, format!("File not found: {trimmed}")))?;
+            let canonical = std::fs::canonicalize(&resolved).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("File not found: {trimmed}"),
+                )
+            })?;
             if !canonical.starts_with(&canonical_dir) {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -236,7 +246,10 @@ impl MemoryService for MemoryServiceImpl {
             }
             let mut content = String::new();
             std::io::BufReader::new(f).read_to_string(&mut content)?;
-            Ok::<(String, String), std::io::Error>((content, canonical.to_string_lossy().to_string()))
+            Ok::<(String, String), std::io::Error>((
+                content,
+                canonical.to_string_lossy().to_string(),
+            ))
         })
         .await??;
         Ok(MemoryFile {
@@ -262,9 +275,7 @@ impl MemoryService for MemoryServiceImpl {
         file_name: Option<&str>,
     ) -> Result<(), AppError> {
         let path = match file_name {
-            Some(name) if !name.trim().is_empty() => {
-                self.get_file_path(project_id, name)?
-            }
+            Some(name) if !name.trim().is_empty() => self.get_file_path(project_id, name)?,
             _ => self.get_dir_path(project_id),
         };
         let is_directory = file_name.map_or(true, |n| n.trim().is_empty());

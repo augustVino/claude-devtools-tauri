@@ -4,13 +4,13 @@
 //! 注意：read_claude_md_files 和 read_agent_configs 是同步文件 I/O 函数，
 //! 使用 tokio::task::spawn_blocking 包装以避免阻塞异步运行时。
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use crate::http::path_validation::validate_file_path;
 use crate::http::state::HttpState;
-use crate::parsing::claude_md_reader::{ClaudeMdReader, ClaudeMdFileInfo};
+use crate::parsing::claude_md_reader::{ClaudeMdFileInfo, ClaudeMdReader};
 
 use super::error_json;
 
@@ -18,9 +18,7 @@ use super::error_json;
 ///
 /// GET /api/version
 /// 注意：httpClient.ts 的 getAppVersion 期望返回裸字符串，不是 JSON 对象。
-pub async fn get_version(
-    State(_state): State<HttpState>,
-) -> Json<String> {
+pub async fn get_version(State(_state): State<HttpState>) -> Json<String> {
     Json(env!("CARGO_PKG_VERSION").to_string())
 }
 
@@ -118,11 +116,15 @@ pub async fn read_mentioned_file(
             validation.error.as_deref().unwrap_or("")
         );
         return Err(error_json(
-            validation.error.unwrap_or_else(|| "Path validation failed".into()),
+            validation
+                .error
+                .unwrap_or_else(|| "Path validation failed".into()),
         ));
     }
 
-    let path = validation.normalized_path.unwrap_or_else(|| Path::new(&body.absolute_path).to_path_buf());
+    let path = validation
+        .normalized_path
+        .unwrap_or_else(|| Path::new(&body.absolute_path).to_path_buf());
 
     // 跳过不存在的路径和目录
     if !path.exists() || path.is_dir() {

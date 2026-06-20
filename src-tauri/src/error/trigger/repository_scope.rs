@@ -30,10 +30,7 @@ pub struct RepositoryScopeTarget {
 ///
 /// # 返回值
 /// 若触发器应应用于此项目则返回 `true`，否则返回 `false`。
-pub fn matches_repository_scope(
-    project_id: &str,
-    repository_ids: Option<&[String]>,
-) -> bool {
+pub fn matches_repository_scope(project_id: &str, repository_ids: Option<&[String]>) -> bool {
     // 未指定仓库 ID 时，触发器适用于所有仓库
     let ids = match repository_ids {
         Some(ids) if !ids.is_empty() => ids,
@@ -89,10 +86,7 @@ pub fn pre_resolve_repository_ids(targets: &[RepositoryScopeTarget]) {
 
     for (_i, target) in unique {
         let project_path = path_decoder::decode_path(&target.project_id);
-        let resolved_path = target
-            .cwd_hint
-            .as_deref()
-            .unwrap_or(&project_path);
+        let resolved_path = target.cwd_hint.as_deref().unwrap_or(&project_path);
 
         let identity = resolver.resolve_identity(resolved_path);
         let repo_id = identity.map(|id| id.id);
@@ -126,10 +120,8 @@ mod tests {
         );
         drop(cache);
 
-        let result = matches_repository_scope(
-            "-Users-test-project",
-            Some(&["repo-abc-123".to_string()]),
-        );
+        let result =
+            matches_repository_scope("-Users-test-project", Some(&["repo-abc-123".to_string()]));
         assert!(result);
     }
 
@@ -144,10 +136,8 @@ mod tests {
         );
         drop(cache);
 
-        let result = matches_repository_scope(
-            "-Users-test-project",
-            Some(&["repo-abc-123".to_string()]),
-        );
+        let result =
+            matches_repository_scope("-Users-test-project", Some(&["repo-abc-123".to_string()]));
         assert!(!result);
     }
 
@@ -170,10 +160,8 @@ mod tests {
         cache.insert("-Users-test-project".to_string(), None);
         drop(cache);
 
-        let result = matches_repository_scope(
-            "-Users-test-project",
-            Some(&["repo-abc-123".to_string()]),
-        );
+        let result =
+            matches_repository_scope("-Users-test-project", Some(&["repo-abc-123".to_string()]));
         assert!(!result);
     }
 

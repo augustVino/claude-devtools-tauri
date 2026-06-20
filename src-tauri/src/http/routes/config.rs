@@ -2,15 +2,13 @@
 //!
 //! 对应 Tauri 命令：config.rs 中的配置管理命令。
 
-use axum::{Json, extract::State, http::StatusCode};
-use serde::Serialize;
+use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
+use serde::Serialize;
 
 use crate::commands::guards;
 use crate::http::state::HttpState;
-use crate::types::config::{
-    AppConfig, NotificationTrigger,
-};
+use crate::types::config::{AppConfig, NotificationTrigger};
 
 use super::error_json;
 
@@ -48,9 +46,15 @@ pub async fn update_config(
     State(state): State<HttpState>,
     Json(body): Json<UpdateConfigRequest>,
 ) -> Result<Json<ConfigResponse>, (StatusCode, Json<super::ErrorResponse>)> {
-    let result = state.config_svc.update_config(&body.section, body.data).await
+    let result = state
+        .config_svc
+        .update_config(&body.section, body.data)
+        .await
         .map_err(|e| error_json(e.to_string()))?;
-    Ok(Json(ConfigResponse { success: true, data: result }))
+    Ok(Json(ConfigResponse {
+        success: true,
+        data: result,
+    }))
 }
 
 // =============================================================================
@@ -87,7 +91,10 @@ pub async fn remove_ignore_regex(
     Json(body): Json<PatternRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let app_state = state.app_state.read().await;
-    app_state.config_manager.remove_ignore_regex(body.pattern).await
+    app_state
+        .config_manager
+        .remove_ignore_regex(body.pattern)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -111,7 +118,10 @@ pub async fn add_ignore_repository(
     Json(body): Json<RepositoryIdRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
     let app_state = state.app_state.read().await;
-    app_state.config_manager.add_ignore_repository(body.repository_id).await
+    app_state
+        .config_manager
+        .add_ignore_repository(body.repository_id)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -126,7 +136,8 @@ pub async fn remove_ignore_repository(
     let app_state = state.app_state.read().await;
     app_state
         .config_manager
-        .remove_ignore_repository(body.repository_id).await
+        .remove_ignore_repository(body.repository_id)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -148,7 +159,10 @@ pub async fn snooze(
     State(state): State<HttpState>,
     Json(body): Json<SnoozeRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
-    state.config_svc.snooze(body.minutes).await
+    state
+        .config_svc
+        .snooze(body.minutes)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -159,7 +173,10 @@ pub async fn snooze(
 pub async fn clear_snooze(
     State(state): State<HttpState>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
-    state.config_svc.clear_snooze().await
+    state
+        .config_svc
+        .clear_snooze()
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -212,8 +229,8 @@ pub async fn update_trigger(
     axum::extract::Path(trigger_id): axum::extract::Path<String>,
     Json(updates): Json<serde_json::Value>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
-    let safe_trigger_id = guards::validate_trigger_id(&trigger_id)
-        .map_err(|e| error_json(e.to_string()))?;
+    let safe_trigger_id =
+        guards::validate_trigger_id(&trigger_id).map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
     app_state
@@ -231,8 +248,8 @@ pub async fn remove_trigger(
     State(state): State<HttpState>,
     axum::extract::Path(trigger_id): axum::extract::Path<String>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
-    let safe_trigger_id = guards::validate_trigger_id(&trigger_id)
-        .map_err(|e| error_json(e.to_string()))?;
+    let safe_trigger_id =
+        guards::validate_trigger_id(&trigger_id).map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
     app_state
@@ -261,16 +278,19 @@ pub async fn test_trigger(
     state: State<HttpState>,
     _trigger_id: axum::extract::Path<String>,
     Json(trigger): Json<NotificationTrigger>,
-) -> Result<
-    Json<TriggerTestResponse>,
-    (StatusCode, Json<super::ErrorResponse>),
-> {
+) -> Result<Json<TriggerTestResponse>, (StatusCode, Json<super::ErrorResponse>)> {
     let _safe_trigger_id = guards::validate_trigger_id(_trigger_id.0.as_str())
         .map_err(|e| error_json(e.to_string()))?;
 
-    let result = state.config_svc.test_trigger(&trigger).await
+    let result = state
+        .config_svc
+        .test_trigger(&trigger)
+        .await
         .map_err(|e| error_json(e.to_string()))?;
-    Ok(Json(TriggerTestResponse { success: true, data: result }))
+    Ok(Json(TriggerTestResponse {
+        success: true,
+        data: result,
+    }))
 }
 
 // =============================================================================
@@ -292,15 +312,16 @@ pub async fn pin_session(
     State(state): State<HttpState>,
     Json(body): Json<SessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
-    let _safe_project_id = guards::validate_project_id(&body.project_id)
-        .map_err(|e| error_json(e.to_string()))?;
-    let _safe_session_id = guards::validate_session_id(&body.session_id)
-        .map_err(|e| error_json(e.to_string()))?;
+    let _safe_project_id =
+        guards::validate_project_id(&body.project_id).map_err(|e| error_json(e.to_string()))?;
+    let _safe_session_id =
+        guards::validate_session_id(&body.session_id).map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
     app_state
         .config_manager
-        .pin_session(body.project_id, body.session_id).await
+        .pin_session(body.project_id, body.session_id)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -312,15 +333,16 @@ pub async fn unpin_session(
     State(state): State<HttpState>,
     Json(body): Json<SessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
-    let _safe_project_id = guards::validate_project_id(&body.project_id)
-        .map_err(|e| error_json(e.to_string()))?;
-    let _safe_session_id = guards::validate_session_id(&body.session_id)
-        .map_err(|e| error_json(e.to_string()))?;
+    let _safe_project_id =
+        guards::validate_project_id(&body.project_id).map_err(|e| error_json(e.to_string()))?;
+    let _safe_session_id =
+        guards::validate_session_id(&body.session_id).map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
     app_state
         .config_manager
-        .unpin_session(body.project_id, body.session_id).await
+        .unpin_session(body.project_id, body.session_id)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -332,15 +354,16 @@ pub async fn hide_session(
     State(state): State<HttpState>,
     Json(body): Json<SessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
-    let _safe_project_id = guards::validate_project_id(&body.project_id)
-        .map_err(|e| error_json(e.to_string()))?;
-    let _safe_session_id = guards::validate_session_id(&body.session_id)
-        .map_err(|e| error_json(e.to_string()))?;
+    let _safe_project_id =
+        guards::validate_project_id(&body.project_id).map_err(|e| error_json(e.to_string()))?;
+    let _safe_session_id =
+        guards::validate_session_id(&body.session_id).map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
     app_state
         .config_manager
-        .hide_session(body.project_id, body.session_id).await
+        .hide_session(body.project_id, body.session_id)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -352,15 +375,16 @@ pub async fn unhide_session(
     State(state): State<HttpState>,
     Json(body): Json<SessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
-    let _safe_project_id = guards::validate_project_id(&body.project_id)
-        .map_err(|e| error_json(e.to_string()))?;
-    let _safe_session_id = guards::validate_session_id(&body.session_id)
-        .map_err(|e| error_json(e.to_string()))?;
+    let _safe_project_id =
+        guards::validate_project_id(&body.project_id).map_err(|e| error_json(e.to_string()))?;
+    let _safe_session_id =
+        guards::validate_session_id(&body.session_id).map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
     app_state
         .config_manager
-        .unhide_session(body.project_id, body.session_id).await
+        .unhide_session(body.project_id, body.session_id)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -384,13 +408,14 @@ pub async fn hide_sessions(
     State(state): State<HttpState>,
     Json(body): Json<BatchSessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
-    let _safe_project_id = guards::validate_project_id(&body.project_id)
-        .map_err(|e| error_json(e.to_string()))?;
+    let _safe_project_id =
+        guards::validate_project_id(&body.project_id).map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
     app_state
         .config_manager
-        .hide_sessions(body.project_id, body.session_ids).await
+        .hide_sessions(body.project_id, body.session_ids)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }
@@ -402,13 +427,14 @@ pub async fn unhide_sessions(
     State(state): State<HttpState>,
     Json(body): Json<BatchSessionIdentRequest>,
 ) -> Result<Json<AppConfig>, (StatusCode, Json<super::ErrorResponse>)> {
-    let _safe_project_id = guards::validate_project_id(&body.project_id)
-        .map_err(|e| error_json(e.to_string()))?;
+    let _safe_project_id =
+        guards::validate_project_id(&body.project_id).map_err(|e| error_json(e.to_string()))?;
 
     let app_state = state.app_state.read().await;
     app_state
         .config_manager
-        .unhide_sessions(body.project_id, body.session_ids).await
+        .unhide_sessions(body.project_id, body.session_ids)
+        .await
         .map(Json)
         .map_err(|e| error_json(e.to_string()))
 }

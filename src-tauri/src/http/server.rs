@@ -40,8 +40,13 @@ pub fn spawn_http_server(
     preferred_port: u16,
     dist_dir: PathBuf,
 ) -> Result<HttpServerHandle, String> {
-    let port = find_available_port(preferred_port)
-        .ok_or_else(|| format!("No available port in range {}-{}", preferred_port, preferred_port + 10))?;
+    let port = find_available_port(preferred_port).ok_or_else(|| {
+        format!(
+            "No available port in range {}-{}",
+            preferred_port,
+            preferred_port + 10
+        )
+    })?;
 
     let shutdown = CancellationToken::new();
 
@@ -53,7 +58,9 @@ pub fn spawn_http_server(
             Ok(listener) => {
                 log::info!("HTTP server listening on 127.0.0.1:{}", port);
                 if let Err(e) = axum::serve(listener, app)
-                    .with_graceful_shutdown(async move { shutdown_token.cancelled().await; })
+                    .with_graceful_shutdown(async move {
+                        shutdown_token.cancelled().await;
+                    })
                     .await
                 {
                     log::error!("HTTP server error: {}", e);

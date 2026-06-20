@@ -5,15 +5,15 @@
 //! leaking server filesystem layout.
 
 use axum::{
-    Json,
     extract::{Query, State},
+    Json,
 };
 use serde::Deserialize;
 
 use crate::commands::guards;
 use crate::error::AppError;
 use crate::http::state::HttpState;
-use crate::types::memory::{MemoryIndex, MemoryReadFileResult, MemoryOpenResult, OpenTarget};
+use crate::types::memory::{MemoryIndex, MemoryOpenResult, MemoryReadFileResult, OpenTarget};
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,8 +38,7 @@ pub struct CopyPathBody {
 fn require_project_id(id: Option<String>) -> Result<String, AppError> {
     id.filter(|s| !s.trim().is_empty())
         .ok_or_else(|| AppError::InvalidInput("projectId is required".into()))
-        .and_then(|s| guards::validate_project_id(&s)
-            .map_err(|e| AppError::InvalidInput(e)))
+        .and_then(|s| guards::validate_project_id(&s).map_err(|e| AppError::InvalidInput(e)))
 }
 
 pub async fn has_memory(
@@ -63,11 +62,12 @@ pub async fn read_memory_file(
     Query(query): Query<MemoryFileQuery>,
 ) -> Result<Json<MemoryReadFileResult>, AppError> {
     let safe_id = require_project_id(query.project_id)?;
-    let file_name = query.file
+    let file_name = query
+        .file
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| AppError::InvalidInput("file is required".into()))?;
-    let safe_name = guards::validate_memory_file_name(&file_name)
-        .map_err(|e| AppError::InvalidInput(e))?;
+    let safe_name =
+        guards::validate_memory_file_name(&file_name).map_err(|e| AppError::InvalidInput(e))?;
 
     match state.memory_svc.read_file(&safe_id, &safe_name).await {
         Ok(file) => Ok(Json(MemoryReadFileResult {
@@ -99,8 +99,8 @@ pub async fn copy_memory_path(
     // to avoid leaking server filesystem layout.
     let path = match body.file_name {
         Some(name) if !name.trim().is_empty() => {
-            let safe_name = guards::validate_memory_file_name(&name)
-                .map_err(|e| AppError::InvalidInput(e))?;
+            let safe_name =
+                guards::validate_memory_file_name(&name).map_err(|e| AppError::InvalidInput(e))?;
             safe_name
         }
         _ => "memory".to_string(),
@@ -118,9 +118,7 @@ pub async fn list_memory_openers(
     Ok(Json(crate::utils::app_opener::detect_installations().await))
 }
 
-pub async fn open_memory_in(
-    _state: State<HttpState>,
-) -> Result<Json<MemoryOpenResult>, AppError> {
+pub async fn open_memory_in(_state: State<HttpState>) -> Result<Json<MemoryOpenResult>, AppError> {
     // HTTP 模式下不可用 — 对齐 upstream httpClient.ts 的 openIn 行为
     Ok(Json(MemoryOpenResult {
         success: false,

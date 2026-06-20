@@ -6,9 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::types::messages::{
-    SemanticStep, SemanticStepGroup, SemanticStepType,
-};
+use crate::types::messages::{SemanticStep, SemanticStepGroup, SemanticStepType};
 
 /// Build semantic step groups from a flat list of steps.
 ///
@@ -31,11 +29,7 @@ pub fn build_semantic_step_groups(steps: &[SemanticStep]) -> Vec<SemanticStepGro
     let mut groups: BTreeMap<String, Vec<&SemanticStep>> = BTreeMap::new();
 
     for step in steps {
-        let key = step
-            .source_message_id
-            .as_deref()
-            .unwrap_or("")
-            .to_string();
+        let key = step.source_message_id.as_deref().unwrap_or("").to_string();
 
         groups.entry(key).or_default().push(step);
     }
@@ -44,8 +38,7 @@ pub fn build_semantic_step_groups(steps: &[SemanticStep]) -> Vec<SemanticStepGro
         .into_iter()
         .map(|(key, group_steps)| {
             let label = compute_group_label(&group_steps);
-            let owned_steps: Vec<SemanticStep> =
-                group_steps.iter().map(|s| (*s).clone()).collect();
+            let owned_steps: Vec<SemanticStep> = group_steps.iter().map(|s| (*s).clone()).collect();
             let id = if key.is_empty() {
                 owned_steps
                     .first()
@@ -56,14 +49,12 @@ pub fn build_semantic_step_groups(steps: &[SemanticStep]) -> Vec<SemanticStepGro
             };
 
             // Compute aggregated timing fields
-            let start_time = owned_steps
-                .iter()
-                .map(|s| s.start_time)
-                .min();
+            let start_time = owned_steps.iter().map(|s| s.start_time).min();
             let end_time = owned_steps
                 .iter()
                 .map(|s| {
-                    s.end_time.unwrap_or(s.start_time.saturating_add(s.duration_ms))
+                    s.end_time
+                        .unwrap_or(s.start_time.saturating_add(s.duration_ms))
                 })
                 .max();
             let total_duration: f64 = owned_steps

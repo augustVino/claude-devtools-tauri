@@ -1,5 +1,5 @@
-use tauri::{command, AppHandle, State};
 use std::sync::Arc;
+use tauri::{command, AppHandle, State};
 use tokio::sync::RwLock;
 
 use crate::commands::AppState;
@@ -12,9 +12,7 @@ use tauri_plugin_opener::OpenerExt;
 
 /// 获取当前完整的应用配置。
 #[command]
-pub async fn get_config(
-    state: State<'_, Arc<RwLock<AppState>>>,
-) -> Result<AppConfig, String> {
+pub async fn get_config(state: State<'_, Arc<RwLock<AppState>>>) -> Result<AppConfig, String> {
     let app_state = state.read().await;
     Ok(app_state.config_manager.get_config().await)
 }
@@ -26,7 +24,9 @@ pub async fn update_config(
     section: String,
     data: serde_json::Value,
 ) -> Result<AppConfig, String> {
-    config_svc.update_config(&section, data).await
+    config_svc
+        .update_config(&section, data)
+        .await
         .map_err(|e| e.into_tauri_string())
 }
 
@@ -43,7 +43,10 @@ pub async fn add_ignore_regex(
     pattern: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.add_ignore_regex(pattern).await
+    app_state
+        .config_manager
+        .add_ignore_regex(pattern)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -54,7 +57,10 @@ pub async fn remove_ignore_regex(
     pattern: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.remove_ignore_regex(pattern).await
+    app_state
+        .config_manager
+        .remove_ignore_regex(pattern)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -70,7 +76,10 @@ pub async fn pin_session(
     session_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.pin_session(project_id, session_id).await
+    app_state
+        .config_manager
+        .pin_session(project_id, session_id)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -82,7 +91,10 @@ pub async fn unpin_session(
     session_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.unpin_session(project_id, session_id).await
+    app_state
+        .config_manager
+        .unpin_session(project_id, session_id)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -94,7 +106,10 @@ pub async fn hide_session(
     session_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.hide_session(project_id, session_id).await
+    app_state
+        .config_manager
+        .hide_session(project_id, session_id)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -106,7 +121,10 @@ pub async fn unhide_session(
     session_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.unhide_session(project_id, session_id).await
+    app_state
+        .config_manager
+        .unhide_session(project_id, session_id)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -120,7 +138,9 @@ pub async fn snooze(
     config_svc: State<'_, Arc<dyn crate::services::ConfigService>>,
     minutes: i32,
 ) -> Result<AppConfig, String> {
-    config_svc.snooze(minutes).await
+    config_svc
+        .snooze(minutes)
+        .await
         .map_err(|e| e.into_tauri_string())
 }
 
@@ -129,7 +149,9 @@ pub async fn snooze(
 pub async fn clear_snooze(
     config_svc: State<'_, Arc<dyn crate::services::ConfigService>>,
 ) -> Result<AppConfig, String> {
-    config_svc.clear_snooze().await
+    config_svc
+        .clear_snooze()
+        .await
         .map_err(|e| e.into_tauri_string())
 }
 
@@ -144,7 +166,10 @@ pub async fn add_trigger(
     trigger: crate::types::config::NotificationTrigger,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.add_trigger(trigger).await
+    app_state
+        .config_manager
+        .add_trigger(trigger)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -156,7 +181,10 @@ pub async fn update_trigger(
     updates: serde_json::Value,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.update_trigger(&trigger_id, updates).await
+    app_state
+        .config_manager
+        .update_trigger(&trigger_id, updates)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -167,7 +195,10 @@ pub async fn remove_trigger(
     trigger_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.remove_trigger(&trigger_id).await
+    app_state
+        .config_manager
+        .remove_trigger(&trigger_id)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -186,7 +217,9 @@ pub async fn test_trigger(
     config_svc: State<'_, Arc<dyn crate::services::ConfigService>>,
     trigger: crate::types::config::NotificationTrigger,
 ) -> Result<crate::types::config::TriggerTestResult, String> {
-    config_svc.test_trigger(&trigger).await
+    config_svc
+        .test_trigger(&trigger)
+        .await
         .map_err(|e| e.into_tauri_string())
 }
 
@@ -203,7 +236,10 @@ pub async fn add_ignore_repository(
     repository_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.add_ignore_repository(repository_id).await
+    app_state
+        .config_manager
+        .add_ignore_repository(repository_id)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -214,7 +250,10 @@ pub async fn remove_ignore_repository(
     repository_id: String,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.remove_ignore_repository(repository_id).await
+    app_state
+        .config_manager
+        .remove_ignore_repository(repository_id)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -230,7 +269,10 @@ pub async fn hide_sessions(
     session_ids: Vec<String>,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.hide_sessions(project_id, session_ids).await
+    app_state
+        .config_manager
+        .hide_sessions(project_id, session_ids)
+        .await
         .map_err(|e| e.to_string())
 }
 
@@ -242,7 +284,10 @@ pub async fn unhide_sessions(
     session_ids: Vec<String>,
 ) -> Result<AppConfig, String> {
     let app_state = state.read().await;
-    app_state.config_manager.unhide_sessions(project_id, session_ids).await
+    app_state
+        .config_manager
+        .unhide_sessions(project_id, session_ids)
+        .await
         .map_err(|e| e.to_string())
 }
 

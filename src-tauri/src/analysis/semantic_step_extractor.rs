@@ -1,8 +1,6 @@
 use crate::types::chunks::{AiChunk, Process};
 use crate::types::domain::MessageType;
-use crate::types::messages::{
-    SemanticStep, SemanticStepContent, SemanticStepType, StepTokens,
-};
+use crate::types::messages::{SemanticStep, SemanticStepContent, SemanticStepType, StepTokens};
 use crate::utils::timestamp::parse_ts_ms;
 
 /// Extract semantic steps from an AI chunk's responses and processes.
@@ -61,13 +59,8 @@ pub fn extract_semantic_steps(chunk: &AiChunk) -> Vec<SemanticStep> {
                         });
                         step_id_counter += 1;
                     }
-                    ContentBlockRef::ToolUse {
-                        id,
-                        name,
-                        input,
-                    } => {
-                        let call_tokens =
-                            count_tokens(&format!("{}{}", name, input));
+                    ContentBlockRef::ToolUse { id, name, input } => {
+                        let call_tokens = count_tokens(&format!("{}{}", name, input));
                         steps.push(SemanticStep {
                             id: id.clone(),
                             step_type: SemanticStepType::ToolCall,
@@ -365,12 +358,17 @@ fn extract_content_blocks(content: &serde_json::Value) -> Vec<ContentBlockRef> {
                     if thinking.is_empty() {
                         return None;
                     }
-                    Some(ContentBlockRef::Thinking { thinking: thinking.to_string() })
+                    Some(ContentBlockRef::Thinking {
+                        thinking: thinking.to_string(),
+                    })
                 }
                 "tool_use" => {
                     let id = block.get("id")?.as_str()?.to_string();
                     let name = block.get("name")?.as_str()?.to_string();
-                    let input = block.get("input").cloned().unwrap_or(serde_json::Value::Null);
+                    let input = block
+                        .get("input")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
                     Some(ContentBlockRef::ToolUse { id, name, input })
                 }
                 "text" => {
@@ -378,13 +376,12 @@ fn extract_content_blocks(content: &serde_json::Value) -> Vec<ContentBlockRef> {
                     if text.is_empty() {
                         return None;
                     }
-                    Some(ContentBlockRef::Text { text: text.to_string() })
+                    Some(ContentBlockRef::Text {
+                        text: text.to_string(),
+                    })
                 }
                 "tool_result" => {
-                    let tool_use_id = block
-                        .get("tool_use_id")?
-                        .as_str()?
-                        .to_string();
+                    let tool_use_id = block.get("tool_use_id")?.as_str()?.to_string();
                     Some(ContentBlockRef::ToolResult { tool_use_id })
                 }
                 "image" => Some(ContentBlockRef::Image),
@@ -403,9 +400,7 @@ mod tests {
     use super::*;
     use crate::types::chunks::Process;
     use crate::types::domain::{MessageType, SessionMetrics};
-    use crate::types::messages::{
-        ParsedMessage, SemanticStepType, ToolResult,
-    };
+    use crate::types::messages::{ParsedMessage, SemanticStepType, ToolResult};
 
     // =========================================================================
     // Test Helpers
@@ -527,10 +522,7 @@ mod tests {
             step.content.thinking.as_deref(),
             Some("Let me analyze this problem carefully")
         );
-        assert_eq!(
-            step.source_message_id.as_deref(),
-            Some("resp-1")
-        );
+        assert_eq!(step.source_message_id.as_deref(), Some("resp-1"));
         assert_eq!(step.context, "main");
         assert_eq!(step.tokens.as_ref().unwrap().output, 10); // "Let me analyze this problem carefully" = 42 chars -> ceil(42/4) = 11
         assert!(step.tokens.as_ref().unwrap().cached.is_none());
@@ -563,10 +555,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(thinking_step.context, "subagent");
-        assert_eq!(
-            thinking_step.agent_id.as_deref(),
-            Some("agent-123")
-        );
+        assert_eq!(thinking_step.agent_id.as_deref(), Some("agent-123"));
     }
 
     // =========================================================================
@@ -602,23 +591,14 @@ mod tests {
 
         let step = tool_call_step.unwrap();
         assert_eq!(step.id, "tu-abc-123");
-        assert_eq!(
-            step.content.tool_name.as_deref(),
-            Some("Read")
-        );
-        assert_eq!(
-            step.content.tool_use_id.as_deref(),
-            Some("tu-abc-123")
-        );
+        assert_eq!(step.content.tool_name.as_deref(), Some("Read"));
+        assert_eq!(step.content.tool_use_id.as_deref(), Some("tu-abc-123"));
         assert_eq!(
             step.content.tool_input.as_ref().unwrap().get("file_path"),
             Some(&serde_json::json!("/tmp/test.txt"))
         );
         assert_eq!(step.context, "main");
-        assert_eq!(
-            step.source_message_id.as_deref(),
-            Some("resp-2")
-        );
+        assert_eq!(step.source_message_id.as_deref(), Some("resp-2"));
         assert!(step.tokens.as_ref().unwrap().input > 0);
         assert_eq!(step.tokens.as_ref().unwrap().output, 0);
     }
@@ -657,10 +637,7 @@ mod tests {
             step.content.text.as_deref(),
             Some("Here is the analysis result.")
         );
-        assert_eq!(
-            step.source_message_id.as_deref(),
-            Some("resp-3")
-        );
+        assert_eq!(step.source_message_id.as_deref(), Some("resp-3"));
         assert_eq!(step.context, "main");
         assert!(step.tokens.as_ref().unwrap().output > 0);
         assert_eq!(step.tokens.as_ref().unwrap().input, 0);
@@ -754,17 +731,11 @@ mod tests {
         let tool_result_step = steps
             .iter()
             .find(|s| s.step_type == SemanticStepType::ToolResult);
-        assert!(
-            tool_result_step.is_some(),
-            "Should have a tool_result step"
-        );
+        assert!(tool_result_step.is_some(), "Should have a tool_result step");
 
         let step = tool_result_step.unwrap();
         assert_eq!(step.id, "tu-abc-123");
-        assert_eq!(
-            step.content.tool_result_id.as_deref(),
-            Some("tu-abc-123")
-        );
+        assert_eq!(step.content.tool_result_id.as_deref(), Some("tu-abc-123"));
         // Verify tokenCount is pre-computed for tool_result
         assert!(
             step.content.token_count.is_some(),
@@ -796,7 +767,10 @@ mod tests {
         };
 
         let steps = extract_semantic_steps(&chunk);
-        let step = steps.iter().find(|s| s.step_type == SemanticStepType::ToolResult).unwrap();
+        let step = steps
+            .iter()
+            .find(|s| s.step_type == SemanticStepType::ToolResult)
+            .unwrap();
 
         // chars().count() = 6, ceil(6/4) = 2 (aligned with Electron's text.length/4)
         assert_eq!(step.content.token_count, Some(2));
@@ -882,8 +856,9 @@ mod tests {
             ]),
             false,
         );
-        user_msg.tool_use_result =
-            Some(serde_json::Value::String("User rejected tool use".to_string()));
+        user_msg.tool_use_result = Some(serde_json::Value::String(
+            "User rejected tool use".to_string(),
+        ));
 
         let chunk = AiChunk {
             responses: vec![user_msg],
@@ -951,10 +926,7 @@ mod tests {
         let step = &steps[0];
         assert_eq!(step.step_type, SemanticStepType::Subagent);
         assert_eq!(step.id, "proc-1");
-        assert_eq!(
-            step.content.subagent_id.as_deref(),
-            Some("proc-1")
-        );
+        assert_eq!(step.content.subagent_id.as_deref(), Some("proc-1"));
         assert_eq!(
             step.content.subagent_description.as_deref(),
             Some("Research task")
@@ -963,10 +935,7 @@ mod tests {
         assert_eq!(step.is_parallel, Some(true));
         assert_eq!(step.tokens.as_ref().unwrap().input, 300);
         assert_eq!(step.tokens.as_ref().unwrap().output, 200);
-        assert_eq!(
-            step.tokens.as_ref().unwrap().cached,
-            Some(100)
-        );
+        assert_eq!(step.tokens.as_ref().unwrap().cached, Some(100));
     }
 
     // =========================================================================
@@ -1049,8 +1018,9 @@ mod tests {
             ]),
             false,
         );
-        user_msg.tool_use_result =
-            Some(serde_json::Value::String("User rejected tool use".to_string()));
+        user_msg.tool_use_result = Some(serde_json::Value::String(
+            "User rejected tool use".to_string(),
+        ));
 
         let chunk = AiChunk {
             responses: vec![user_msg],

@@ -2,13 +2,11 @@
 //!
 //! 对应 Tauri 命令：notifications.rs 中的通知管理命令。
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{extract::State, http::StatusCode, Json};
 
 use crate::commands::guards;
 use crate::http::state::HttpState;
-use crate::types::config::{
-    GetNotificationsOptions, GetNotificationsResult, NotificationStats,
-};
+use crate::types::config::{GetNotificationsOptions, GetNotificationsResult, NotificationStats};
 
 use super::error_json;
 
@@ -19,12 +17,8 @@ pub async fn get_notifications(
     State(state): State<HttpState>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<GetNotificationsResult>, (StatusCode, Json<super::ErrorResponse>)> {
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.parse::<u32>().ok());
-    let offset = params
-        .get("offset")
-        .and_then(|v| v.parse::<usize>().ok());
+    let limit = params.get("limit").and_then(|v| v.parse::<u32>().ok());
+    let offset = params.get("offset").and_then(|v| v.parse::<usize>().ok());
 
     let mgr = state.notification_manager.read().await;
     let clamped_limit = guards::coerce_page_limit(limit) as usize;

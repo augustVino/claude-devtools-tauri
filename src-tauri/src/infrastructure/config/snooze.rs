@@ -9,23 +9,32 @@ impl super::ConfigManager {
         self.with_config_mut(|config| {
             config.notifications.snoozed_until = Some(snoozed_until);
             true
-        }).await
+        })
+        .await
     }
 
     /// Snooze notifications until midnight tomorrow.
     pub async fn snooze_until_tomorrow(&self) -> Result<crate::types::AppConfig, AppError> {
         let tomorrow = chrono::Local::now().date_naive() + chrono::Duration::days(1);
-        let tomorrow_midnight = tomorrow.and_hms_opt(0, 0, 0).unwrap()
-            .and_local_timezone(chrono::Local).single().unwrap_or_else(|| {
-                tomorrow.and_hms_opt(12, 0, 0).unwrap()
-                    .and_local_timezone(chrono::Local).single()
+        let tomorrow_midnight = tomorrow
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(chrono::Local)
+            .single()
+            .unwrap_or_else(|| {
+                tomorrow
+                    .and_hms_opt(12, 0, 0)
+                    .unwrap()
+                    .and_local_timezone(chrono::Local)
+                    .single()
                     .expect("noon should never be ambiguous")
             });
         let snoozed_until = tomorrow_midnight.timestamp_millis() as u64;
         self.with_config_mut(|config| {
             config.notifications.snoozed_until = Some(snoozed_until);
             true
-        }).await
+        })
+        .await
     }
 
     /// 清除通知暂停状态，恢复通知
@@ -33,6 +42,7 @@ impl super::ConfigManager {
         self.with_config_mut(|config| {
             config.notifications.snoozed_until = None;
             true
-        }).await
+        })
+        .await
     }
 }

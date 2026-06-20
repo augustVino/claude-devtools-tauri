@@ -9,47 +9,47 @@ use std::sync::Arc;
 
 use crate::infrastructure::{ConfigManager, DataCache};
 
-pub mod window;
-pub mod version;
-pub mod sessions;
 pub mod config;
-pub mod search;
-pub mod validation;
-pub mod guards;
-pub mod utility;
-pub mod projects;
-pub mod subagents;
-pub mod notifications;
-pub mod tray;
-pub mod http_server;
 pub mod context;
-pub mod ssh;
+pub mod guards;
+pub mod http_server;
 pub mod memory;
+pub mod notifications;
+pub mod projects;
+pub mod search;
+pub mod sessions;
+pub mod ssh;
+pub mod subagents;
+pub mod tray;
+pub mod utility;
+pub mod validation;
+pub mod version;
+pub mod window;
 
-#[allow(unused_imports)]
-pub use window::*;
-#[allow(unused_imports)]
-pub use version::*;
-#[allow(unused_imports)]
-pub use sessions::*;
 #[allow(unused_imports)]
 pub use config::*;
 #[allow(unused_imports)]
-pub use search::*;
-#[allow(unused_imports)]
-pub use validation::*;
-#[allow(unused_imports)]
-pub use utility::*;
-#[allow(unused_imports)]
-pub use projects::*;
-#[allow(unused_imports)]
-pub use subagents::*;
+pub use memory::*;
 #[allow(unused_imports)]
 pub use notifications::*;
 #[allow(unused_imports)]
+pub use projects::*;
+#[allow(unused_imports)]
+pub use search::*;
+#[allow(unused_imports)]
+pub use sessions::*;
+#[allow(unused_imports)]
 pub use ssh::*;
 #[allow(unused_imports)]
-pub use memory::*;
+pub use subagents::*;
+#[allow(unused_imports)]
+pub use utility::*;
+#[allow(unused_imports)]
+pub use validation::*;
+#[allow(unused_imports)]
+pub use version::*;
+#[allow(unused_imports)]
+pub use window::*;
 
 /// 跨命令共享的应用状态。
 ///
@@ -65,13 +65,18 @@ impl AppState {
     /// 必须传入外部共享的 `cache`，确保 AppState（IPC 命令层）与
     /// ServiceContext（文件监听器层）使用同一个缓存实例。
     pub fn new(config_manager: Arc<ConfigManager>, cache: DataCache) -> Self {
-        Self { cache, config_manager }
+        Self {
+            cache,
+            config_manager,
+        }
     }
 
     /// 初始化应用状态，包括异步加载配置文件。
     #[allow(dead_code)]
     pub async fn initialize(&self) -> Result<(), String> {
-        self.config_manager.initialize().await
+        self.config_manager
+            .initialize()
+            .await
             .map_err(|e| e.to_string())
     }
 }

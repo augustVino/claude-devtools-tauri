@@ -3,9 +3,9 @@
 //! 封装 get_subagent_detail 的完整流水线：
 //! 校验 → 缓存检查 → 路径构建 → JSONL 解析 → SubagentResolver → ChunkBuilder → 缓存写入
 
-use async_trait::async_trait;
 use crate::error::AppError;
 use crate::types::chunks::SubagentDetail;
+use async_trait::async_trait;
 
 #[async_trait]
 pub trait SubagentService: Send + Sync {

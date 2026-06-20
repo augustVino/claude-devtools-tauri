@@ -298,16 +298,13 @@ fn test_merge_with_ssh_config_fills_username_from_env() {
         password: Some("secret".into()),
         private_key_path: None,
     };
-    let merged = ssh_config_merge::merge_with_ssh_config_static(
-        config,
-        manager.config_parser.as_ref(),
-    );
+    let merged =
+        ssh_config_merge::merge_with_ssh_config_static(config, manager.config_parser.as_ref());
     // When no parser and no username, should fall back to $USER
     assert!(!merged.username.is_empty());
     // Should be either $USER env var or "root"
     assert!(
-        merged.username == std::env::var("USER").unwrap_or_default()
-            || merged.username == "root"
+        merged.username == std::env::var("USER").unwrap_or_default() || merged.username == "root"
     );
 }
 

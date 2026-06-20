@@ -121,10 +121,7 @@ pub(crate) async fn discover_agent_sockets(identity_agent: Option<&str>) -> Vec<
             AgentSource::OnePasswordAppStoreTSub,
             op_base.join("t").join("agent.sock"),
         ));
-        candidates.push((
-            AgentSource::OnePasswordAppStore,
-            op_base.join("agent.sock"),
-        ));
+        candidates.push((AgentSource::OnePasswordAppStore, op_base.join("agent.sock")));
         candidates.push((
             AgentSource::OnePasswordCli,
             home.join(".1password").join("agent.sock"),
@@ -171,15 +168,12 @@ pub(crate) async fn discover_agent_sockets(identity_agent: Option<&str>) -> Vec<
         ));
     }
 
-    let checks = futures::future::join_all(
-        candidates
-            .into_iter()
-            .map(|(source, path)| async move {
-                let accessible = tokio::fs::metadata(&path).await.is_ok();
-                accessible.then(|| AgentCandidate { source, path })
-            }),
-    )
-    .await;
+    let checks =
+        futures::future::join_all(candidates.into_iter().map(|(source, path)| async move {
+            let accessible = tokio::fs::metadata(&path).await.is_ok();
+            accessible.then(|| AgentCandidate { source, path })
+        }))
+        .await;
 
     dedupe_by_canonical(checks.into_iter().flatten().collect())
 }
@@ -205,7 +199,10 @@ mod tests {
         let link = tmp_dir.path().join("link.sock");
         std::os::unix::fs::symlink(&real, &link).unwrap();
 
-        let candidates = vec![cand(AgentSource::IdentityAgent, &real), cand(AgentSource::EnvSshAuthSock, &link)];
+        let candidates = vec![
+            cand(AgentSource::IdentityAgent, &real),
+            cand(AgentSource::EnvSshAuthSock, &link),
+        ];
         let deduped = dedupe_by_canonical(candidates);
         assert_eq!(deduped.len(), 1);
         assert_eq!(deduped[0].source, AgentSource::IdentityAgent);
@@ -223,7 +220,10 @@ mod tests {
         std::os::unix::fs::symlink("/nonexistent/target1", &broken1).unwrap();
         std::os::unix::fs::symlink("/nonexistent/target2", &broken2).unwrap();
 
-        let candidates = vec![cand(AgentSource::IdentityAgent, &broken1), cand(AgentSource::EnvSshAuthSock, &broken2)];
+        let candidates = vec![
+            cand(AgentSource::IdentityAgent, &broken1),
+            cand(AgentSource::EnvSshAuthSock, &broken2),
+        ];
         let deduped = dedupe_by_canonical(candidates);
         // Both kept (canonicalize failed, raw paths differ)
         assert_eq!(deduped.len(), 2);
@@ -233,7 +233,10 @@ mod tests {
     fn test_dedupe_by_canonical_preserves_distinct_paths() {
         let tmp1 = tempfile::NamedTempFile::new().unwrap();
         let tmp2 = tempfile::NamedTempFile::new().unwrap();
-        let candidates = vec![cand(AgentSource::IdentityAgent, tmp1.path()), cand(AgentSource::EnvSshAuthSock, tmp2.path())];
+        let candidates = vec![
+            cand(AgentSource::IdentityAgent, tmp1.path()),
+            cand(AgentSource::EnvSshAuthSock, tmp2.path()),
+        ];
         let deduped = dedupe_by_canonical(candidates);
         assert_eq!(deduped.len(), 2);
     }
@@ -257,12 +260,17 @@ mod tests {
     #[tokio::test]
     async fn test_identity_agent_is_first_when_accessible() {
         // Isolate from env to make test deterministic
-        unsafe { std::env::remove_var("SSH_AUTH_SOCK"); }
+        unsafe {
+            std::env::remove_var("SSH_AUTH_SOCK");
+        }
 
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let tmp_path = tmp.path().to_str().unwrap().to_string();
         let result = discover_agent_sockets(Some(&tmp_path)).await;
-        assert!(!result.is_empty(), "IdentityAgent candidate must be present");
+        assert!(
+            !result.is_empty(),
+            "IdentityAgent candidate must be present"
+        );
         assert_eq!(result[0].source, AgentSource::IdentityAgent);
         assert_eq!(result[0].path, std::path::PathBuf::from(&tmp_path));
     }
@@ -270,7 +278,9 @@ mod tests {
     /// Smoke test: every returned path must exist.
     #[tokio::test]
     async fn test_discover_returns_only_existing_paths() {
-        unsafe { std::env::remove_var("SSH_AUTH_SOCK"); }
+        unsafe {
+            std::env::remove_var("SSH_AUTH_SOCK");
+        }
         let result = discover_agent_sockets(None).await;
         for c in &result {
             assert!(c.path.exists(), "Returned path should exist: {:?}", c.path);
@@ -279,7 +289,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_inaccessible_paths_filtered() {
-        unsafe { std::env::remove_var("SSH_AUTH_SOCK"); }
+        unsafe {
+            std::env::remove_var("SSH_AUTH_SOCK");
+        }
         let result = discover_agent_sockets(Some("/this/path/does/not/exist/agent.sock")).await;
         for c in &result {
             assert_ne!(c.source, AgentSource::IdentityAgent);

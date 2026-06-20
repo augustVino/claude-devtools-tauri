@@ -136,7 +136,9 @@ impl FileWatcher {
 
                 match state.polled_file_sizes.get(&path_str) {
                     None => {
-                        state.polled_file_sizes.insert(path_str.clone(), observed_size);
+                        state
+                            .polled_file_sizes
+                            .insert(path_str.clone(), observed_size);
                         if primed {
                             pending_events.push((full_path, FileChangeType::Add));
                         }

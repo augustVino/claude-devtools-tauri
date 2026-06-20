@@ -20,7 +20,9 @@ use crate::error::trigger::{
     matches_repository_scope, pre_resolve_repository_ids, RepositoryScopeTarget,
 };
 use crate::parsing::jsonl_parser::parse_jsonl_file;
-use crate::types::config::{DetectedError, NotificationTrigger, TriggerTestError, TriggerTestResult};
+use crate::types::config::{
+    DetectedError, NotificationTrigger, TriggerTestError, TriggerTestResult,
+};
 
 // =============================================================================
 // 安全限制
@@ -157,13 +159,7 @@ async fn run_test(
         }]);
 
         // 处理每个会话文件。
-        let should_break = process_session_files(
-            &session_files,
-            trigger,
-            &project.id,
-            state,
-        )
-        .await;
+        let should_break = process_session_files(&session_files, trigger, &project.id, state).await;
 
         if should_break {
             break;
@@ -617,7 +613,11 @@ mod tests {
         fs::create_dir_all(&project_dir).unwrap();
 
         // 写入无效的 JSONL。
-        fs::write(project_dir.join("session-bad.jsonl"), "not valid json\n{{broken").unwrap();
+        fs::write(
+            project_dir.join("session-bad.jsonl"),
+            "not valid json\n{{broken",
+        )
+        .unwrap();
 
         // 同时写入一个有效的会话。
         create_session_with_error(

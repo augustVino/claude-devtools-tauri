@@ -3,8 +3,8 @@
 //! 对齐 Electron 的 base64(JSON{timestamp, sessionId}) 游标格式，
 //! 同时向后兼容纯 sessionId 格式。
 
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use crate::types::domain::SessionCursor;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 
 /// Encode a cursor from session data (aligned with Electron's base64 JSON format).
 pub fn encode_cursor(timestamp: u64, session_id: &str) -> String {

@@ -2,7 +2,7 @@
 //!
 //! 对应 Tauri 命令：validation.rs 中的验证命令。
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -50,7 +50,10 @@ pub async fn validate_path(
 
     // 路径遍历防护
     if !is_path_contained(&expanded, Path::new(&body.project_path)) {
-        log::warn!("validate-path blocked path traversal: {}", body.relative_path);
+        log::warn!(
+            "validate-path blocked path traversal: {}",
+            body.relative_path
+        );
         return Ok(Json(PathValidationResult {
             exists: false,
             is_directory: None,
@@ -93,7 +96,8 @@ pub struct ValidateMentionsRequest {
 pub async fn validate_mentions(
     State(_state): State<HttpState>,
     Json(body): Json<ValidateMentionsRequest>,
-) -> Result<Json<std::collections::HashMap<String, bool>>, (StatusCode, Json<super::ErrorResponse>)> {
+) -> Result<Json<std::collections::HashMap<String, bool>>, (StatusCode, Json<super::ErrorResponse>)>
+{
     let base = Path::new(&body.project_path);
     let mut results = std::collections::HashMap::new();
 

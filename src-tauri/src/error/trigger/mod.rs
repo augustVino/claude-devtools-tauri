@@ -10,9 +10,9 @@
 
 pub mod common;
 pub mod repository_scope;
+pub mod token_threshold_checker;
 pub mod tool_result_checker;
 pub mod tool_use_checker;
-pub mod token_threshold_checker;
 
 // =============================================================================
 // 重导出所有公开符号（向后兼容）
@@ -23,7 +23,9 @@ pub mod token_threshold_checker;
 pub use common::{parse_timestamp_to_ms, truncate_content};
 
 // repository_scope
-pub use repository_scope::{matches_repository_scope, pre_resolve_repository_ids, RepositoryScopeTarget};
+pub use repository_scope::{
+    matches_repository_scope, pre_resolve_repository_ids, RepositoryScopeTarget,
+};
 
 // tool_result_checker
 pub use tool_result_checker::check_tool_result_trigger;

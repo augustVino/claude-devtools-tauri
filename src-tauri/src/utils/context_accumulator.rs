@@ -89,10 +89,7 @@ mod tests {
         }
     }
 
-    fn make_message(
-        uuid: &str,
-        usage: Option<UsageMetadata>,
-    ) -> ParsedMessage {
+    fn make_message(uuid: &str, usage: Option<UsageMetadata>) -> ParsedMessage {
         ParsedMessage {
             uuid: uuid.to_string(),
             parent_uuid: None,
@@ -156,12 +153,7 @@ mod tests {
 
     #[test]
     fn subagent_step_without_tokens_stays_none() {
-        let mut steps = vec![make_step(
-            "sub-3",
-            SemanticStepType::Subagent,
-            None,
-            None,
-        )];
+        let mut steps = vec![make_step("sub-3", SemanticStepType::Subagent, None, None)];
 
         calculate_step_context(&mut steps, &[]);
 
@@ -234,12 +226,7 @@ mod tests {
 
     #[test]
     fn step_without_source_message_id_skipped() {
-        let mut steps = vec![make_step(
-            "s4",
-            SemanticStepType::Thinking,
-            None,
-            None,
-        )];
+        let mut steps = vec![make_step("s4", SemanticStepType::Thinking, None, None)];
 
         calculate_step_context(&mut steps, &[]);
 
@@ -248,12 +235,7 @@ mod tests {
 
     #[test]
     fn step_with_empty_source_message_id_skipped() {
-        let mut steps = vec![make_step(
-            "s5",
-            SemanticStepType::Output,
-            Some(""),
-            None,
-        )];
+        let mut steps = vec![make_step("s5", SemanticStepType::Output, Some(""), None)];
 
         calculate_step_context(&mut steps, &[]);
 
@@ -299,12 +281,7 @@ mod tests {
                     cached: Some(50),
                 }),
             ),
-            make_step(
-                "s-y",
-                SemanticStepType::Thinking,
-                Some("msg-a"),
-                None,
-            ),
+            make_step("s-y", SemanticStepType::Thinking, Some("msg-a"), None),
         ];
 
         calculate_step_context(&mut steps, &messages);

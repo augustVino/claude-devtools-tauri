@@ -11,27 +11,26 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use async_trait::async_trait;
 use crate::analysis::ChunkBuilder;
 use crate::discovery::subagent_resolver::SubagentResolver;
 use crate::error::AppError;
-use crate::infrastructure::{
-    ConfigManager, ContextManager, DataCache,
-};
+use crate::infrastructure::{ConfigManager, ContextManager, DataCache};
 use crate::parsing::{parse_session_file, ParsedSession};
-use crate::types::chunks::{ConversationGroup, Process, SessionDetail, SessionDetailResponse, SessionDetailUnchanged};
+use crate::types::chunks::{
+    ConversationGroup, Process, SessionDetail, SessionDetailResponse, SessionDetailUnchanged,
+};
 use crate::types::domain::{
     DeleteSessionResult, PaginatedSessionsResult, Session, SessionMetrics,
     SessionsPaginationOptions,
 };
 use crate::utils::content_sanitizer::{
-    extract_command_display, is_command_output_content,
-    sanitize_display_content,
+    extract_command_display, is_command_output_content, sanitize_display_content,
 };
 use crate::utils::{
     decode_path, extract_base_dir, get_default_claude_base_path,
     pagination::{decode_cursor, encode_cursor},
 };
+use async_trait::async_trait;
 
 use super::project_service_trait::ProjectService;
 
@@ -120,7 +119,12 @@ impl SessionServiceImpl {
         };
         let resolver = SubagentResolver::new(projects_dir, fs_provider);
         Ok(resolver
-            .resolve_subagents(project_id, session_id, Some(&parsed.task_calls), Some(&parsed.messages))
+            .resolve_subagents(
+                project_id,
+                session_id,
+                Some(&parsed.task_calls),
+                Some(&parsed.messages),
+            )
             .into_iter()
             .map(Into::into)
             .collect())
@@ -211,8 +215,8 @@ impl SessionServiceImpl {
         let first_message = first_user_text.or(first_command_text);
 
         // Prefer cwd from session file over lossy decode_path (handles dashes in project names)
-        let project_path = Self::extract_cwd_from_messages(&parsed)
-            .unwrap_or_else(|| decode_path(project_id));
+        let project_path =
+            Self::extract_cwd_from_messages(&parsed).unwrap_or_else(|| decode_path(project_id));
 
         // createdAt: use first message timestamp from JSONL, fallback to file birth time.
         // This matches Electron's buildSessionMetadata() behavior for date grouping.
@@ -255,9 +259,14 @@ impl SessionServiceImpl {
     }
 
     /// 构建回退 Session（文件不存在时使用）。
-    fn fallback_session(&self, session_id: &str, project_id: &str, parsed: &ParsedSession) -> Session {
-        let fallback_path = Self::extract_cwd_from_messages(parsed)
-            .unwrap_or_else(|| decode_path(project_id));
+    fn fallback_session(
+        &self,
+        session_id: &str,
+        project_id: &str,
+        parsed: &ParsedSession,
+    ) -> Session {
+        let fallback_path =
+            Self::extract_cwd_from_messages(parsed).unwrap_or_else(|| decode_path(project_id));
 
         Session {
             id: session_id.to_string(),
@@ -300,8 +309,7 @@ impl SessionServiceImpl {
         }
 
         let mut file_entries = vec![];
-        let mut entries = tokio::fs::read_dir(&project_dir)
-            .await?;
+        let mut entries = tokio::fs::read_dir(&project_dir).await?;
 
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
@@ -407,11 +415,7 @@ impl SessionServiceImpl {
         session_ids: &[String],
     ) -> Result<Vec<Session>, AppError> {
         const MAX_SESSION_IDS: usize = 50;
-        let id_set: HashSet<String> = session_ids
-            .iter()
-            .take(MAX_SESSION_IDS)
-            .cloned()
-            .collect();
+        let id_set: HashSet<String> = session_ids.iter().take(MAX_SESSION_IDS).cloned().collect();
 
         if session_ids.len() > MAX_SESSION_IDS {
             log::warn!(
@@ -426,7 +430,10 @@ impl SessionServiceImpl {
         }
 
         let all_sessions = self.project_service.list_sessions(project_id).await?;
-        Ok(all_sessions.into_iter().filter(|s| id_set.contains(&s.id)).collect())
+        Ok(all_sessions
+            .into_iter()
+            .filter(|s| id_set.contains(&s.id))
+            .collect())
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -453,10 +460,11 @@ impl SessionServiceImpl {
             .await?
             .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
 
-        let subagents = self.resolve_subagents(project_id, session_id, &parsed).await?;
-        let detail = ChunkBuilder::build_session_detail(
-            session, parsed.messages.clone(), subagents,
-        );
+        let subagents = self
+            .resolve_subagents(project_id, session_id, &parsed)
+            .await?;
+        let detail =
+            ChunkBuilder::build_session_detail(session, parsed.messages.clone(), subagents);
         // 注意：此处不清空 process.messages —— 导出需要完整数据
 
         Ok(Some(detail))
@@ -494,15 +502,22 @@ impl SessionServiceImpl {
 
         if let (Some(known), Some(ref current)) = (known_fingerprint, &fingerprint) {
             if known == current {
-                return Ok(Some(SessionDetailResponse::Unchanged(SessionDetailUnchanged {
-                    unchanged: true,
-                    fingerprint: current.clone(),
-                })));
+                return Ok(Some(SessionDetailResponse::Unchanged(
+                    SessionDetailUnchanged {
+                        unchanged: true,
+                        fingerprint: current.clone(),
+                    },
+                )));
             }
         }
 
-        if let Some(cached) = cache.get_session(project_id, session_id, fingerprint.as_deref()).await {
-            return Ok(Some(SessionDetailResponse::Full(serde_json::from_value(cached)?)));
+        if let Some(cached) = cache
+            .get_session(project_id, session_id, fingerprint.as_deref())
+            .await
+        {
+            return Ok(Some(SessionDetailResponse::Full(serde_json::from_value(
+                cached,
+            )?)));
         }
 
         let parsed = parse_session_file(&session_path).await;
@@ -511,7 +526,9 @@ impl SessionServiceImpl {
             .await?
             .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
 
-        let subagents = self.resolve_subagents(project_id, session_id, &parsed).await?;
+        let subagents = self
+            .resolve_subagents(project_id, session_id, &parsed)
+            .await?;
         let mut detail =
             ChunkBuilder::build_session_detail(session, parsed.messages.clone(), subagents);
 
@@ -525,12 +542,7 @@ impl SessionServiceImpl {
         let value = serde_json::to_value(&detail)?;
 
         cache
-            .set_session(
-                project_id,
-                session_id,
-                value,
-                fingerprint.as_deref(),
-            )
+            .set_session(project_id, session_id, value, fingerprint.as_deref())
             .await;
 
         Ok(Some(SessionDetailResponse::Full(detail)))
@@ -569,7 +581,9 @@ impl SessionServiceImpl {
         }
 
         let parsed = parse_session_file(&session_path).await;
-        let subagents = self.resolve_subagents(project_id, session_id, &parsed).await?;
+        let subagents = self
+            .resolve_subagents(project_id, session_id, &parsed)
+            .await?;
 
         Ok(crate::analysis::conversation_group_builder::build_groups(
             &parsed.messages,
@@ -582,8 +596,7 @@ impl SessionServiceImpl {
         &self,
         project_id: &str,
         session_id: &str,
-    ) -> Result<Option<crate::analysis::waterfall_builder::WaterfallData>, AppError>
-    {
+    ) -> Result<Option<crate::analysis::waterfall_builder::WaterfallData>, AppError> {
         let session_path = self.session_path(project_id, session_id).await?;
         if !session_path.exists() {
             return Ok(None);
@@ -595,11 +608,15 @@ impl SessionServiceImpl {
             .await?
             .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
 
-        let subagents = self.resolve_subagents(project_id, session_id, &parsed).await?;
+        let subagents = self
+            .resolve_subagents(project_id, session_id, &parsed)
+            .await?;
         let detail =
             ChunkBuilder::build_session_detail(session, parsed.messages.clone(), subagents);
-        let waterfall =
-            crate::analysis::waterfall_builder::build_waterfall_data(&detail.chunks, &detail.processes);
+        let waterfall = crate::analysis::waterfall_builder::build_waterfall_data(
+            &detail.chunks,
+            &detail.processes,
+        );
         Ok(Some(waterfall))
     }
 
@@ -619,7 +636,10 @@ impl SessionServiceImpl {
     ) -> Result<DeleteSessionResult, AppError> {
         // Validate UUID
         if uuid::Uuid::parse_str(session_id).is_err() {
-            return Err(AppError::InvalidInput(format!("Invalid session_id: '{}'", session_id)));
+            return Err(AppError::InvalidInput(format!(
+                "Invalid session_id: '{}'",
+                session_id
+            )));
         }
 
         let claude_base = get_default_claude_base_path();
@@ -711,10 +731,7 @@ impl SessionServiceImpl {
         }
 
         // 6. security_warnings_state
-        let sec_path = claude_base.join(format!(
-            "security_warnings_state_{}.json",
-            session_id
-        ));
+        let sec_path = claude_base.join(format!("security_warnings_state_{}.json", session_id));
         if sec_path.exists() {
             if try_remove_file(&sec_path).await {
                 associated_deleted += 1;
@@ -792,10 +809,14 @@ impl SessionServiceImpl {
         }
 
         // 11. Clean up pin/hide from ConfigManager
-        let _ = self.config_manager
-            .unpin_session(project_id.to_string(), session_id.to_string()).await;
-        let _ = self.config_manager
-            .unhide_session(project_id.to_string(), session_id.to_string()).await;
+        let _ = self
+            .config_manager
+            .unpin_session(project_id.to_string(), session_id.to_string())
+            .await;
+        let _ = self
+            .config_manager
+            .unhide_session(project_id.to_string(), session_id.to_string())
+            .await;
 
         // Invalidate cache
         cache.invalidate_session(project_id, session_id).await;
@@ -825,39 +846,80 @@ impl SessionServiceImpl {
 
 #[async_trait]
 impl super::session_service_trait::SessionService for SessionServiceImpl {
-    async fn get_sessions(&self, project_id: &str) -> Result<Vec<crate::types::domain::Session>, AppError> {
+    async fn get_sessions(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<crate::types::domain::Session>, AppError> {
         self.get_sessions(project_id).await
     }
 
-    async fn get_session_detail(&self, project_id: &str, session_id: &str, known_fingerprint: Option<&str>) -> Result<Option<crate::types::chunks::SessionDetailResponse>, AppError> {
-        self.get_session_detail(project_id, session_id, known_fingerprint).await
+    async fn get_session_detail(
+        &self,
+        project_id: &str,
+        session_id: &str,
+        known_fingerprint: Option<&str>,
+    ) -> Result<Option<crate::types::chunks::SessionDetailResponse>, AppError> {
+        self.get_session_detail(project_id, session_id, known_fingerprint)
+            .await
     }
 
-    async fn get_session_detail_for_export(&self, project_id: &str, session_id: &str) -> Result<Option<crate::types::chunks::SessionDetail>, AppError> {
-        self.get_session_detail_for_export(project_id, session_id).await
+    async fn get_session_detail_for_export(
+        &self,
+        project_id: &str,
+        session_id: &str,
+    ) -> Result<Option<crate::types::chunks::SessionDetail>, AppError> {
+        self.get_session_detail_for_export(project_id, session_id)
+            .await
     }
 
-    async fn get_sessions_paginated(&self, project_id: &str, cursor: Option<&str>, limit: Option<u32>, options: Option<crate::types::domain::SessionsPaginationOptions>) -> Result<crate::types::domain::PaginatedSessionsResult, AppError> {
-        self.get_sessions_paginated(project_id, cursor, limit, options).await
+    async fn get_sessions_paginated(
+        &self,
+        project_id: &str,
+        cursor: Option<&str>,
+        limit: Option<u32>,
+        options: Option<crate::types::domain::SessionsPaginationOptions>,
+    ) -> Result<crate::types::domain::PaginatedSessionsResult, AppError> {
+        self.get_sessions_paginated(project_id, cursor, limit, options)
+            .await
     }
 
-    async fn get_sessions_by_ids(&self, project_id: &str, session_ids: &[String]) -> Result<Vec<crate::types::domain::Session>, AppError> {
+    async fn get_sessions_by_ids(
+        &self,
+        project_id: &str,
+        session_ids: &[String],
+    ) -> Result<Vec<crate::types::domain::Session>, AppError> {
         self.get_sessions_by_ids(project_id, session_ids).await
     }
 
-    async fn get_session_metrics(&self, project_id: &str, session_id: &str) -> Result<Option<crate::types::domain::SessionMetrics>, AppError> {
+    async fn get_session_metrics(
+        &self,
+        project_id: &str,
+        session_id: &str,
+    ) -> Result<Option<crate::types::domain::SessionMetrics>, AppError> {
         self.get_session_metrics(project_id, session_id).await
     }
 
-    async fn get_session_groups(&self, project_id: &str, session_id: &str) -> Result<Vec<crate::types::chunks::ConversationGroup>, AppError> {
+    async fn get_session_groups(
+        &self,
+        project_id: &str,
+        session_id: &str,
+    ) -> Result<Vec<crate::types::chunks::ConversationGroup>, AppError> {
         self.get_session_groups(project_id, session_id).await
     }
 
-    async fn get_waterfall_data(&self, project_id: &str, session_id: &str) -> Result<Option<crate::analysis::waterfall_builder::WaterfallData>, AppError> {
+    async fn get_waterfall_data(
+        &self,
+        project_id: &str,
+        session_id: &str,
+    ) -> Result<Option<crate::analysis::waterfall_builder::WaterfallData>, AppError> {
         self.get_waterfall_data(project_id, session_id).await
     }
 
-    async fn delete_session(&self, project_id: &str, session_id: &str) -> Result<crate::types::domain::DeleteSessionResult, AppError> {
+    async fn delete_session(
+        &self,
+        project_id: &str,
+        session_id: &str,
+    ) -> Result<crate::types::domain::DeleteSessionResult, AppError> {
         self.delete_session(project_id, session_id).await
     }
 }
@@ -878,18 +940,20 @@ mod tests {
     async fn test_get_sessions_returns_error_when_no_active_context() {
         let empty_cm = make_empty_context_manager();
         let config_manager = Arc::new(crate::infrastructure::ConfigManager::new());
-        let project_service: Arc<dyn ProjectService> = Arc::new(
-            crate::services::ProjectServiceImpl::new(empty_cm.clone())
-        );
-        let repo: Arc<dyn crate::infrastructure::session_repository::SessionRepository> =
-            Arc::new(crate::infrastructure::local_session_repository::LocalSessionRepository::new(
+        let project_service: Arc<dyn ProjectService> =
+            Arc::new(crate::services::ProjectServiceImpl::new(empty_cm.clone()));
+        let repo: Arc<dyn crate::infrastructure::session_repository::SessionRepository> = Arc::new(
+            crate::infrastructure::local_session_repository::LocalSessionRepository::new(
                 Arc::new(crate::infrastructure::LocalFsProvider::new()),
                 PathBuf::from("/tmp"),
                 PathBuf::from("/tmp"),
-            ));
+            ),
+        );
         let svc = SessionServiceImpl::new(empty_cm, config_manager, project_service, repo);
 
         let result = svc.get_sessions("any-project").await;
-        assert!(matches!(result, Err(AppError::Internal(msg)) if msg.contains("No active ServiceContext")));
+        assert!(
+            matches!(result, Err(AppError::Internal(msg)) if msg.contains("No active ServiceContext"))
+        );
     }
 }

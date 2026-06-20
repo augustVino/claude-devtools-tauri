@@ -24,12 +24,18 @@ pub fn json_merge(base: &serde_json::Value, patch: &serde_json::Value) -> serde_
 }
 
 /// 更新 JSON 中指定分区的值（深度合并）
-pub fn update_section(current: &serde_json::Value, section: &str, data: &serde_json::Value) -> serde_json::Value {
+pub fn update_section(
+    current: &serde_json::Value,
+    section: &str,
+    data: &serde_json::Value,
+) -> serde_json::Value {
     let mut updated = current.clone();
     if let Some(current_section) = updated.get_mut(section) {
         *current_section = json_merge(current_section, data);
     } else {
-        updated.as_object_mut().map(|map| map.insert(section.to_string(), data.clone()));
+        updated
+            .as_object_mut()
+            .map(|map| map.insert(section.to_string(), data.clone()));
     }
     updated
 }
@@ -51,12 +57,14 @@ pub fn validate_update_payload(section: &str, data: &serde_json::Value) -> Resul
         "httpServer" => validate_http_server_payload(obj),
         "ssh" => validate_ssh_payload(obj),
         "sessions" => Ok(()), // sessions 分区由内部逻辑管理，不对外暴露更新
-        _ => Ok(()), // 其他 section 已在 update_config 白名单中拦截
+        _ => Ok(()),          // 其他 section 已在 update_config 白名单中拦截
     }
 }
 
 /// 校验 notifications 分区的 payload
-fn validate_notifications_payload(data: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+fn validate_notifications_payload(
+    data: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
     let allowed_keys = [
         "enabled",
         "soundEnabled",
@@ -70,7 +78,9 @@ fn validate_notifications_payload(data: &serde_json::Map<String, serde_json::Val
 
     for key in data.keys() {
         if !allowed_keys.contains(&key.as_str()) {
-            return Err(format!("notifications.{key} is not supported via config:update"));
+            return Err(format!(
+                "notifications.{key} is not supported via config:update"
+            ));
         }
     }
 
@@ -102,11 +112,20 @@ fn validate_notifications_payload(data: &serde_json::Map<String, serde_json::Val
         match v {
             serde_json::Value::Null => {}
             serde_json::Value::Number(n) => {
-                if n.as_f64().is_none_or(|f| f.is_nan() || f.is_infinite() || f < 0.0) {
-                    return Err("notifications.snoozedUntil must be a non-negative number or null".to_string());
+                if n.as_f64()
+                    .is_none_or(|f| f.is_nan() || f.is_infinite() || f < 0.0)
+                {
+                    return Err(
+                        "notifications.snoozedUntil must be a non-negative number or null"
+                            .to_string(),
+                    );
                 }
             }
-            _ => return Err("notifications.snoozedUntil must be a non-negative number or null".to_string()),
+            _ => {
+                return Err(
+                    "notifications.snoozedUntil must be a non-negative number or null".to_string(),
+                )
+            }
         }
     }
 
@@ -115,7 +134,9 @@ fn validate_notifications_payload(data: &serde_json::Map<String, serde_json::Val
         match v.as_i64() {
             Some(n) => {
                 if n < 1 || n > 1440 {
-                    return Err("notifications.snoozeMinutes must be between 1 and 1440".to_string());
+                    return Err(
+                        "notifications.snoozeMinutes must be between 1 and 1440".to_string()
+                    );
                 }
             }
             None => return Err("notifications.snoozeMinutes must be an integer".to_string()),
@@ -129,7 +150,8 @@ fn validate_notifications_payload(data: &serde_json::Map<String, serde_json::Val
             None => return Err("notifications.triggers must be an array".to_string()),
         };
         for (i, trigger) in arr.iter().enumerate() {
-            validate_trigger_payload(trigger).map_err(|e| format!("notifications.triggers[{i}]: {e}"))?;
+            validate_trigger_payload(trigger)
+                .map_err(|e| format!("notifications.triggers[{i}]: {e}"))?;
         }
     }
 
@@ -138,9 +160,7 @@ fn validate_notifications_payload(data: &serde_json::Map<String, serde_json::Val
 
 /// 校验单个 trigger 对象（与 Electron 端 isValidTrigger 对齐）
 fn validate_trigger_payload(trigger: &serde_json::Value) -> Result<(), String> {
-    let obj = trigger
-        .as_object()
-        .ok_or("trigger must be an object")?;
+    let obj = trigger.as_object().ok_or("trigger must be an object")?;
 
     // id: non-empty string
     match obj.get("id").and_then(|v| v.as_str()) {
@@ -164,21 +184,33 @@ fn validate_trigger_payload(trigger: &serde_json::Value) -> Result<(), String> {
     let valid_content_types = ["tool_result", "tool_use", "thinking", "text"];
     match obj.get("contentType").and_then(|v| v.as_str()) {
         Some(s) if valid_content_types.contains(&s) => {}
-        _ => return Err("trigger.contentType must be one of: tool_result, tool_use, thinking, text".to_string()),
+        _ => {
+            return Err(
+                "trigger.contentType must be one of: tool_result, tool_use, thinking, text"
+                    .to_string(),
+            )
+        }
     }
 
     // mode: must be one of valid values (required)
     let valid_modes = ["error_status", "content_match", "token_threshold"];
     match obj.get("mode").and_then(|v| v.as_str()) {
         Some(s) if valid_modes.contains(&s) => {}
-        _ => return Err("trigger.mode must be one of: error_status, content_match, token_threshold".to_string()),
+        _ => {
+            return Err(
+                "trigger.mode must be one of: error_status, content_match, token_threshold"
+                    .to_string(),
+            )
+        }
     }
 
     Ok(())
 }
 
 /// 校验 general 分区的 payload
-fn validate_general_payload(data: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+fn validate_general_payload(
+    data: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
     let allowed_keys = [
         "launchAtLogin",
         "showDockIcon",
@@ -196,7 +228,12 @@ fn validate_general_payload(data: &serde_json::Map<String, serde_json::Value>) -
     }
 
     // launchAtLogin, showDockIcon, autoExpandAIGroups, useNativeTitleBar: must be boolean
-    for bool_key in &["launchAtLogin", "showDockIcon", "autoExpandAIGroups", "useNativeTitleBar"] {
+    for bool_key in &[
+        "launchAtLogin",
+        "showDockIcon",
+        "autoExpandAIGroups",
+        "useNativeTitleBar",
+    ] {
         if let Some(v) = data.get(*bool_key) {
             if !v.is_boolean() {
                 return Err(format!("general.{bool_key} must be a boolean"));
@@ -218,7 +255,9 @@ fn validate_general_payload(data: &serde_json::Map<String, serde_json::Value>) -
         let valid = ["dashboard", "last-session"];
         match v.as_str() {
             Some(s) if valid.contains(&s) => {}
-            _ => return Err("general.defaultTab must be one of: dashboard, last-session".to_string()),
+            _ => {
+                return Err("general.defaultTab must be one of: dashboard, last-session".to_string())
+            }
         }
     }
 
@@ -232,7 +271,11 @@ fn validate_general_payload(data: &serde_json::Map<String, serde_json::Value>) -
                     return Err("general.claudeRootPath must be an absolute path".to_string());
                 }
             }
-            _ => return Err("general.claudeRootPath must be an absolute path string or null".to_string()),
+            _ => {
+                return Err(
+                    "general.claudeRootPath must be an absolute path string or null".to_string(),
+                )
+            }
         }
     }
 
@@ -240,7 +283,9 @@ fn validate_general_payload(data: &serde_json::Map<String, serde_json::Value>) -
 }
 
 /// 校验 display 分区的 payload
-fn validate_display_payload(data: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+fn validate_display_payload(
+    data: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
     let allowed_keys = ["showTimestamps", "compactMode", "syntaxHighlighting"];
 
     for key in data.keys() {
@@ -262,7 +307,9 @@ fn validate_display_payload(data: &serde_json::Map<String, serde_json::Value>) -
 }
 
 /// 校验 httpServer 分区的 payload
-fn validate_http_server_payload(data: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+fn validate_http_server_payload(
+    data: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
     let allowed_keys = ["enabled", "port"];
 
     for key in data.keys() {
@@ -283,7 +330,9 @@ fn validate_http_server_payload(data: &serde_json::Map<String, serde_json::Value
         match v.as_i64() {
             Some(n) => {
                 if n < 1024 || n > 65535 {
-                    return Err("httpServer.port must be an integer between 1024 and 65535".to_string());
+                    return Err(
+                        "httpServer.port must be an integer between 1024 and 65535".to_string()
+                    );
                 }
             }
             None => return Err("httpServer.port must be an integer".to_string()),
@@ -295,7 +344,12 @@ fn validate_http_server_payload(data: &serde_json::Map<String, serde_json::Value
 
 /// 校验 ssh 分区的 payload
 fn validate_ssh_payload(data: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
-    let allowed_keys = ["autoReconnect", "lastConnection", "profiles", "lastActiveContextId"];
+    let allowed_keys = [
+        "autoReconnect",
+        "lastConnection",
+        "profiles",
+        "lastActiveContextId",
+    ];
 
     for key in data.keys() {
         if !allowed_keys.contains(&key.as_str()) {
@@ -342,9 +396,7 @@ fn validate_ssh_payload(data: &serde_json::Map<String, serde_json::Value>) -> Re
 
 /// 校验单个 SSH profile 对象
 fn validate_ssh_profile_payload(profile: &serde_json::Value) -> Result<(), String> {
-    let obj = profile
-        .as_object()
-        .ok_or("SSH profile must be an object")?;
+    let obj = profile.as_object().ok_or("SSH profile must be an object")?;
 
     // id: non-empty string (required)
     match obj.get("id").and_then(|v| v.as_str()) {
@@ -380,7 +432,9 @@ fn validate_ssh_profile_payload(profile: &serde_json::Value) -> Result<(), Strin
     let valid_methods = ["password", "privateKey", "agent", "auto"];
     match obj.get("authMethod").and_then(|v| v.as_str()) {
         Some(s) if valid_methods.contains(&s) => {}
-        _ => return Err("authMethod must be one of: password, privateKey, agent, auto".to_string()),
+        _ => {
+            return Err("authMethod must be one of: password, privateKey, agent, auto".to_string())
+        }
     }
 
     Ok(())

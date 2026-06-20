@@ -17,7 +17,7 @@ use crate::infrastructure::ssh_fs_provider::SshFsProvider;
 
 use super::auth_trace::AuthTrace;
 use super::tcp_probe;
-use super::{ConnectRequest, RawConnection, ConnectedBundle, SshClientHandler};
+use super::{ConnectRequest, ConnectedBundle, RawConnection, SshClientHandler};
 
 /// Connection timeout (10 seconds).
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -47,10 +47,7 @@ pub(super) async fn establish_raw_connection(
     // Phase 1.5 (phase 2 new): ssh -G. Pass original_host (alias), not merged HostName.
     // Phase 3a: 计时 resolve_ms。
     let resolve_start = Instant::now();
-    let resolved = super::host_resolver::resolve_host(
-        &request.original_host,
-        config_parser,
-    ).await;
+    let resolved = super::host_resolver::resolve_host(&request.original_host, config_parser).await;
     trace.timings.resolve_ms = resolve_start.elapsed().as_millis() as u64;
 
     let mut final_config = merged_config.clone();
@@ -75,7 +72,12 @@ pub(super) async fn establish_raw_connection(
     if !probe_result.is_reachable() {
         let root_msg = probe_result
             .diagnostic_message(&final_config.host, final_config.port)
-            .unwrap_or_else(|| format!("TCP probe to {}:{} failed", final_config.host, final_config.port));
+            .unwrap_or_else(|| {
+                format!(
+                    "TCP probe to {}:{} failed",
+                    final_config.host, final_config.port
+                )
+            });
         return Err(AuthError::with_trace(root_msg, trace));
     }
 
@@ -83,7 +85,12 @@ pub(super) async fn establish_raw_connection(
     let handshake_start = Instant::now();
     let addr = (final_config.host.as_str(), final_config.port);
     let russh_config = Arc::new(russh::client::Config::default());
-    let session = match tokio::time::timeout(CONNECT_TIMEOUT, russh::client::connect(russh_config, addr, SshClientHandler)).await {
+    let session = match tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        russh::client::connect(russh_config, addr, SshClientHandler),
+    )
+    .await
+    {
         Ok(Ok(h)) => {
             trace.timings.tcp_handshake_ms = Some(handshake_start.elapsed().as_millis() as u64);
             h
@@ -98,7 +105,9 @@ pub(super) async fn establish_raw_connection(
         Err(_) => {
             let root_msg = format!(
                 "SSH connection to {}:{} timed out after {}s",
-                final_config.host, final_config.port, CONNECT_TIMEOUT.as_secs()
+                final_config.host,
+                final_config.port,
+                CONNECT_TIMEOUT.as_secs()
             );
             return Err(AuthError::with_trace(root_msg, trace));
         }
@@ -107,7 +116,8 @@ pub(super) async fn establish_raw_connection(
     // Phase 3 (phase 2 new): multi-candidate agent discovery
     let agent_sockets = super::agent_discovery::discover_agent_sockets(
         resolved.identity_agent.as_deref().and_then(|p| p.to_str()),
-    ).await;
+    )
+    .await;
 
     // Phase 4: Authenticate (pass trace for attempt collection)
     let mut session_mut = session;
@@ -120,7 +130,9 @@ pub(super) async fn establish_raw_connection(
         &resolved.identity_files,
         &agent_sockets,
         &mut trace,
-    ).await {
+    )
+    .await
+    {
         return Err(AuthError::with_trace(
             format!("authentication failed: {}", auth_err.message),
             trace,
@@ -132,7 +144,9 @@ pub(super) async fn establish_raw_connection(
         &mut session_mut,
         &final_config.username,
         &final_config.host,
-    ).await {
+    )
+    .await
+    {
         Ok(s) => s,
         Err(msg) => return Err(AuthError::with_trace(msg, trace)),
     };
@@ -146,11 +160,17 @@ pub(super) async fn establish_raw_connection(
 }
 
 /// 从 RawConnection 构建 ConnectedBundle（仅 connect() 调用路径）。
-pub(super) async fn build_connected_bundle(request: ConnectRequest, mut raw: RawConnection) -> Result<ConnectedBundle, String> {
+pub(super) async fn build_connected_bundle(
+    request: ConnectRequest,
+    mut raw: RawConnection,
+) -> Result<ConnectedBundle, String> {
     let fs_provider = SshFsProvider::new(raw.sftp, tokio::runtime::Handle::current());
     let remote_projects_path = super::remote_path_resolver::resolve_remote_projects_path_static(
-        &mut raw.session, &raw.merged_config.username, &fs_provider,
-    ).await;
+        &mut raw.session,
+        &raw.merged_config.username,
+        &fs_provider,
+    )
+    .await;
     let status = crate::types::ssh::SshConnectionStatus::connected(
         raw.merged_config.host.clone(),
         remote_projects_path.clone(),
@@ -176,12 +196,17 @@ async fn open_sftp_subsystem_static(
     host: &str,
 ) -> Result<SftpSession, String> {
     let open_future = async {
-        let channel = session.channel_open_session().await
+        let channel = session
+            .channel_open_session()
+            .await
             .map_err(|e| format!("Failed to open SSH session channel for SFTP: {}", e))?;
-        channel.request_subsystem(true, "sftp").await
+        channel
+            .request_subsystem(true, "sftp")
+            .await
             .map_err(|e| format!("Failed to request SFTP subsystem: {}", e))?;
         let stream = channel.into_stream();
-        SftpSession::new(stream).await
+        SftpSession::new(stream)
+            .await
             .map_err(|e| format!("Failed to initialize SFTP session: {}", e))
     };
 

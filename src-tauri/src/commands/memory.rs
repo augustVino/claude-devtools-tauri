@@ -4,22 +4,25 @@
 
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
 use tauri::{command, State};
+use tokio::io::AsyncWriteExt;
 
 use crate::commands::guards;
 use crate::error::AppError;
 use crate::services::MemoryService;
-use crate::types::memory::{MemoryIndex, MemoryReadFileResult, MemoryOpenResult, OpenTarget};
+use crate::types::memory::{MemoryIndex, MemoryOpenResult, MemoryReadFileResult, OpenTarget};
 
 #[command]
 pub async fn has_memory(
     service: State<'_, Arc<dyn MemoryService>>,
     project_id: String,
 ) -> Result<bool, String> {
-    let safe_id = guards::validate_project_id(&project_id)
-        .map_err(|e| { log::error!("Invalid projectId: {e}"); e })?;
-    service.has_memory(&safe_id)
+    let safe_id = guards::validate_project_id(&project_id).map_err(|e| {
+        log::error!("Invalid projectId: {e}");
+        e
+    })?;
+    service
+        .has_memory(&safe_id)
         .await
         .map_err(|e: AppError| e.into_tauri_string())
 }
@@ -29,9 +32,12 @@ pub async fn get_memory_index(
     service: State<'_, Arc<dyn MemoryService>>,
     project_id: String,
 ) -> Result<Option<MemoryIndex>, String> {
-    let safe_id = guards::validate_project_id(&project_id)
-        .map_err(|e| { log::error!("Invalid projectId: {e}"); e })?;
-    service.read_index(&safe_id)
+    let safe_id = guards::validate_project_id(&project_id).map_err(|e| {
+        log::error!("Invalid projectId: {e}");
+        e
+    })?;
+    service
+        .read_index(&safe_id)
         .await
         .map_err(|e: AppError| e.into_tauri_string())
 }
@@ -42,10 +48,14 @@ pub async fn read_memory_file(
     project_id: String,
     file_name: String,
 ) -> Result<MemoryReadFileResult, String> {
-    let safe_id = guards::validate_project_id(&project_id)
-        .map_err(|e| { log::error!("Invalid projectId: {e}"); e })?;
-    let safe_name = guards::validate_memory_file_name(&file_name)
-        .map_err(|e| { log::error!("Invalid fileName: {e}"); e })?;
+    let safe_id = guards::validate_project_id(&project_id).map_err(|e| {
+        log::error!("Invalid projectId: {e}");
+        e
+    })?;
+    let safe_name = guards::validate_memory_file_name(&file_name).map_err(|e| {
+        log::error!("Invalid fileName: {e}");
+        e
+    })?;
     match service.read_file(&safe_id, &safe_name).await {
         Ok(file) => Ok(MemoryReadFileResult {
             success: true,
@@ -73,9 +83,15 @@ async fn pipe_to_stdin(program: &str, args: &[&str], text: &str) -> Result<(), S
         .spawn()
         .map_err(|e| format!("Failed to start {program}: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(text.as_bytes()).await.map_err(|e| format!("{program} write error: {e}"))?;
+        stdin
+            .write_all(text.as_bytes())
+            .await
+            .map_err(|e| format!("{program} write error: {e}"))?;
     }
-    child.wait().await.map_err(|e| format!("{program} failed: {e}"))?;
+    child
+        .wait()
+        .await
+        .map_err(|e| format!("{program} failed: {e}"))?;
     Ok(())
 }
 
@@ -106,13 +122,18 @@ pub async fn copy_memory_path(
     project_id: String,
     file_name: Option<String>,
 ) -> Result<MemoryOpenResult, String> {
-    let safe_id = guards::validate_project_id(&project_id)
-        .map_err(|e| { log::error!("Invalid projectId: {e}"); e })?;
+    let safe_id = guards::validate_project_id(&project_id).map_err(|e| {
+        log::error!("Invalid projectId: {e}");
+        e
+    })?;
     let path = match file_name {
         Some(name) if !name.trim().is_empty() => {
-            let safe_name = guards::validate_memory_file_name(&name)
-                .map_err(|e| { log::error!("Invalid fileName: {e}"); e })?;
-            service.get_file_path(&safe_id, &safe_name)
+            let safe_name = guards::validate_memory_file_name(&name).map_err(|e| {
+                log::error!("Invalid fileName: {e}");
+                e
+            })?;
+            service
+                .get_file_path(&safe_id, &safe_name)
                 .map_err(|e: AppError| e.into_tauri_string())?
         }
         _ => service.get_dir_path(&safe_id),
@@ -139,14 +160,19 @@ pub async fn open_memory_in(
     file_name: Option<String>,
     opener_id: String,
 ) -> Result<MemoryOpenResult, String> {
-    let safe_id = guards::validate_project_id(&project_id)
-        .map_err(|e| { log::error!("Invalid projectId: {e}"); e })?;
+    let safe_id = guards::validate_project_id(&project_id).map_err(|e| {
+        log::error!("Invalid projectId: {e}");
+        e
+    })?;
     let safe_name = file_name
         .as_ref()
         .filter(|n| !n.trim().is_empty())
         .map(|n| guards::validate_memory_file_name(n))
         .transpose()
-        .map_err(|e| { log::error!("Invalid fileName: {e}"); e })?;
+        .map_err(|e| {
+            log::error!("Invalid fileName: {e}");
+            e
+        })?;
 
     match service
         .open_in(&opener_id, &safe_id, safe_name.as_deref())

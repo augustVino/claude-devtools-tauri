@@ -25,10 +25,7 @@ pub fn cors_layer() -> CorsLayer {
             // 精确匹配
             if matches!(
                 origin_str,
-                "http://localhost"
-                    | "http://127.0.0.1"
-                    | "https://localhost"
-                    | "https://127.0.0.1"
+                "http://localhost" | "http://127.0.0.1" | "https://localhost" | "https://127.0.0.1"
             ) {
                 return true;
             }
@@ -61,12 +58,7 @@ pub fn cors_layer() -> CorsLayer {
     CorsLayer::new()
         .allow_origin(allow_origin)
         .allow_credentials(true)
-        .allow_methods([
-            Method::GET,
-            Method::POST,
-            Method::PUT,
-            Method::DELETE,
-        ])
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
         .allow_headers([
             axum::http::header::CONTENT_TYPE,
             axum::http::header::ACCEPT,

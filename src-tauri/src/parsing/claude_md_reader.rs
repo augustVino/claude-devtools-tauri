@@ -39,13 +39,19 @@ impl ClaudeMdReader {
     pub fn new() -> Self {
         let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
         let claude_base_path = home_dir.join(".claude");
-        Self { claude_base_path, home_dir }
+        Self {
+            claude_base_path,
+            home_dir,
+        }
     }
 
     /// Create with custom paths (for testing).
     #[allow(dead_code)]
     pub fn with_paths(claude_base_path: PathBuf, home_dir: PathBuf) -> Self {
-        Self { claude_base_path, home_dir }
+        Self {
+            claude_base_path,
+            home_dir,
+        }
     }
 
     /// Expand tilde (~) in a path.
@@ -169,8 +175,10 @@ impl ClaudeMdReader {
     /// Read auto memory MEMORY.md file for a project.
     pub fn read_auto_memory_file(&self, project_root: &str) -> ClaudeMdFileInfo {
         let expanded_root = self.expand_tilde(project_root);
-        let encoded = super::super::utils::path_decoder::encode_path(&expanded_root.to_string_lossy());
-        let memory_path = self.claude_base_path
+        let encoded =
+            super::super::utils::path_decoder::encode_path(&expanded_root.to_string_lossy());
+        let memory_path = self
+            .claude_base_path
             .join("projects")
             .join(&encoded)
             .join("memory")
@@ -207,34 +215,58 @@ impl ClaudeMdReader {
 
         // 1. Enterprise CLAUDE.md (platform-specific path)
         let enterprise_path = Self::get_enterprise_path();
-        files.insert("enterprise".to_string(), self.read_claude_md_file(&enterprise_path));
+        files.insert(
+            "enterprise".to_string(),
+            self.read_claude_md_file(&enterprise_path),
+        );
 
         // 2. User memory: <Claude root>/CLAUDE.md
         let user_memory_path = self.claude_base_path.join("CLAUDE.md");
-        files.insert("user".to_string(), self.read_claude_md_file(&user_memory_path.to_string_lossy()));
+        files.insert(
+            "user".to_string(),
+            self.read_claude_md_file(&user_memory_path.to_string_lossy()),
+        );
 
         // 3. Project memory: ${projectRoot}/CLAUDE.md
         let project_memory_path = expanded_project_root.join("CLAUDE.md");
-        files.insert("project".to_string(), self.read_claude_md_file(&project_memory_path.to_string_lossy()));
+        files.insert(
+            "project".to_string(),
+            self.read_claude_md_file(&project_memory_path.to_string_lossy()),
+        );
 
         // 4. Project memory alt: ${projectRoot}/.claude/CLAUDE.md
         let project_memory_alt_path = expanded_project_root.join(".claude").join("CLAUDE.md");
-        files.insert("project-alt".to_string(), self.read_claude_md_file(&project_memory_alt_path.to_string_lossy()));
+        files.insert(
+            "project-alt".to_string(),
+            self.read_claude_md_file(&project_memory_alt_path.to_string_lossy()),
+        );
 
         // 5. Project rules: ${projectRoot}/.claude/rules/*.md
         let project_rules_path = expanded_project_root.join(".claude").join("rules");
-        files.insert("project-rules".to_string(), self.read_directory_md_files(&project_rules_path.to_string_lossy()));
+        files.insert(
+            "project-rules".to_string(),
+            self.read_directory_md_files(&project_rules_path.to_string_lossy()),
+        );
 
         // 6. Project local: ${projectRoot}/CLAUDE.local.md
         let project_local_path = expanded_project_root.join("CLAUDE.local.md");
-        files.insert("project-local".to_string(), self.read_claude_md_file(&project_local_path.to_string_lossy()));
+        files.insert(
+            "project-local".to_string(),
+            self.read_claude_md_file(&project_local_path.to_string_lossy()),
+        );
 
         // 7. User rules: <Claude root>/rules/**/*.md
         let user_rules_path = self.claude_base_path.join("rules");
-        files.insert("user-rules".to_string(), self.read_directory_md_files(&user_rules_path.to_string_lossy()));
+        files.insert(
+            "user-rules".to_string(),
+            self.read_directory_md_files(&user_rules_path.to_string_lossy()),
+        );
 
         // 8. Auto memory: ~/.claude/projects/<encoded>/memory/MEMORY.md
-        files.insert("auto-memory".to_string(), self.read_auto_memory_file(project_root));
+        files.insert(
+            "auto-memory".to_string(),
+            self.read_auto_memory_file(project_root),
+        );
 
         ClaudeMdReadResult { files }
     }
@@ -264,10 +296,7 @@ mod tests {
         let claude_base = temp_dir.path().join(".claude");
         fs::create_dir_all(&claude_base).unwrap();
 
-        let reader = ClaudeMdReader::with_paths(
-            claude_base,
-            temp_dir.path().to_path_buf(),
-        );
+        let reader = ClaudeMdReader::with_paths(claude_base, temp_dir.path().to_path_buf());
         (temp_dir, reader)
     }
 
@@ -358,7 +387,11 @@ mod tests {
         fs::write(project_root.join("CLAUDE.md"), "Project instructions").unwrap();
 
         // Create user CLAUDE.md
-        fs::write(temp_dir.path().join(".claude").join("CLAUDE.md"), "User instructions").unwrap();
+        fs::write(
+            temp_dir.path().join(".claude").join("CLAUDE.md"),
+            "User instructions",
+        )
+        .unwrap();
 
         let result = reader.read_all_claude_md_files(&project_root.to_string_lossy());
 

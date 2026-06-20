@@ -12,18 +12,18 @@ mod events;
 mod http;
 mod infrastructure;
 mod parsing;
-mod types;
 mod services;
+mod types;
 mod utils;
 
+use commands::tray::TrayIconManager;
+use commands::AppState;
+use infrastructure::app_bootstrap::AppBootstrap;
+use infrastructure::{ConfigManager, NotificationManager, SshConnectionManager};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
-use tokio::sync::{RwLock, broadcast};
 use tauri::{Emitter, Manager};
-use commands::AppState;
-use infrastructure::{ConfigManager, NotificationManager, SshConnectionManager};
-use infrastructure::app_bootstrap::AppBootstrap;
-use commands::tray::TrayIconManager;
+use tokio::sync::{broadcast, RwLock};
 use utils::{get_default_claude_base_path, get_projects_base_path, get_todos_base_path};
 
 /// 运行 Tauri 应用。
@@ -33,329 +33,342 @@ use utils::{get_default_claude_base_path, get_projects_base_path, get_todos_base
 /// 并注册所有 IPC 命令处理函数。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  let config_manager = Arc::new(ConfigManager::new());
-  let shared_cache = infrastructure::DataCache::new();
-  let app_state = Arc::new(RwLock::new(AppState::new(config_manager.clone(), shared_cache.clone())));
-
-  // ========== 1. 先创建 ContextManager（注册 local context） ==========
-  let local_projects_dir = get_projects_base_path();
-  let local_todos_dir = get_todos_base_path();
-  let local_fs_provider: Arc<dyn infrastructure::fs_provider::FsProvider> =
-      Arc::new(infrastructure::fs_provider::LocalFsProvider::new());
-
-  let mut context_manager_inner = infrastructure::ContextManager::new();
-  context_manager_inner.register_context(
-      infrastructure::service_context::ServiceContext::new(
-          infrastructure::service_context::ServiceContextConfig {
-              id: "local".to_string(),
-              context_type: infrastructure::service_context::ContextType::Local,
-              projects_dir: local_projects_dir.clone(),
-              todos_dir: local_todos_dir.clone(),
-              fs_provider: local_fs_provider.clone(),
-              cache: Some(shared_cache.clone()),
-          }
-      )
-  ).expect("Failed to register local context");
-  let context_manager: Arc<RwLock<infrastructure::ContextManager>> =
-      Arc::new(RwLock::new(context_manager_inner));
-
-  // ========== 2. 创建 Services（依赖 context_manager） ==========
-  let project_service: Arc<dyn services::ProjectService> = Arc::new(
-      services::ProjectServiceImpl::new(context_manager.clone())
-  );
-
-  let search_service: Arc<dyn services::SearchServiceFull> =
-      Arc::new(services::SearchServiceImpl::new(context_manager.clone()));
-
-  let session_repo: Arc<dyn infrastructure::session_repository::SessionRepository> =
-      Arc::new(infrastructure::local_session_repository::LocalSessionRepository::new(
-          local_fs_provider.clone(),
-          local_projects_dir.clone(),
-          get_default_claude_base_path(),
-      ));
-
-  let session_service: Arc<dyn services::SessionService> = Arc::new(
-      services::SessionServiceImpl::new(
-          context_manager.clone(),
-          config_manager.clone(),
-          project_service.clone(),
-          session_repo,
-      )
-  );
-
-  // SubagentService (IPC path — HTTP registration in Batch 3)
-  let subagent_service: Arc<dyn services::SubagentService> =
-      Arc::new(services::SubagentServiceImpl::new(context_manager.clone()));
-
-  // MemoryService (IPC + HTTP paths)
-  let memory_service: Arc<dyn services::MemoryService> = Arc::new(services::MemoryServiceImpl::new(
-      get_projects_base_path(),
-  ));
-
-  // Zoom factor state: track zoom since Tauri v2 has set_zoom() but no zoom() getter.
-  // Store f64 as bits in AtomicU64 for lock-free concurrent access.
-  let zoom_factor: Arc<AtomicU64> = Arc::new(AtomicU64::new(1.0f64.to_bits()));
-
-  tauri::Builder::default()
-    .plugin(tauri_plugin_dialog::init())
-    .plugin(tauri_plugin_opener::init())
-    .plugin(tauri_plugin_notification::init())
-    .plugin(tauri_plugin_process::init())
-    .plugin(tauri_plugin_autostart::Builder::new()
-      .args(["--minimized"])
-      .build())
-    .plugin(tauri_plugin_updater::Builder::new().build())
-    .manage(app_state.clone())
-    .manage(zoom_factor)
-    .on_window_event(|window, event| {
-      if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-        #[cfg(target_os = "macos")]
-        {
-          // Use try_state() because this handler is registered before .setup()
-          // where TrayIconManager is actually managed
-          let tray = window.app_handle().try_state::<std::sync::Mutex<TrayIconManager>>();
-          if let Some(tray) = tray {
-            if let Ok(tray) = tray.lock() {
-              if !tray.is_dock_visible() {
-                log::info!("Hiding window to tray (dock hidden)");
-                let _ = window.hide();
-                api.prevent_close();
-              }
-            }
-          }
-        }
-      }
-    })
-    .setup(move |app| {
-      // 1. 初始化配置（必须在最前面执行）
-      AppBootstrap::init_config(&config_manager)?;
-
-      // 2. 设置 claude root 路径覆盖
-      AppBootstrap::set_claude_root(&config_manager);
-
-      // 3. 注册核心 managed state
-      app.manage(config_manager.clone());
-      app.manage(session_service.clone());
-      app.manage(project_service.clone());
-      app.manage(search_service.clone());
-      app.manage(subagent_service.clone());
-      app.manage(memory_service.clone());
-
-      // 4. 显示窗口（非 --minimized 模式）
-      AppBootstrap::show_window_if_needed(app.handle())?;
-
-      // 5. Tray 图标
-      let tray_manager = std::sync::Mutex::new(TrayIconManager::new(app.handle().clone()));
-      app.manage(tray_manager);
-
-      // 6. macOS Dock 隐藏
-      #[cfg(target_os = "macos")]
-      AppBootstrap::hide_dock_if_needed(app.handle(), &app_state);
-
-      // 7. SSE + HttpServerHandle
-      let broadcaster = crate::http::sse::SSEBroadcaster::new();
-      app.manage(broadcaster);
-      app.manage(std::sync::Mutex::new(
-        None::<crate::http::server::HttpServerHandle>,
-      ));
-
-      // 8. NotificationManager
-      let last_shown_error = std::sync::Arc::new(std::sync::Mutex::new(None::<crate::types::config::DetectedError>));
-      let notification_manager = NotificationManager::new(
-        app.handle().clone(),
+    let config_manager = Arc::new(ConfigManager::new());
+    let shared_cache = infrastructure::DataCache::new();
+    let app_state = Arc::new(RwLock::new(AppState::new(
         config_manager.clone(),
-        last_shown_error.clone(),
-      );
-      let notification_manager = Arc::new(RwLock::new(notification_manager));
-      app.manage(notification_manager.clone());
-      app.manage(last_shown_error);
+        shared_cache.clone(),
+    )));
 
-      // 异步初始化 NotificationManager
-      let init_notification_mgr = notification_manager.clone();
-      tauri::async_runtime::spawn(async move {
-        init_notification_mgr.write().await.initialize().await;
-        log::info!("NotificationManager initialized");
-      });
+    // ========== 1. 先创建 ContextManager（注册 local context） ==========
+    let local_projects_dir = get_projects_base_path();
+    let local_todos_dir = get_todos_base_path();
+    let local_fs_provider: Arc<dyn infrastructure::fs_provider::FsProvider> =
+        Arc::new(infrastructure::fs_provider::LocalFsProvider::new());
 
-      // 9. ContextManager（在外部已创建，含 local context 注册）+ 启动 local watcher
-      // context_manager 已在外部创建并 move capture 进 setup 闭包。
-      {
-          let local_ctx_arc = context_manager.blocking_read().get("local")
-              .expect("local context must be registered before setup()");
-          let local_ctx = local_ctx_arc.blocking_read();
-          tauri::async_runtime::block_on(local_ctx.spawn_watcher_tasks(
-              app.handle().clone(),
-              config_manager.clone(),
-              notification_manager.clone(),
-          ));
-      }
-      app.manage(context_manager.clone());
+    let mut context_manager_inner = infrastructure::ContextManager::new();
+    context_manager_inner
+        .register_context(infrastructure::service_context::ServiceContext::new(
+            infrastructure::service_context::ServiceContextConfig {
+                id: "local".to_string(),
+                context_type: infrastructure::service_context::ContextType::Local,
+                projects_dir: local_projects_dir.clone(),
+                todos_dir: local_todos_dir.clone(),
+                fs_provider: local_fs_provider.clone(),
+                cache: Some(shared_cache.clone()),
+            },
+        ))
+        .expect("Failed to register local context");
+    let context_manager: Arc<RwLock<infrastructure::ContextManager>> =
+        Arc::new(RwLock::new(context_manager_inner));
 
-      // 10. SshConnectionManager + SSH 状态转发
-      let ssh_manager_inner = SshConnectionManager::new();
+    // ========== 2. 创建 Services（依赖 context_manager） ==========
+    let project_service: Arc<dyn services::ProjectService> =
+        Arc::new(services::ProjectServiceImpl::new(context_manager.clone()));
 
-      // 在包装为 Arc<RwLock<>> 之前获取 broadcast receiver（避免在 async 任务中持有读锁）
-      let mut ssh_status_rx = ssh_manager_inner.subscribe();
+    let search_service: Arc<dyn services::SearchServiceFull> =
+        Arc::new(services::SearchServiceImpl::new(context_manager.clone()));
 
-      let ssh_manager = Arc::new(RwLock::new(ssh_manager_inner));
-      app.manage(ssh_manager.clone());
+    let session_repo: Arc<dyn infrastructure::session_repository::SessionRepository> = Arc::new(
+        infrastructure::local_session_repository::LocalSessionRepository::new(
+            local_fs_provider.clone(),
+            local_projects_dir.clone(),
+            get_default_claude_base_path(),
+        ),
+    );
 
-      // SshService（AppHandle 在 setup 闭包内获取，见下方 .manage() 前的代码）
-      let ssh_service: Arc<dyn services::SshService> = Arc::new(
-          services::SshServiceImpl::new(
-              ssh_manager.clone(),
-              context_manager.clone(),
-              shared_cache.clone(),
-              config_manager.clone(),
-              notification_manager.clone(),
-              app.handle().clone(),  // H3: 构造时存储 AppHandle
-          )
-      );
-      app.manage(ssh_service.clone());
+    let session_service: Arc<dyn services::SessionService> =
+        Arc::new(services::SessionServiceImpl::new(
+            context_manager.clone(),
+            config_manager.clone(),
+            project_service.clone(),
+            session_repo,
+        ));
 
-      // ConfigService (all dependencies available here)
-      let config_service: Arc<dyn services::ConfigService> = Arc::new(
-          services::ConfigServiceImpl::new(
-              config_manager.clone(),
-              shared_cache.clone(),
-              context_manager.clone(),
-              notification_manager.clone(),
-              app.handle().clone(),
-              search_service.clone(),
-          )
-      );
-      app.manage(config_service.clone());
+    // SubagentService (IPC path — HTTP registration in Batch 3)
+    let subagent_service: Arc<dyn services::SubagentService> =
+        Arc::new(services::SubagentServiceImpl::new(context_manager.clone()));
 
-      // 启动 SSH 状态事件转发任务
-      let app_handle_for_ssh = app.handle().clone();
-      let ssh_broadcaster = app_handle_for_ssh.state::<crate::http::sse::SSEBroadcaster>().inner().clone();
-      tauri::async_runtime::spawn(async move {
-        loop {
-          match ssh_status_rx.recv().await {
-            Ok(status) => {
-              let event = crate::types::ssh::SshStatusChangedEvent { status: status.clone() };
-              let _ = app_handle_for_ssh.emit("ssh:status", event);
-              // Bridge to SSE broadcaster for HTTP-only clients
-              ssh_broadcaster.send(crate::http::sse::BackendEvent::SshStatusChanged { status });
+    // MemoryService (IPC + HTTP paths)
+    let memory_service: Arc<dyn services::MemoryService> =
+        Arc::new(services::MemoryServiceImpl::new(get_projects_base_path()));
+
+    // Zoom factor state: track zoom since Tauri v2 has set_zoom() but no zoom() getter.
+    // Store f64 as bits in AtomicU64 for lock-free concurrent access.
+    let zoom_factor: Arc<AtomicU64> = Arc::new(AtomicU64::new(1.0f64.to_bits()));
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args(["--minimized"])
+                .build(),
+        )
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(app_state.clone())
+        .manage(zoom_factor)
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                #[cfg(target_os = "macos")]
+                {
+                    // Use try_state() because this handler is registered before .setup()
+                    // where TrayIconManager is actually managed
+                    let tray = window
+                        .app_handle()
+                        .try_state::<std::sync::Mutex<TrayIconManager>>();
+                    if let Some(tray) = tray {
+                        if let Ok(tray) = tray.lock() {
+                            if !tray.is_dock_visible() {
+                                log::info!("Hiding window to tray (dock hidden)");
+                                let _ = window.hide();
+                                api.prevent_close();
+                            }
+                        }
+                    }
+                }
             }
-            Err(broadcast::error::RecvError::Closed) => break,
-            Err(_) => continue,
-          }
-        }
-      });
+        })
+        .setup(move |app| {
+            // 1. 初始化配置（必须在最前面执行）
+            AppBootstrap::init_config(&config_manager)?;
 
-      // Auto-start HTTP server if enabled in config
-      infrastructure::app_bootstrap::AppBootstrap::auto_start_http_server(
-        app.handle(),
-        &config_manager,
-        &app_state,
-        &session_service,
-        &project_service,
-        &search_service,
-        &subagent_service,    // Batch 2 Task 2.5 创建
-        &ssh_service,         // Batch 2 Task 3.5 创建
-        &config_service,      // 此处创建
-        &memory_service,      // Step 4.8 创建
-      )?;
+            // 2. 设置 claude root 路径覆盖
+            AppBootstrap::set_claude_root(&config_manager);
 
-      // Debug 模式下启用日志插件
-      if cfg!(debug_assertions) {
-        app.handle().plugin(
-          tauri_plugin_log::Builder::default()
-            .level(log::LevelFilter::Info)
-            .build(),
-        )?;
-      }
-      Ok(())
-    })
-    .invoke_handler(tauri::generate_handler![
-      commands::window::minimize,
-      commands::window::maximize,
-      commands::window::close,
-      commands::window::is_maximized,
-      commands::window::relaunch,
-      commands::window::set_dock_visible,
-      commands::version::get_app_version,
-      commands::sessions::get_sessions,
-      commands::sessions::get_session_detail,
-      commands::sessions::get_session_detail_for_export,
-      commands::sessions::get_session_metrics,
-      commands::sessions::get_sessions_paginated,
-      commands::sessions::get_sessions_by_ids,
-      commands::sessions::get_session_groups,
-      commands::sessions::get_waterfall_data,
-      commands::sessions::delete_session,
-      commands::sessions::get_projects,
-      commands::config::get_config,
-      commands::config::update_config,
-      commands::config::add_ignore_regex,
-      commands::config::remove_ignore_regex,
-      commands::config::pin_session,
-      commands::config::unpin_session,
-      commands::config::hide_session,
-      commands::config::unhide_session,
-      commands::config::snooze,
-      commands::config::clear_snooze,
-      commands::config::add_trigger,
-      commands::config::update_trigger,
-      commands::config::remove_trigger,
-      commands::config::get_triggers,
-      commands::config::test_trigger,
-      commands::config::open_in_editor,
-      commands::config::get_claude_root_info,
-      commands::config::add_ignore_repository,
-      commands::config::remove_ignore_repository,
-      commands::config::hide_sessions,
-      commands::config::unhide_sessions,
-      commands::config::check_projects_dir_exists,
-      commands::search::search_sessions,
-      commands::search::search_all_projects,
-      commands::search::find_session_by_id,
-      commands::search::find_sessions_by_partial_id,
-      commands::validation::validate_path,
-      commands::validation::validate_mentions,
-      commands::validation::scroll_to_line,
-      commands::utility::open_path,
-      commands::utility::open_external,
-      commands::utility::get_zoom_factor,
-      commands::utility::set_zoom_factor,
-      commands::utility::read_claude_md_files,
-      commands::utility::read_directory_claude_md,
-      commands::utility::read_mentioned_file,
-      commands::utility::read_agent_configs,
-      commands::utility::write_text_file,
-      commands::projects::get_repository_groups,
-      commands::projects::get_worktree_sessions,
-      commands::subagents::get_subagent_detail,
-      commands::memory::has_memory,
-      commands::memory::get_memory_index,
-      commands::memory::read_memory_file,
-      commands::memory::copy_memory_path,
-      commands::memory::list_memory_openers,
-      commands::memory::open_memory_in,
-      commands::notifications::get_notifications,
-      commands::notifications::mark_notification_read,
-      commands::notifications::mark_all_notifications_read,
-      commands::notifications::delete_notification,
-      commands::notifications::clear_notifications,
-      commands::notifications::get_notification_count,
-      commands::notifications::get_notification_stats,
-      commands::notifications::handle_notification_click,
-      commands::http_server::get_status,
-      commands::http_server::start,
-      commands::http_server::stop,
-      commands::context::context_list,
-      commands::context::context_active,
-      commands::context::context_switch,
-      commands::ssh_connect,
-      commands::ssh_disconnect,
-      commands::ssh_get_state,
-      commands::ssh_test,
-      commands::ssh_get_config_hosts,
-      commands::ssh_resolve_host,
-      commands::ssh_save_last_connection,
-      commands::ssh_get_last_connection,
-    ])
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+            // 3. 注册核心 managed state
+            app.manage(config_manager.clone());
+            app.manage(session_service.clone());
+            app.manage(project_service.clone());
+            app.manage(search_service.clone());
+            app.manage(subagent_service.clone());
+            app.manage(memory_service.clone());
+
+            // 4. 显示窗口（非 --minimized 模式）
+            AppBootstrap::show_window_if_needed(app.handle())?;
+
+            // 5. Tray 图标
+            let tray_manager = std::sync::Mutex::new(TrayIconManager::new(app.handle().clone()));
+            app.manage(tray_manager);
+
+            // 6. macOS Dock 隐藏
+            #[cfg(target_os = "macos")]
+            AppBootstrap::hide_dock_if_needed(app.handle(), &app_state);
+
+            // 7. SSE + HttpServerHandle
+            let broadcaster = crate::http::sse::SSEBroadcaster::new();
+            app.manage(broadcaster);
+            app.manage(std::sync::Mutex::new(
+                None::<crate::http::server::HttpServerHandle>,
+            ));
+
+            // 8. NotificationManager
+            let last_shown_error = std::sync::Arc::new(std::sync::Mutex::new(
+                None::<crate::types::config::DetectedError>,
+            ));
+            let notification_manager = NotificationManager::new(
+                app.handle().clone(),
+                config_manager.clone(),
+                last_shown_error.clone(),
+            );
+            let notification_manager = Arc::new(RwLock::new(notification_manager));
+            app.manage(notification_manager.clone());
+            app.manage(last_shown_error);
+
+            // 异步初始化 NotificationManager
+            let init_notification_mgr = notification_manager.clone();
+            tauri::async_runtime::spawn(async move {
+                init_notification_mgr.write().await.initialize().await;
+                log::info!("NotificationManager initialized");
+            });
+
+            // 9. ContextManager（在外部已创建，含 local context 注册）+ 启动 local watcher
+            // context_manager 已在外部创建并 move capture 进 setup 闭包。
+            {
+                let local_ctx_arc = context_manager
+                    .blocking_read()
+                    .get("local")
+                    .expect("local context must be registered before setup()");
+                let local_ctx = local_ctx_arc.blocking_read();
+                tauri::async_runtime::block_on(local_ctx.spawn_watcher_tasks(
+                    app.handle().clone(),
+                    config_manager.clone(),
+                    notification_manager.clone(),
+                ));
+            }
+            app.manage(context_manager.clone());
+
+            // 10. SshConnectionManager + SSH 状态转发
+            let ssh_manager_inner = SshConnectionManager::new();
+
+            // 在包装为 Arc<RwLock<>> 之前获取 broadcast receiver（避免在 async 任务中持有读锁）
+            let mut ssh_status_rx = ssh_manager_inner.subscribe();
+
+            let ssh_manager = Arc::new(RwLock::new(ssh_manager_inner));
+            app.manage(ssh_manager.clone());
+
+            // SshService（AppHandle 在 setup 闭包内获取，见下方 .manage() 前的代码）
+            let ssh_service: Arc<dyn services::SshService> =
+                Arc::new(services::SshServiceImpl::new(
+                    ssh_manager.clone(),
+                    context_manager.clone(),
+                    shared_cache.clone(),
+                    config_manager.clone(),
+                    notification_manager.clone(),
+                    app.handle().clone(), // H3: 构造时存储 AppHandle
+                ));
+            app.manage(ssh_service.clone());
+
+            // ConfigService (all dependencies available here)
+            let config_service: Arc<dyn services::ConfigService> =
+                Arc::new(services::ConfigServiceImpl::new(
+                    config_manager.clone(),
+                    shared_cache.clone(),
+                    context_manager.clone(),
+                    notification_manager.clone(),
+                    app.handle().clone(),
+                    search_service.clone(),
+                ));
+            app.manage(config_service.clone());
+
+            // 启动 SSH 状态事件转发任务
+            let app_handle_for_ssh = app.handle().clone();
+            let ssh_broadcaster = app_handle_for_ssh
+                .state::<crate::http::sse::SSEBroadcaster>()
+                .inner()
+                .clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    match ssh_status_rx.recv().await {
+                        Ok(status) => {
+                            let event = crate::types::ssh::SshStatusChangedEvent {
+                                status: status.clone(),
+                            };
+                            let _ = app_handle_for_ssh.emit("ssh:status", event);
+                            // Bridge to SSE broadcaster for HTTP-only clients
+                            ssh_broadcaster
+                                .send(crate::http::sse::BackendEvent::SshStatusChanged { status });
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                        Err(_) => continue,
+                    }
+                }
+            });
+
+            // Auto-start HTTP server if enabled in config
+            infrastructure::app_bootstrap::AppBootstrap::auto_start_http_server(
+                app.handle(),
+                &config_manager,
+                &app_state,
+                &session_service,
+                &project_service,
+                &search_service,
+                &subagent_service, // Batch 2 Task 2.5 创建
+                &ssh_service,      // Batch 2 Task 3.5 创建
+                &config_service,   // 此处创建
+                &memory_service,   // Step 4.8 创建
+            )?;
+
+            // Debug 模式下启用日志插件
+            if cfg!(debug_assertions) {
+                app.handle().plugin(
+                    tauri_plugin_log::Builder::default()
+                        .level(log::LevelFilter::Info)
+                        .build(),
+                )?;
+            }
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::window::minimize,
+            commands::window::maximize,
+            commands::window::close,
+            commands::window::is_maximized,
+            commands::window::relaunch,
+            commands::window::set_dock_visible,
+            commands::version::get_app_version,
+            commands::sessions::get_sessions,
+            commands::sessions::get_session_detail,
+            commands::sessions::get_session_detail_for_export,
+            commands::sessions::get_session_metrics,
+            commands::sessions::get_sessions_paginated,
+            commands::sessions::get_sessions_by_ids,
+            commands::sessions::get_session_groups,
+            commands::sessions::get_waterfall_data,
+            commands::sessions::delete_session,
+            commands::sessions::get_projects,
+            commands::config::get_config,
+            commands::config::update_config,
+            commands::config::add_ignore_regex,
+            commands::config::remove_ignore_regex,
+            commands::config::pin_session,
+            commands::config::unpin_session,
+            commands::config::hide_session,
+            commands::config::unhide_session,
+            commands::config::snooze,
+            commands::config::clear_snooze,
+            commands::config::add_trigger,
+            commands::config::update_trigger,
+            commands::config::remove_trigger,
+            commands::config::get_triggers,
+            commands::config::test_trigger,
+            commands::config::open_in_editor,
+            commands::config::get_claude_root_info,
+            commands::config::add_ignore_repository,
+            commands::config::remove_ignore_repository,
+            commands::config::hide_sessions,
+            commands::config::unhide_sessions,
+            commands::config::check_projects_dir_exists,
+            commands::search::search_sessions,
+            commands::search::search_all_projects,
+            commands::search::find_session_by_id,
+            commands::search::find_sessions_by_partial_id,
+            commands::validation::validate_path,
+            commands::validation::validate_mentions,
+            commands::validation::scroll_to_line,
+            commands::utility::open_path,
+            commands::utility::open_external,
+            commands::utility::get_zoom_factor,
+            commands::utility::set_zoom_factor,
+            commands::utility::read_claude_md_files,
+            commands::utility::read_directory_claude_md,
+            commands::utility::read_mentioned_file,
+            commands::utility::read_agent_configs,
+            commands::utility::write_text_file,
+            commands::projects::get_repository_groups,
+            commands::projects::get_worktree_sessions,
+            commands::subagents::get_subagent_detail,
+            commands::memory::has_memory,
+            commands::memory::get_memory_index,
+            commands::memory::read_memory_file,
+            commands::memory::copy_memory_path,
+            commands::memory::list_memory_openers,
+            commands::memory::open_memory_in,
+            commands::notifications::get_notifications,
+            commands::notifications::mark_notification_read,
+            commands::notifications::mark_all_notifications_read,
+            commands::notifications::delete_notification,
+            commands::notifications::clear_notifications,
+            commands::notifications::get_notification_count,
+            commands::notifications::get_notification_stats,
+            commands::notifications::handle_notification_click,
+            commands::http_server::get_status,
+            commands::http_server::start,
+            commands::http_server::stop,
+            commands::context::context_list,
+            commands::context::context_active,
+            commands::context::context_switch,
+            commands::ssh_connect,
+            commands::ssh_disconnect,
+            commands::ssh_get_state,
+            commands::ssh_test,
+            commands::ssh_get_config_hosts,
+            commands::ssh_resolve_host,
+            commands::ssh_save_last_connection,
+            commands::ssh_get_last_connection,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
 }

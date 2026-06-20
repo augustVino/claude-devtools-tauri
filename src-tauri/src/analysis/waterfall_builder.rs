@@ -89,9 +89,7 @@ pub fn build_waterfall_data(chunks: &[Chunk], processes: &[Process]) -> Waterfal
         if let Chunk::Ai(ai) = chunk {
             // Level-1 items for tool executions
             for tool_exec in &ai.tool_executions {
-                let end_time = tool_exec
-                    .end_time
-                    .unwrap_or(tool_exec.start_time);
+                let end_time = tool_exec.end_time.unwrap_or(tool_exec.start_time);
                 let start_time = tool_exec.start_time;
                 let duration_ms = tool_exec
                     .duration_ms
@@ -159,16 +157,8 @@ pub fn build_waterfall_data(chunks: &[Chunk], processes: &[Process]) -> Waterfal
         };
     }
 
-    let min_time = items
-        .iter()
-        .map(|item| item.start_time)
-        .min()
-        .unwrap_or(0);
-    let max_time = items
-        .iter()
-        .map(|item| item.end_time)
-        .max()
-        .unwrap_or(0);
+    let min_time = items.iter().map(|item| item.start_time).min().unwrap_or(0);
+    let max_time = items.iter().map(|item| item.end_time).max().unwrap_or(0);
     let total_duration_ms = max_time.saturating_sub(min_time);
 
     WaterfallData {
@@ -218,7 +208,11 @@ fn chunk_base_info(chunk: &Chunk) -> (String, String, u64, u64, u64) {
 }
 
 /// Build a waterfall item from a process (subagent).
-fn process_waterfall_item(process: &Process, parent_id: Option<String>, level: u32) -> WaterfallItem {
+fn process_waterfall_item(
+    process: &Process,
+    parent_id: Option<String>,
+    level: u32,
+) -> WaterfallItem {
     WaterfallItem {
         id: format!("subagent-{}", process.id),
         label: process_label(process),
@@ -245,7 +239,6 @@ fn process_label(process: &Process) -> String {
         .or_else(|| process.subagent_type.clone())
         .unwrap_or_else(|| process.id.clone())
 }
-
 
 // =============================================================================
 // Tests
@@ -522,7 +515,13 @@ mod tests {
         // Use timestamps in the same range as the RFC3339-parsed tool times
         let base_ts = parse_ts_ms_opt("2026-01-01T00:00:00Z").unwrap();
         let process = make_process("sub-1", base_ts + 1500, base_ts + 3000, None, None);
-        let chunks = vec![make_ai_chunk("a1", base_ts + 1000, base_ts + 4000, vec![tool_exec], vec![process])];
+        let chunks = vec![make_ai_chunk(
+            "a1",
+            base_ts + 1000,
+            base_ts + 4000,
+            vec![tool_exec],
+            vec![process],
+        )];
         let data = build_waterfall_data(&chunks, &[]);
 
         // AI chunk + tool + process = 3 items
@@ -553,7 +552,13 @@ mod tests {
     #[test]
     fn test_linked_process_not_duplicated_as_orphan() {
         let process = make_process("sub-1", 1500, 3000, None, None);
-        let chunks = vec![make_ai_chunk("a1", 1000, 4000, vec![], vec![process.clone()])];
+        let chunks = vec![make_ai_chunk(
+            "a1",
+            1000,
+            4000,
+            vec![],
+            vec![process.clone()],
+        )];
         let data = build_waterfall_data(&chunks, &[process]);
 
         // The process should appear only once (as a child of the AI chunk)
@@ -681,10 +686,7 @@ mod tests {
 
     #[test]
     fn test_parse_ts_ms_valid() {
-        assert_eq!(
-            parse_ts_ms_opt("2026-01-01T00:00:00Z"),
-            Some(1767225600000)
-        );
+        assert_eq!(parse_ts_ms_opt("2026-01-01T00:00:00Z"), Some(1767225600000));
     }
 
     #[test]

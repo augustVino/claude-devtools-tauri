@@ -92,7 +92,11 @@ fn are_brackets_balanced(pattern: &str) -> bool {
 
         if ch == '(' || ch == '{' {
             stack.push(ch);
-        } else if let Some(expected_open) = close_to_open.iter().find(|(c, _)| *c == ch).map(|(_, o)| *o) {
+        } else if let Some(expected_open) = close_to_open
+            .iter()
+            .find(|(c, _)| *c == ch)
+            .map(|(_, o)| *o)
+        {
             if stack.last() != Some(&expected_open) {
                 return false;
             }
@@ -243,7 +247,12 @@ mod tests {
     fn test_nested_quantifiers_rejected() {
         let result = validate_regex_pattern("(a+)+");
         assert!(!result.valid);
-        assert!(result.error.as_ref().unwrap().reason.contains("performance"));
+        assert!(result
+            .error
+            .as_ref()
+            .unwrap()
+            .reason
+            .contains("performance"));
     }
 
     #[test]

@@ -8,7 +8,9 @@ use log::{info, warn};
 
 use crate::error::AppError;
 use crate::infrastructure::fs_provider::{FsProvider, FsStatResult};
-use crate::infrastructure::session_repository::{DeleteFilesResult, SessionFileItem, SessionRepository};
+use crate::infrastructure::session_repository::{
+    DeleteFilesResult, SessionFileItem, SessionRepository,
+};
 use crate::parsing::{parse_session_file, ParsedSession};
 use crate::utils::path_decoder::extract_base_dir;
 
@@ -59,12 +61,10 @@ impl SessionRepository for LocalSessionRepository {
         Ok(parse_session_file(&path).await)
     }
 
-    async fn session_exists(
-        &self,
-        project_id: &str,
-        session_id: &str,
-    ) -> Result<bool, AppError> {
-        let path = self.project_dir(project_id).join(format!("{}.jsonl", session_id));
+    async fn session_exists(&self, project_id: &str, session_id: &str) -> Result<bool, AppError> {
+        let path = self
+            .project_dir(project_id)
+            .join(format!("{}.jsonl", session_id));
         Ok(path.exists())
     }
 
@@ -196,10 +196,7 @@ impl SessionRepository for LocalSessionRepository {
         }
 
         // 6. security_warnings_state
-        let sec_path = claude_base.join(format!(
-            "security_warnings_state_{}.json",
-            session_id
-        ));
+        let sec_path = claude_base.join(format!("security_warnings_state_{}.json", session_id));
         if sec_path.exists() {
             if try_remove_file(&sec_path).await {
                 associated_deleted += 1;

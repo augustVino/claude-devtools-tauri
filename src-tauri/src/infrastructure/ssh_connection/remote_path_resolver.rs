@@ -1,8 +1,8 @@
 //! 远程项目路径解析（静态化版本）。
 
-use russh::client;
 use crate::infrastructure::ssh_exec::exec_remote_command;
 use crate::infrastructure::ssh_fs_provider::SshFsProvider;
+use russh::client;
 
 /// Resolve the remote projects path (free function version).
 pub(super) async fn resolve_remote_projects_path_static(
@@ -22,15 +22,23 @@ pub(super) async fn resolve_remote_projects_path_static(
         format!("/Users/{}/.claude/projects", username),
         "/root/.claude/projects".to_string(),
     ] {
-        if seen.insert(candidate.clone()) { candidates.push(candidate.clone()); }
+        if seen.insert(candidate.clone()) {
+            candidates.push(candidate.clone());
+        }
     }
     for candidate in &candidates {
         match fs_provider.exists_async(candidate).await {
-            Ok(true) => { log::info!("Remote projects path resolved to: {}", candidate); return candidate.clone(); }
+            Ok(true) => {
+                log::info!("Remote projects path resolved to: {}", candidate);
+                return candidate.clone();
+            }
             _ => continue,
         }
     }
     let fallback = format!("{}/.claude/projects", home);
-    log::info!("No existing remote projects path found, using fallback: {}", fallback);
+    log::info!(
+        "No existing remote projects path found, using fallback: {}",
+        fallback
+    );
     fallback
 }

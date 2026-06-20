@@ -1,16 +1,16 @@
 //! SSH connection manager -- manages russh SSH connections and SFTP sessions.
 
 pub(crate) mod agent_discovery;
+pub(crate) mod auth_trace; // AuthAttempt + Timings enrichment (phase 3a) — pub(crate) so sibling ssh_auth module can import
 mod client_handler;
+mod connect_flow; // establish_raw_connection + build_connected_bundle
 mod connection_state;
-mod connect_flow;      // establish_raw_connection + build_connected_bundle
-mod host_resolver;     // ssh -G system delegation (phase 2)
-mod tcp_probe;        // TCP pre-probe (phase 3a)
-pub(crate) mod auth_trace;  // AuthAttempt + Timings enrichment (phase 3a) — pub(crate) so sibling ssh_auth module can import
+mod host_resolver; // ssh -G system delegation (phase 2)
 mod remote_path_resolver;
 mod ssh_config_merge;
-mod test_flow;         // test() reuses establish_raw_connection
-mod types;             // ConnectRequest / RawConnection / ConnectedBundle
+mod tcp_probe; // TCP pre-probe (phase 3a)
+mod test_flow; // test() reuses establish_raw_connection
+mod types; // ConnectRequest / RawConnection / ConnectedBundle
 
 pub use client_handler::SshClientHandler;
 pub use types::{ConnectRequest, ConnectedBundle, RawConnection};
@@ -20,15 +20,15 @@ use crate::infrastructure::ssh_config_parser::SshConfigParser;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{broadcast, RwLock, watch};
+use tokio::sync::{broadcast, watch, RwLock};
 
 use crate::infrastructure::fs_provider::FsProvider;
+#[cfg(test)]
+use crate::types::ssh::SshConnectionState;
 #[allow(unused_imports)]
 use crate::types::ssh::{
     SshAuthMethod, SshConfigHostEntry, SshConnectionConfig, SshConnectionStatus,
 };
-#[cfg(test)]
-use crate::types::ssh::SshConnectionState;
 
 // Re-export internal state for tests
 pub(crate) use connection_state::SshConnection;
@@ -115,10 +115,7 @@ impl SshConnectionManager {
                 let bundle = match connect_flow::build_connected_bundle(request, raw).await {
                     Ok(b) => b,
                     Err(e) => {
-                        let status = SshConnectionStatus::error(
-                            request_host,
-                            e.clone(),
-                        );
+                        let status = SshConnectionStatus::error(request_host, e.clone());
                         let _ = self.event_sender.send(status.clone());
                         return Ok(status);
                     }
@@ -185,7 +182,8 @@ impl SshConnectionManager {
 
                             // Health check 2: SFTP probe
                             let probe =
-                                tokio::time::timeout(HEALTH_CHECK_TIMEOUT, sftp.metadata("/")).await;
+                                tokio::time::timeout(HEALTH_CHECK_TIMEOUT, sftp.metadata("/"))
+                                    .await;
 
                             match probe {
                                 Ok(Ok(_)) => {}
@@ -208,9 +206,7 @@ impl SshConnectionManager {
                         // Health check failed — clean up safely.
                         // Use take() to atomically claim the connection, preventing
                         // double-cleanup if disconnect() is called concurrently.
-                        log::info!(
-                            "SSH health monitor: cleaning up disconnected session"
-                        );
+                        log::info!("SSH health monitor: cleaning up disconnected session");
 
                         let taken = {
                             let mut conn = connection_lock.write().await;
@@ -239,10 +235,8 @@ impl SshConnectionManager {
             Err(auth_err) => {
                 // AuthError Display impl renders enriched multi-section message
                 // (root + auth chain + timing) when trace is non-empty.
-                let error_status = SshConnectionStatus::error(
-                    request.config.host.clone(),
-                    auth_err.to_string(),
-                );
+                let error_status =
+                    SshConnectionStatus::error(request.config.host.clone(), auth_err.to_string());
                 let _ = self.event_sender.send(error_status.clone());
                 Ok(error_status)
             }
@@ -319,8 +313,7 @@ impl SshConnectionManager {
     #[allow(dead_code)]
     pub async fn get_remote_projects_path(&self) -> Option<String> {
         let conn = self.connection.read().await;
-        conn.as_ref()
-            .and_then(|c| c.remote_projects_path.clone())
+        conn.as_ref().and_then(|c| c.remote_projects_path.clone())
     }
 
     /// Get the FsProvider for the active SSH connection.

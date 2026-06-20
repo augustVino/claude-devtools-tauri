@@ -5,8 +5,8 @@
 //!
 //! Electron reference: `SshConnectionManager.ts` lines 305-329 (`execRemoteCommand`).
 
-use russh::ChannelMsg;
 use russh::client;
+use russh::ChannelMsg;
 
 /// Execute a remote command over SSH.
 ///
@@ -104,6 +104,8 @@ mod tests {
     fn test_module_exists() {
         // Verify the module compiles and the public function is accessible.
         // Actual SSH testing requires a live connection, so this is a compile check.
-        let _ = std::any::type_name::<fn(&mut client::Handle<SshClientHandler>, &str) -> Result<String, String>>();
+        let _ = std::any::type_name::<
+            fn(&mut client::Handle<SshClientHandler>, &str) -> Result<String, String>,
+        >();
     }
 }

@@ -1,8 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use crate::types::config::{NotificationTrigger, TriggerContentType, TriggerMode, TriggerTokenType, TriggerValidationResult};
-    use crate::infrastructure::trigger_manager::{TriggerManager, default_triggers};
     use crate::infrastructure::trigger_manager::apply_updates as au;
+    use crate::infrastructure::trigger_manager::{default_triggers, TriggerManager};
+    use crate::types::config::{
+        NotificationTrigger, TriggerContentType, TriggerMode, TriggerTokenType,
+        TriggerValidationResult,
+    };
     use std::sync::Arc;
 
     fn no_op() {}
@@ -89,13 +92,17 @@ mod tests {
     #[test]
     fn test_default_triggers_all_builtin() {
         let triggers = default_triggers();
-        for t in &triggers { assert_eq!(t.is_builtin, Some(true)); }
+        for t in &triggers {
+            assert_eq!(t.is_builtin, Some(true));
+        }
     }
 
     #[test]
     fn test_default_triggers_all_disabled() {
         let triggers = default_triggers();
-        for t in &triggers { assert!(!t.enabled); }
+        for t in &triggers {
+            assert!(!t.enabled);
+        }
     }
 
     // ===== get_all, get_enabled, get_by_id =====
@@ -108,7 +115,8 @@ mod tests {
 
     #[test]
     fn test_get_enabled_filters_correctly() {
-        let mut triggers = default_triggers(); triggers[0].enabled = true;
+        let mut triggers = default_triggers();
+        triggers[0].enabled = true;
         let manager = make_manager(triggers);
         let enabled = manager.get_enabled();
         assert_eq!(enabled.len(), 1);
@@ -134,7 +142,9 @@ mod tests {
     #[test]
     fn test_add_valid_trigger() {
         let mut manager = make_manager(default_triggers());
-        let result = manager.add(custom_trigger("custom-1", "My Custom Trigger")).unwrap();
+        let result = manager
+            .add(custom_trigger("custom-1", "My Custom Trigger"))
+            .unwrap();
         assert_eq!(result.len(), 4);
         assert_eq!(result[3].id, "custom-1");
     }
@@ -151,13 +161,21 @@ mod tests {
     fn test_add_invalid_trigger_fails() {
         let mut manager = make_manager(default_triggers());
         let trigger = NotificationTrigger {
-            id: "bad-trigger".to_string(), name: "".to_string(),
+            id: "bad-trigger".to_string(),
+            name: "".to_string(),
             enabled: true,
             content_type: crate::types::config::TriggerContentType::ToolResult,
             mode: crate::types::config::TriggerMode::ErrorStatus,
-            require_error: None, tool_name: None, match_field: None,
-            match_pattern: None, token_threshold: None, token_type: None,
-            ignore_patterns: None, is_builtin: None, color: None, repository_ids: None,
+            require_error: None,
+            tool_name: None,
+            match_field: None,
+            match_pattern: None,
+            token_threshold: None,
+            token_type: None,
+            ignore_patterns: None,
+            is_builtin: None,
+            color: None,
+            repository_ids: None,
         };
         assert!(manager.add(trigger).is_err());
     }
@@ -166,14 +184,21 @@ mod tests {
     fn test_add_content_match_without_match_field_fails() {
         let mut manager = make_manager(default_triggers());
         let trigger = NotificationTrigger {
-            id: "cm-no-field".to_string(), name: "Bad Content Match".to_string(),
+            id: "cm-no-field".to_string(),
+            name: "Bad Content Match".to_string(),
             enabled: true,
             content_type: crate::types::config::TriggerContentType::ToolResult,
             mode: crate::types::config::TriggerMode::ContentMatch,
-            match_pattern: Some("test".to_string()), match_field: None,
-            tool_name: None, require_error: None, token_threshold: None,
-            token_type: None, ignore_patterns: None, is_builtin: None,
-            color: None, repository_ids: None,
+            match_pattern: Some("test".to_string()),
+            match_field: None,
+            tool_name: None,
+            require_error: None,
+            token_threshold: None,
+            token_type: None,
+            ignore_patterns: None,
+            is_builtin: None,
+            color: None,
+            repository_ids: None,
         };
         assert!(manager.add(trigger).is_err());
     }
@@ -183,27 +208,41 @@ mod tests {
     #[test]
     fn test_update_trigger_name() {
         let mut manager = make_manager(default_triggers());
-        let result = manager.update("builtin-bash-command", serde_json::json!({"name": "Updated Name"})).unwrap();
+        let result = manager
+            .update(
+                "builtin-bash-command",
+                serde_json::json!({"name": "Updated Name"}),
+            )
+            .unwrap();
         assert_eq!(result[0].name, "Updated Name");
     }
 
     #[test]
     fn test_update_builtin_cannot_change_is_builtin() {
         let mut manager = make_manager(default_triggers());
-        let result = manager.update("builtin-bash-command", serde_json::json!({"isBuiltin": false})).unwrap();
+        let result = manager
+            .update(
+                "builtin-bash-command",
+                serde_json::json!({"isBuiltin": false}),
+            )
+            .unwrap();
         assert_eq!(result[0].is_builtin, Some(true));
     }
 
     #[test]
     fn test_update_nonexistent_fails() {
         let mut manager = make_manager(default_triggers());
-        assert!(manager.update("nonexistent", serde_json::json!({"name": "Nope"})).is_err());
+        assert!(manager
+            .update("nonexistent", serde_json::json!({"name": "Nope"}))
+            .is_err());
     }
 
     #[test]
     fn test_update_to_invalid_state_fails() {
         let mut manager = make_manager(default_triggers());
-        assert!(manager.update("builtin-bash-command", serde_json::json!({"name": ""})).is_err());
+        assert!(manager
+            .update("builtin-bash-command", serde_json::json!({"name": ""}))
+            .is_err());
     }
 
     // ===== remove =====
@@ -241,13 +280,21 @@ mod tests {
     #[test]
     fn test_validate_valid_content_match_trigger() {
         let manager = make_manager(default_triggers());
-        assert!(manager.validate(&content_match_trigger("t", "V", r"\.env$")).valid);
+        assert!(
+            manager
+                .validate(&content_match_trigger("t", "V", r"\.env$"))
+                .valid
+        );
     }
 
     #[test]
     fn test_validate_valid_token_threshold_trigger() {
         let manager = make_manager(default_triggers());
-        assert!(manager.validate(&token_threshold_trigger("t", "V", 5000)).valid);
+        assert!(
+            manager
+                .validate(&token_threshold_trigger("t", "V", 5000))
+                .valid
+        );
     }
 
     #[test]
@@ -260,13 +307,21 @@ mod tests {
     fn test_validate_content_match_missing_match_field() {
         let manager = make_manager(default_triggers());
         let trigger = NotificationTrigger {
-            id: "t".to_string(), name: "Bad CM".to_string(), enabled: true,
+            id: "t".to_string(),
+            name: "Bad CM".to_string(),
+            enabled: true,
             content_type: crate::types::config::TriggerContentType::ToolResult,
             mode: crate::types::config::TriggerMode::ContentMatch,
-            match_pattern: Some("test".to_string()), match_field: None,
-            tool_name: None, require_error: None, token_threshold: None,
-            token_type: None, ignore_patterns: None, is_builtin: None,
-            color: None, repository_ids: None,
+            match_pattern: Some("test".to_string()),
+            match_field: None,
+            tool_name: None,
+            require_error: None,
+            token_threshold: None,
+            token_type: None,
+            ignore_patterns: None,
+            is_builtin: None,
+            color: None,
+            repository_ids: None,
         };
         assert!(!manager.validate(&trigger).valid);
     }
@@ -275,13 +330,21 @@ mod tests {
     fn test_validate_content_match_tool_use_without_tool_name_ok() {
         let manager = make_manager(default_triggers());
         let trigger = NotificationTrigger {
-            id: "t".to_string(), name: "CM ToolUse Any".to_string(), enabled: true,
+            id: "t".to_string(),
+            name: "CM ToolUse Any".to_string(),
+            enabled: true,
             content_type: crate::types::config::TriggerContentType::ToolUse,
             mode: crate::types::config::TriggerMode::ContentMatch,
-            match_pattern: Some("test".to_string()), match_field: None,
-            tool_name: None, require_error: None, token_threshold: None,
-            token_type: None, ignore_patterns: None, is_builtin: None,
-            color: None, repository_ids: None,
+            match_pattern: Some("test".to_string()),
+            match_field: None,
+            tool_name: None,
+            require_error: None,
+            token_threshold: None,
+            token_type: None,
+            ignore_patterns: None,
+            is_builtin: None,
+            color: None,
+            repository_ids: None,
         };
         assert!(manager.validate(&trigger).valid);
     }
@@ -289,20 +352,32 @@ mod tests {
     #[test]
     fn test_validate_token_threshold_zero_passes() {
         let manager = make_manager(default_triggers());
-        assert!(manager.validate(&token_threshold_trigger("t", "Z", 0)).valid);
+        assert!(
+            manager
+                .validate(&token_threshold_trigger("t", "Z", 0))
+                .valid
+        );
     }
 
     #[test]
     fn test_validate_token_threshold_missing_type_fails() {
         let manager = make_manager(default_triggers());
         let trigger = NotificationTrigger {
-            id: "t".to_string(), name: "Missing Type".to_string(), enabled: true,
+            id: "t".to_string(),
+            name: "Missing Type".to_string(),
+            enabled: true,
             content_type: crate::types::config::TriggerContentType::ToolResult,
             mode: crate::types::config::TriggerMode::TokenThreshold,
-            token_threshold: Some(1000), token_type: None,
-            tool_name: None, match_field: None, match_pattern: None,
-            require_error: None, ignore_patterns: None, is_builtin: None,
-            color: None, repository_ids: None,
+            token_threshold: Some(1000),
+            token_type: None,
+            tool_name: None,
+            match_field: None,
+            match_pattern: None,
+            require_error: None,
+            ignore_patterns: None,
+            is_builtin: None,
+            color: None,
+            repository_ids: None,
         };
         assert!(!manager.validate(&trigger).valid);
     }
@@ -310,7 +385,11 @@ mod tests {
     #[test]
     fn test_validate_invalid_regex_pattern() {
         let manager = make_manager(default_triggers());
-        assert!(!manager.validate(&content_match_trigger("t", "BR", r"(?P<unclosed")).valid);
+        assert!(
+            !manager
+                .validate(&content_match_trigger("t", "BR", r"(?P<unclosed"))
+                .valid
+        );
     }
 
     #[test]
@@ -328,20 +407,25 @@ mod tests {
         let trigger = custom_trigger("t", "Valid");
         let manager = make_manager(default_triggers());
         // 两者应产生完全相同的结果
-        assert_eq!(manager.validate(&trigger), TriggerManager::validate_trigger_only(&trigger));
+        assert_eq!(
+            manager.validate(&trigger),
+            TriggerManager::validate_trigger_only(&trigger)
+        );
     }
 
     // ===== merge_triggers =====
 
     #[test]
     fn test_merge_triggers_adds_missing_builtins() {
-        let merged = TriggerManager::merge_triggers(vec![custom_trigger("c", "C")], &default_triggers());
+        let merged =
+            TriggerManager::merge_triggers(vec![custom_trigger("c", "C")], &default_triggers());
         assert_eq!(merged.len(), 4);
     }
 
     #[test]
     fn test_merge_triggers_preserves_existing() {
-        let mut loaded = default_triggers(); loaded[0].enabled = true;
+        let mut loaded = default_triggers();
+        loaded[0].enabled = true;
         let merged = TriggerManager::merge_triggers(loaded, &default_triggers());
         assert_eq!(merged.len(), 3);
         assert!(merged[0].enabled);
@@ -350,15 +434,24 @@ mod tests {
     #[test]
     fn test_merge_triggers_removes_deprecated_builtins() {
         let deprecated = NotificationTrigger {
-            id: "builtin-deprecated-old".to_string(), name: "Old Deprecated".to_string(),
+            id: "builtin-deprecated-old".to_string(),
+            name: "Old Deprecated".to_string(),
             enabled: false,
             content_type: crate::types::config::TriggerContentType::ToolResult,
             mode: crate::types::config::TriggerMode::ErrorStatus,
-            require_error: None, tool_name: None, match_field: None,
-            match_pattern: None, token_threshold: None, token_type: None,
-            ignore_patterns: None, is_builtin: Some(true), color: None, repository_ids: None,
+            require_error: None,
+            tool_name: None,
+            match_field: None,
+            match_pattern: None,
+            token_threshold: None,
+            token_type: None,
+            ignore_patterns: None,
+            is_builtin: Some(true),
+            color: None,
+            repository_ids: None,
         };
-        let mut loaded = default_triggers(); loaded.push(deprecated);
+        let mut loaded = default_triggers();
+        loaded.push(deprecated);
         let merged = TriggerManager::merge_triggers(loaded, &default_triggers());
         assert_eq!(merged.len(), 3);
         assert!(!merged.iter().any(|t| t.id == "builtin-deprecated-old"));
@@ -377,17 +470,26 @@ mod tests {
 
     #[test]
     fn test_infer_mode_from_require_error() {
-        assert_eq!(au::infer_mode(&custom_trigger("t", "T")), crate::types::config::TriggerMode::ErrorStatus);
+        assert_eq!(
+            au::infer_mode(&custom_trigger("t", "T")),
+            crate::types::config::TriggerMode::ErrorStatus
+        );
     }
 
     #[test]
     fn test_infer_mode_from_match_pattern() {
-        assert_eq!(au::infer_mode(&content_match_trigger("t", "T", "p")), crate::types::config::TriggerMode::ContentMatch);
+        assert_eq!(
+            au::infer_mode(&content_match_trigger("t", "T", "p")),
+            crate::types::config::TriggerMode::ContentMatch
+        );
     }
 
     #[test]
     fn test_infer_mode_from_token_threshold() {
-        assert_eq!(au::infer_mode(&token_threshold_trigger("t", "T", 5000)), crate::types::config::TriggerMode::TokenThreshold);
+        assert_eq!(
+            au::infer_mode(&token_threshold_trigger("t", "T", 5000)),
+            crate::types::config::TriggerMode::TokenThreshold
+        );
     }
 
     // ===== set_triggers =====
@@ -404,14 +506,23 @@ mod tests {
     #[test]
     fn test_apply_updates_repository_ids() {
         let mut trigger = default_triggers()[0].clone();
-        au::apply_updates(&mut trigger, &serde_json::json!({"repositoryIds": ["repo1", "repo2"]}));
-        assert_eq!(trigger.repository_ids, Some(vec!["repo1".to_string(), "repo2".to_string()]));
+        au::apply_updates(
+            &mut trigger,
+            &serde_json::json!({"repositoryIds": ["repo1", "repo2"]}),
+        );
+        assert_eq!(
+            trigger.repository_ids,
+            Some(vec!["repo1".to_string(), "repo2".to_string()])
+        );
     }
 
     #[test]
     fn test_apply_updates_token_type() {
         let mut trigger = default_triggers()[0].clone();
         au::apply_updates(&mut trigger, &serde_json::json!({"tokenType": "output"}));
-        assert_eq!(trigger.token_type, Some(crate::types::config::TriggerTokenType::Output));
+        assert_eq!(
+            trigger.token_type,
+            Some(crate::types::config::TriggerTokenType::Output)
+        );
     }
 }

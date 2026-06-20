@@ -14,5 +14,7 @@ impl client::Handler for SshClientHandler {
     async fn check_server_key(
         &mut self,
         _server_public_key: &russh::keys::key::PublicKey,
-    ) -> Result<bool, Self::Error> { Ok(true) }
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
 }

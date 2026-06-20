@@ -1,14 +1,14 @@
 //! ConfigServiceImpl — 含编排逻辑的配置操作具体实现。
 
-use std::sync::Arc;
 use async_trait::async_trait;
+use std::sync::Arc;
 use tauri::AppHandle;
 use tokio::sync::RwLock;
 
 use crate::error::AppError;
-use crate::infrastructure::{ConfigManager, DataCache, ContextManager, NotificationManager};
-use crate::types::config::{AppConfig, NotificationTrigger, TriggerTestResult};
+use crate::infrastructure::{ConfigManager, ContextManager, DataCache, NotificationManager};
 use crate::services::{ConfigService, SearchServiceFull};
+use crate::types::config::{AppConfig, NotificationTrigger, TriggerTestResult};
 
 pub struct ConfigServiceImpl {
     config_manager: Arc<ConfigManager>,
@@ -51,7 +51,9 @@ impl ConfigService for ConfigServiceImpl {
         data: serde_json::Value,
     ) -> Result<AppConfig, AppError> {
         let has_claude_root_change = section == "general"
-            && data.as_object().map_or(false, |obj| obj.contains_key("claudeRootPath"));
+            && data
+                .as_object()
+                .map_or(false, |obj| obj.contains_key("claudeRootPath"));
 
         // 【审查修正 #4】透传 AppError，不额外包装。
         // ConfigManager::update_config() 已返回 Result<AppConfig, AppError>，
@@ -71,10 +73,10 @@ impl ConfigService for ConfigServiceImpl {
                 self.cache.clone(),
                 &self.app_handle,
                 &self.search_service,
-            ).await {
-                log::error!(
-                    "Failed to rebuild local context after claude root path change: {e}"
-                );
+            )
+            .await
+            {
+                log::error!("Failed to rebuild local context after claude root path change: {e}");
                 // NOT returning error — config update itself succeeded
             }
         }
@@ -87,9 +89,13 @@ impl ConfigService for ConfigServiceImpl {
             // ConfigManager 已返回 Result<AppConfig, AppError>，直接透传（审查修正 #4）
             self.config_manager.snooze_until_tomorrow().await
         } else if minutes <= 0 {
-            Err(AppError::InvalidInput("Minutes must be a positive number".into()))
+            Err(AppError::InvalidInput(
+                "Minutes must be a positive number".into(),
+            ))
         } else if minutes > 24 * 60 {
-            Err(AppError::InvalidInput("Minutes must be 1440 or less (24 hours)".into()))
+            Err(AppError::InvalidInput(
+                "Minutes must be 1440 or less (24 hours)".into(),
+            ))
         } else {
             // ConfigManager 已返回 Result<AppConfig, AppError>，直接透传
             self.config_manager.snooze(minutes as u32).await

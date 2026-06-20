@@ -4,10 +4,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use notify_debouncer_mini::{new_debouncer, DebouncedEvent};
 use notify_debouncer_mini::notify::RecursiveMode;
+use notify_debouncer_mini::{new_debouncer, DebouncedEvent};
 
-use super::{DebouncedWatcher, DEBOUNCE_MS, FileWatcher};
+use super::{DebouncedWatcher, FileWatcher, DEBOUNCE_MS};
 use crate::infrastructure::fs_provider::FsProvider;
 use crate::types::domain::{FileChangeEvent, FileChangeType};
 
@@ -51,9 +51,11 @@ impl FileWatcher {
         // 启动异步任务处理防抖后的事件
         tokio::spawn(async move {
             while let Some(debounced_event) = rx.recv().await {
-                if let Some(change_event) =
-                    Self::process_debounced_event_with_provider(&fs_provider, &debounced_event, &watch_path)
-                {
+                if let Some(change_event) = Self::process_debounced_event_with_provider(
+                    &fs_provider,
+                    &debounced_event,
+                    &watch_path,
+                ) {
                     let _ = sender.send(change_event);
                 }
             }

@@ -1,8 +1,8 @@
 //! Memory Service trait — per-project Claude memory directory reader.
 
-use async_trait::async_trait;
 use crate::error::AppError;
 use crate::types::memory::{MemoryFile, MemoryIndex};
+use async_trait::async_trait;
 
 #[async_trait]
 pub trait MemoryService: Send + Sync {

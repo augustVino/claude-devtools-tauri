@@ -4,5 +4,5 @@
 /// 应用程序入口点。
 /// 委托给 `app_lib::run()` 执行 Tauri 应用初始化。
 fn main() {
-  app_lib::run();
+    app_lib::run();
 }

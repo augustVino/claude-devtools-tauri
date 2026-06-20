@@ -129,7 +129,11 @@ mod tests {
     #[test]
     fn parse_entries() {
         let md = "- [User Role](user-role.md) — user profile info\n- [Feedback](feedback.md) — correction guidance";
-        let dir = vec!["user-role.md".into(), "feedback.md".into(), "MEMORY.md".into()];
+        let dir = vec![
+            "user-role.md".into(),
+            "feedback.md".into(),
+            "MEMORY.md".into(),
+        ];
         let result = parse_memory_index(md, &dir);
         assert_eq!(result.entries.len(), 2);
         assert_eq!(result.entries[0].title, "User Role");
@@ -150,7 +154,10 @@ mod tests {
             "another-orphan.md".into(),
         ];
         let result = parse_memory_index(md, &dir);
-        assert_eq!(result.orphan_files, vec!["another-orphan.md", "unlinked.md"]);
+        assert_eq!(
+            result.orphan_files,
+            vec!["another-orphan.md", "unlinked.md"]
+        );
     }
 
     #[test]
@@ -182,7 +189,10 @@ mod tests {
             error: None,
         };
         let json = serde_json::to_string(&result).unwrap();
-        assert!(json.contains("\"success\":true"), "Expected boolean true: {json}");
+        assert!(
+            json.contains("\"success\":true"),
+            "Expected boolean true: {json}"
+        );
         assert!(!json.contains("\"true\""), "Should not be string: {json}");
     }
 
@@ -197,7 +207,10 @@ mod tests {
         };
         let json = serde_json::to_string(&target).unwrap();
         assert!(json.contains("\"iconName\""), "Expected camelCase: {json}");
-        assert!(json.contains("\"shortcutKey\""), "Expected camelCase: {json}");
+        assert!(
+            json.contains("\"shortcutKey\""),
+            "Expected camelCase: {json}"
+        );
         assert!(!json.contains("icon_name"), "No snake_case: {json}");
     }
 

@@ -27,9 +27,7 @@ fn default_ssh_config_path() -> PathBuf {
 
 /// Check if a host pattern contains wildcards (`*` or `?`) or starts with `!`.
 fn is_wildcard_pattern(pattern: &str) -> bool {
-    pattern.contains('*')
-        || pattern.contains('?')
-        || pattern.starts_with('!')
+    pattern.contains('*') || pattern.contains('?') || pattern.starts_with('!')
 }
 
 /// Extract unique non-wildcard host aliases from raw SSH config text.
@@ -213,9 +211,7 @@ fn expand_includes_inner(
 
         // Tilde expansion
         let expanded = if pattern.starts_with("~/") {
-            home.join(&pattern[2..])
-                .to_string_lossy()
-            .to_string()
+            home.join(&pattern[2..]).to_string_lossy().to_string()
         } else {
             pattern.to_string()
         };
@@ -223,9 +219,7 @@ fn expand_includes_inner(
         // Check if pattern contains glob characters
         if expanded.contains('*') || expanded.contains('?') {
             // Glob expansion
-            let dir = Path::new(&expanded)
-                .parent()
-                .unwrap_or(Path::new("."));
+            let dir = Path::new(&expanded).parent().unwrap_or(Path::new("."));
             let glob_part = Path::new(&expanded)
                 .file_name()
                 .map(|f| f.to_string_lossy().to_string())
@@ -370,8 +364,8 @@ impl SshConfigParser {
             return Ok(None);
         }
 
-        let config_text =
-            fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+        let config_text = fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
 
         // Expand Include directives before parsing
         let expanded_text = expand_includes(&config_text, 10);
@@ -382,10 +376,8 @@ impl SshConfigParser {
     pub fn from_str(config_text: &str) -> Result<Self, String> {
         let entries = parse_and_resolve(config_text)?;
         let aliases: Vec<String> = entries.iter().map(|e| e.alias.clone()).collect();
-        let entries_by_alias: HashMap<String, SshConfigHostEntry> = entries
-            .into_iter()
-            .map(|e| (e.alias.clone(), e))
-            .collect();
+        let entries_by_alias: HashMap<String, SshConfigHostEntry> =
+            entries.into_iter().map(|e| (e.alias.clone(), e)).collect();
 
         Ok(Self {
             entries_by_alias,
@@ -463,7 +455,10 @@ mod tests {
         assert_eq!(host.port, Some(2222));
         assert_eq!(host.identity_files.len(), 1);
         let home = dirs::home_dir().unwrap();
-        assert_eq!(host.identity_files[0], home.join(".ssh/id_rsa").to_string_lossy().to_string());
+        assert_eq!(
+            host.identity_files[0],
+            home.join(".ssh/id_rsa").to_string_lossy().to_string()
+        );
     }
 
     #[test]
@@ -564,7 +559,10 @@ Host no-hostname
             "HostName same as alias should not be returned"
         );
 
-        let different = hosts.iter().find(|h| h.alias == "different-hostname").unwrap();
+        let different = hosts
+            .iter()
+            .find(|h| h.alias == "different-hostname")
+            .unwrap();
         assert_eq!(different.host_name.as_deref(), Some("192.168.1.1"));
 
         let no_hn = hosts.iter().find(|h| h.alias == "no-hostname").unwrap();
@@ -601,33 +599,64 @@ Host with-bare-tilde
         // Single key: should resolve ~ to home dir
         let single = hosts.iter().find(|h| h.alias == "with-single-key").unwrap();
         assert_eq!(single.identity_files.len(), 1);
-        assert_eq!(single.identity_files[0], home.join(".ssh/id_ed25519").to_string_lossy().to_string());
+        assert_eq!(
+            single.identity_files[0],
+            home.join(".ssh/id_ed25519").to_string_lossy().to_string()
+        );
 
         // Multiple keys on same line: space-separated values should all be parsed
-        let multi_same_line = hosts.iter().find(|h| h.alias == "with-multi-keys-same-line").unwrap();
+        let multi_same_line = hosts
+            .iter()
+            .find(|h| h.alias == "with-multi-keys-same-line")
+            .unwrap();
         assert_eq!(multi_same_line.identity_files.len(), 2);
-        assert_eq!(multi_same_line.identity_files[0], home.join(".ssh/custom_key").to_string_lossy().to_string());
-        assert_eq!(multi_same_line.identity_files[1], home.join(".ssh/backup_key").to_string_lossy().to_string());
+        assert_eq!(
+            multi_same_line.identity_files[0],
+            home.join(".ssh/custom_key").to_string_lossy().to_string()
+        );
+        assert_eq!(
+            multi_same_line.identity_files[1],
+            home.join(".ssh/backup_key").to_string_lossy().to_string()
+        );
 
         // Multiple keys on separate lines: BOTH must be captured (P0 scenario)
-        let multi_separate = hosts.iter().find(|h| h.alias == "with-multi-keys-separate-lines").unwrap();
-        assert_eq!(multi_separate.identity_files.len(), 2, "Separate-line IdentityFiles must both be captured");
-        assert_eq!(multi_separate.identity_files[0], home.join(".ssh/first_key").to_string_lossy().to_string());
-        assert_eq!(multi_separate.identity_files[1], home.join(".ssh/second_key").to_string_lossy().to_string());
+        let multi_separate = hosts
+            .iter()
+            .find(|h| h.alias == "with-multi-keys-separate-lines")
+            .unwrap();
+        assert_eq!(
+            multi_separate.identity_files.len(),
+            2,
+            "Separate-line IdentityFiles must both be captured"
+        );
+        assert_eq!(
+            multi_separate.identity_files[0],
+            home.join(".ssh/first_key").to_string_lossy().to_string()
+        );
+        assert_eq!(
+            multi_separate.identity_files[1],
+            home.join(".ssh/second_key").to_string_lossy().to_string()
+        );
 
         // No IdentityFile directive: empty vec
         let none = hosts.iter().find(|h| h.alias == "without-key").unwrap();
         assert!(none.identity_files.is_empty());
 
         // Absolute path (no ~): passed through as-is
-        let abs = hosts.iter().find(|h| h.alias == "with-absolute-path").unwrap();
+        let abs = hosts
+            .iter()
+            .find(|h| h.alias == "with-absolute-path")
+            .unwrap();
         assert_eq!(abs.identity_files.len(), 1);
         assert_eq!(abs.identity_files[0], "/absolute/path/to/key");
 
         // Bare tilde: expands to home directory
         let bare_tilde = hosts.iter().find(|h| h.alias == "with-bare-tilde").unwrap();
         assert_eq!(bare_tilde.identity_files.len(), 1);
-        assert_eq!(bare_tilde.identity_files[0], home.to_string_lossy().to_string());
+        assert_eq!(
+            bare_tilde.identity_files[0],
+            home.to_string_lossy().to_string()
+        );
     }
 
     #[test]
@@ -720,8 +749,17 @@ Host visible
         let main_file = dir.path().join("config");
         let include_file = dir.path().join("extra");
 
-        write!(File::create(&include_file).unwrap(), "Host included-host\n    HostName 10.0.0.99\n    User inc\n").unwrap();
-        write!(File::create(&main_file).unwrap(), "Host main-host\n    HostName 10.0.0.1\n\nInclude {}\n", include_file.display()).unwrap();
+        write!(
+            File::create(&include_file).unwrap(),
+            "Host included-host\n    HostName 10.0.0.99\n    User inc\n"
+        )
+        .unwrap();
+        write!(
+            File::create(&main_file).unwrap(),
+            "Host main-host\n    HostName 10.0.0.1\n\nInclude {}\n",
+            include_file.display()
+        )
+        .unwrap();
 
         let parser = SshConfigParser::from_path(&main_file).unwrap().unwrap();
         let hosts = parser.get_hosts();
@@ -742,12 +780,29 @@ Host visible
         let conf_dir = dir.path().join("config.d");
         std::fs::create_dir(&conf_dir).unwrap();
 
-        write!(File::create(conf_dir.join("work.conf")).unwrap(), "Host work-server\n    HostName work.example.com\n").unwrap();
-        write!(File::create(conf_dir.join("personal.conf")).unwrap(), "Host personal-server\n    HostName home.example.com\n").unwrap();
+        write!(
+            File::create(conf_dir.join("work.conf")).unwrap(),
+            "Host work-server\n    HostName work.example.com\n"
+        )
+        .unwrap();
+        write!(
+            File::create(conf_dir.join("personal.conf")).unwrap(),
+            "Host personal-server\n    HostName home.example.com\n"
+        )
+        .unwrap();
         // This file should NOT match the glob
-        write!(File::create(conf_dir.join("readme.txt")).unwrap(), "not a config file\n").unwrap();
+        write!(
+            File::create(conf_dir.join("readme.txt")).unwrap(),
+            "not a config file\n"
+        )
+        .unwrap();
 
-        write!(File::create(&main_file).unwrap(), "Host main\n    HostName main.example.com\n\nInclude {}/*.conf\n", conf_dir.display()).unwrap();
+        write!(
+            File::create(&main_file).unwrap(),
+            "Host main\n    HostName main.example.com\n\nInclude {}/*.conf\n",
+            conf_dir.display()
+        )
+        .unwrap();
 
         let parser = SshConfigParser::from_path(&main_file).unwrap().unwrap();
         let hosts = parser.get_hosts();
@@ -765,7 +820,11 @@ Host visible
         let dir = tempfile::tempdir().unwrap();
         let main_file = dir.path().join("config");
 
-        write!(File::create(&main_file).unwrap(), "Host main\n    HostName 10.0.0.1\n\nInclude /nonexistent/path/config\n").unwrap();
+        write!(
+            File::create(&main_file).unwrap(),
+            "Host main\n    HostName 10.0.0.1\n\nInclude /nonexistent/path/config\n"
+        )
+        .unwrap();
 
         let parser = SshConfigParser::from_path(&main_file).unwrap().unwrap();
         let hosts = parser.get_hosts();
@@ -812,7 +871,11 @@ Host visible
         let main_file = dir.path().join("config");
         let include_file = dir.path().join("extra");
 
-        write!(File::create(&include_file).unwrap(), "Host extra-host\n    HostName 10.0.0.99\n").unwrap();
+        write!(
+            File::create(&include_file).unwrap(),
+            "Host extra-host\n    HostName 10.0.0.99\n"
+        )
+        .unwrap();
 
         // Create a symlink from loop.conf -> include_file (not a cycle by itself)
         #[cfg(unix)]
@@ -825,13 +888,17 @@ Host visible
             "Host main\n    HostName 10.0.0.1\n\nInclude {}\nInclude {}\n",
             include_file.display(),
             dir.path().join("loop.conf").display()
-        ).unwrap();
+        )
+        .unwrap();
 
         let parser = SshConfigParser::from_path(&main_file).unwrap().unwrap();
         let hosts = parser.get_hosts();
         // extra-host should appear only once despite being included twice (via direct + symlink)
         let extra_count = hosts.iter().filter(|h| h.alias == "extra-host").count();
-        assert_eq!(extra_count, 1, "extra-host should appear exactly once (deduplicated via symlink cycle detection)");
+        assert_eq!(
+            extra_count, 1,
+            "extra-host should appear exactly once (deduplicated via symlink cycle detection)"
+        );
     }
 
     // ── IdentityFile extraction helper tests ─────────────────────
@@ -839,13 +906,28 @@ Host visible
     #[test]
     fn test_expand_tilde_in_identity_path() {
         let home = dirs::home_dir().unwrap();
-        assert_eq!(expand_tilde_in_identity_path("~/Documents/key"), home.join("Documents/key").to_string_lossy().to_string());
-        assert_eq!(expand_tilde_in_identity_path("~"), home.to_string_lossy().to_string());
-        assert_eq!(expand_tilde_in_identity_path("/etc/ssh/key"), "/etc/ssh/key");
-        assert_eq!(expand_tilde_in_identity_path("relative/key"), "relative/key");
+        assert_eq!(
+            expand_tilde_in_identity_path("~/Documents/key"),
+            home.join("Documents/key").to_string_lossy().to_string()
+        );
+        assert_eq!(
+            expand_tilde_in_identity_path("~"),
+            home.to_string_lossy().to_string()
+        );
+        assert_eq!(
+            expand_tilde_in_identity_path("/etc/ssh/key"),
+            "/etc/ssh/key"
+        );
+        assert_eq!(
+            expand_tilde_in_identity_path("relative/key"),
+            "relative/key"
+        );
         assert_eq!(expand_tilde_in_identity_path(""), "");
         // ~ in middle of path: NOT expanded
-        assert_eq!(expand_tilde_in_identity_path("/path/to/~user/key"), "/path/to/~user/key");
+        assert_eq!(
+            expand_tilde_in_identity_path("/path/to/~user/key"),
+            "/path/to/~user/key"
+        );
     }
 
     #[test]
@@ -864,8 +946,14 @@ Host after
         let files = extract_identity_files_for_alias(config, "target");
         let home = dirs::home_dir().unwrap();
         assert_eq!(files.len(), 2);
-        assert_eq!(files[0], home.join(".ssh/target_key1").to_string_lossy().to_string());
-        assert_eq!(files[1], home.join(".ssh/target_key2").to_string_lossy().to_string());
+        assert_eq!(
+            files[0],
+            home.join(".ssh/target_key1").to_string_lossy().to_string()
+        );
+        assert_eq!(
+            files[1],
+            home.join(".ssh/target_key2").to_string_lossy().to_string()
+        );
         // Must not pick up IdentityFile from other blocks
         assert!(!files.iter().any(|f| f.contains("other_key")));
         assert!(!files.iter().any(|f| f.contains("after_key")));
@@ -873,7 +961,10 @@ Host after
 
     #[test]
     fn test_extract_identity_files_nonexistent_alias() {
-        let files = extract_identity_files_for_alias("Host real\n    IdentityFile ~/.ssh/real_key\n", "nonexistent");
+        let files = extract_identity_files_for_alias(
+            "Host real\n    IdentityFile ~/.ssh/real_key\n",
+            "nonexistent",
+        );
         assert!(files.is_empty());
     }
 }

@@ -14,7 +14,9 @@ pub(crate) fn normalize_claude_root_path(path: &str) -> String {
         match comp {
             std::path::Component::CurDir => {}
             std::path::Component::ParentDir => {
-                if !normalized.pop() { normalized.push(comp); }
+                if !normalized.pop() {
+                    normalized.push(comp);
+                }
             }
             _ => normalized.push(comp),
         }
@@ -22,5 +24,9 @@ pub(crate) fn normalize_claude_root_path(path: &str) -> String {
 
     let result = normalized.to_string_lossy().to_string();
     let trimmed = result.trim_end_matches('/');
-    if trimmed.is_empty() { "/".to_string() } else { trimmed.to_string() }
+    if trimmed.is_empty() {
+        "/".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }

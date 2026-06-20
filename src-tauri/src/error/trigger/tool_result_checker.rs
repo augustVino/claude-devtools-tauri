@@ -7,9 +7,7 @@ use crate::error::error_message_builder::{
     create_detected_error, extract_error_message, find_tool_name_by_tool_use_id,
     CreateDetectedErrorParams,
 };
-use crate::error::trigger_matcher::{
-    matches_ignore_patterns, matches_pattern,
-};
+use crate::error::trigger_matcher::{matches_ignore_patterns, matches_pattern};
 use crate::types::config::NotificationTrigger;
 use crate::types::messages::ParsedMessage;
 use crate::utils::path_decoder::extract_project_name;
@@ -42,9 +40,8 @@ pub fn check_tool_result_trigger(
     file_path: &str,
     line_number: u64,
 ) -> Option<crate::types::config::DetectedError> {
-    let tool_results = extract_tool_results(message, &|msg, id| {
-        find_tool_name_by_tool_use_id(msg, id)
-    });
+    let tool_results =
+        extract_tool_results(message, &|msg, id| find_tool_name_by_tool_use_id(msg, id));
 
     let ignore_patterns: &[String] = trigger.ignore_patterns.as_deref().unwrap_or(&[]);
     let timestamp_ms = parse_timestamp_to_ms(&message.timestamp);
@@ -265,7 +262,11 @@ mod tests {
                 "Bash",
                 json!({"command": "npm build"}),
             )],
-            vec![make_tool_result("tc1", json!("Build failed: error E0425"), true)],
+            vec![make_tool_result(
+                "tc1",
+                json!("Build failed: error E0425"),
+                true,
+            )],
         );
 
         let trigger = make_error_trigger();
@@ -331,7 +332,11 @@ mod tests {
                 "Bash",
                 json!({"command": "npm build"}),
             )],
-            vec![make_tool_result("tc1", json!("Build failed: error E0425"), true)],
+            vec![make_tool_result(
+                "tc1",
+                json!("Build failed: error E0425"),
+                true,
+            )],
         );
 
         let tool_use_map = HashMap::new();

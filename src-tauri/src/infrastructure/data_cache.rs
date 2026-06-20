@@ -3,8 +3,8 @@
 //! 从 Electron `DataCache.ts` 移植而来。使用 `moka` 库内置的
 //! LRU 淘汰与 TTL 过期机制，无需手动管理定时器。
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use moka::future::Cache;
@@ -97,7 +97,8 @@ impl DataCache {
         session_id: &str,
         fingerprint: Option<&str>,
     ) -> Option<serde_json::Value> {
-        self.get(&Self::build_key(project_id, session_id), fingerprint).await
+        self.get(&Self::build_key(project_id, session_id), fingerprint)
+            .await
     }
 
     /// 将会话数据存入缓存。
@@ -108,7 +109,8 @@ impl DataCache {
         value: serde_json::Value,
         fingerprint: Option<&str>,
     ) {
-        self.set(&Self::build_key(project_id, session_id), value, fingerprint).await;
+        self.set(&Self::build_key(project_id, session_id), value, fingerprint)
+            .await;
     }
 
     // ---- 子代理缓存 -------------------------------------------------------
@@ -120,8 +122,11 @@ impl DataCache {
         session_id: &str,
         subagent_id: &str,
     ) -> Option<serde_json::Value> {
-        self.get(&Self::build_subagent_key(project_id, session_id, subagent_id), None)
-            .await
+        self.get(
+            &Self::build_subagent_key(project_id, session_id, subagent_id),
+            None,
+        )
+        .await
     }
 
     /// 将子代理数据存入缓存。
@@ -161,9 +166,7 @@ impl DataCache {
             return;
         }
         // 会话条目的键格式为 "{projectId}/"
-        self.cache
-            .run_pending_tasks()
-            .await; // 确保迭代时能看到最新状态
+        self.cache.run_pending_tasks().await; // 确保迭代时能看到最新状态
 
         let keys: Vec<String> = self
             .cache
@@ -310,7 +313,9 @@ mod tests {
         let cache = DataCache::new();
         let val = json_val(1);
 
-        cache.set_session("proj-a", "sess-1", val.clone(), None).await;
+        cache
+            .set_session("proj-a", "sess-1", val.clone(), None)
+            .await;
         let got = cache.get_session("proj-a", "sess-1", None).await;
 
         assert_eq!(got, Some(val));
@@ -331,9 +336,7 @@ mod tests {
         cache
             .set_subagent("proj-a", "sess-1", "sub-3", val.clone())
             .await;
-        let got = cache
-            .get_subagent("proj-a", "sess-1", "sub-3")
-            .await;
+        let got = cache.get_subagent("proj-a", "sess-1", "sub-3").await;
 
         assert_eq!(got, Some(val));
     }
@@ -374,7 +377,10 @@ mod tests {
         // 由于 moka 内部批处理机制，无法确定具体哪条被淘汰，
         // 但可以验证缓存数量未超过最大容量。
         let count = cache.entry_count().await;
-        assert!(count <= 3, "cache should not exceed max_capacity, got {count}");
+        assert!(
+            count <= 3,
+            "cache should not exceed max_capacity, got {count}"
+        );
 
         // 最近写入的条目必须仍在缓存中。
         let last = cache.get_session("proj", "sess-3", None).await;
@@ -400,49 +406,37 @@ mod tests {
 
         cache.invalidate_session("proj-a", "sess-inv").await;
 
-        assert!(cache.get_session("proj-a", "sess-inv", None).await.is_none());
-        assert!(
-            cache
-                .get_subagent("proj-a", "sess-inv", "sub-1")
-                .await
-                .is_none()
-        );
-        assert!(
-            cache
-                .get_session("proj-b", "sess-other", None)
-                .await
-                .is_some()
-        );
+        assert!(cache
+            .get_session("proj-a", "sess-inv", None)
+            .await
+            .is_none());
+        assert!(cache
+            .get_subagent("proj-a", "sess-inv", "sub-1")
+            .await
+            .is_none());
+        assert!(cache
+            .get_session("proj-b", "sess-other", None)
+            .await
+            .is_some());
     }
 
     #[tokio::test]
     async fn invalidate_project() {
         let cache = DataCache::new();
 
-        cache
-            .set_session("proj-x", "s1", json_val(10), None)
-            .await;
-        cache
-            .set_session("proj-x", "s2", json_val(11), None)
-            .await;
+        cache.set_session("proj-x", "s1", json_val(10), None).await;
+        cache.set_session("proj-x", "s2", json_val(11), None).await;
         cache
             .set_subagent("proj-x", "s1", "sub-a", json_val(12))
             .await;
         // unrelated
-        cache
-            .set_session("proj-y", "s1", json_val(20), None)
-            .await;
+        cache.set_session("proj-y", "s1", json_val(20), None).await;
 
         cache.invalidate_project("proj-x").await;
 
         assert!(cache.get_session("proj-x", "s1", None).await.is_none());
         assert!(cache.get_session("proj-x", "s2", None).await.is_none());
-        assert!(
-            cache
-                .get_subagent("proj-x", "s1", "sub-a")
-                .await
-                .is_none()
-        );
+        assert!(cache.get_subagent("proj-x", "s1", "sub-a").await.is_none());
         assert!(cache.get_session("proj-y", "s1", None).await.is_some());
     }
 
@@ -499,11 +493,17 @@ mod tests {
         // 在原始实例上禁用，克隆也应反映
         cache.set_enabled(false).await;
         assert!(!cache.is_enabled());
-        assert!(!clone.is_enabled(), "clone should see enabled=false after set_enabled on original");
+        assert!(
+            !clone.is_enabled(),
+            "clone should see enabled=false after set_enabled on original"
+        );
 
         // 克隆上重新启用，原始也应反映
         clone.set_enabled(true).await;
-        assert!(cache.is_enabled(), "original should see enabled=true after set_enabled on clone");
+        assert!(
+            cache.is_enabled(),
+            "original should see enabled=true after set_enabled on clone"
+        );
     }
 
     // -- fingerprint 测试 ---------------------------------------------------
@@ -511,7 +511,9 @@ mod tests {
     #[tokio::test]
     async fn fingerprint_mismatch_invalidates_entry() {
         let cache = DataCache::new();
-        cache.set_session("proj", "sess", json_val(1), Some("fp-v1")).await;
+        cache
+            .set_session("proj", "sess", json_val(1), Some("fp-v1"))
+            .await;
 
         let got = cache.get_session("proj", "sess", Some("fp-v1")).await;
         assert!(got.is_some(), "same fingerprint should hit");
@@ -523,7 +525,9 @@ mod tests {
     #[tokio::test]
     async fn fingerprint_none_skips_check() {
         let cache = DataCache::new();
-        cache.set_session("proj", "sess", json_val(1), Some("fp-v1")).await;
+        cache
+            .set_session("proj", "sess", json_val(1), Some("fp-v1"))
+            .await;
 
         let got = cache.get_session("proj", "sess", None).await;
         assert!(got.is_some(), "no fingerprint should always hit");
@@ -532,8 +536,12 @@ mod tests {
     #[tokio::test]
     async fn set_overwrites_fingerprint() {
         let cache = DataCache::new();
-        cache.set_session("proj", "sess", json_val(1), Some("fp-v1")).await;
-        cache.set_session("proj", "sess", json_val(2), Some("fp-v2")).await;
+        cache
+            .set_session("proj", "sess", json_val(1), Some("fp-v1"))
+            .await;
+        cache
+            .set_session("proj", "sess", json_val(2), Some("fp-v2"))
+            .await;
 
         let got = cache.get_session("proj", "sess", Some("fp-v2")).await;
         assert_eq!(got, Some(json_val(2)));
@@ -542,7 +550,9 @@ mod tests {
     #[tokio::test]
     async fn mismatch_then_none_verifies_invalidation() {
         let cache = DataCache::new();
-        cache.set_session("proj", "sess", json_val(1), Some("fp-v1")).await;
+        cache
+            .set_session("proj", "sess", json_val(1), Some("fp-v1"))
+            .await;
 
         // Mismatch invalidates the entry
         let _ = cache.get_session("proj", "sess", Some("fp-v2")).await;
@@ -557,6 +567,9 @@ mod tests {
         cache.set_session("proj", "sess", json_val(1), None).await;
 
         let got = cache.get_session("proj", "sess", Some("any-fp")).await;
-        assert!(got.is_some(), "entry without fingerprint should match any query fp");
+        assert!(
+            got.is_some(),
+            "entry without fingerprint should match any query fp"
+        );
     }
 }

@@ -6,12 +6,12 @@
 //! `block_in_place` 告知 tokio 当前工作线程将阻塞，调度器会将其他任务移至其他线程，
 //! 从而避免在 tokio async 上下文中调用 `block_on` 导致的 panic。
 
-use std::path::Path;
-use std::sync::Arc;
-use russh_sftp::client::SftpSession;
 use russh_sftp::client::error::Error as SftpError;
+use russh_sftp::client::SftpSession;
 #[allow(unused_imports)]
 use russh_sftp::protocol::{Status as SftpStatus, StatusCode};
+use std::path::Path;
+use std::sync::Arc;
 
 use crate::infrastructure::fs_provider::{FsDirent, FsProvider, FsStatResult};
 
@@ -168,12 +168,20 @@ impl FsProvider for SshFsProvider {
                     SftpErrorKind::NotFound => Ok(false),
                     // 暂时性错误 → 保守返回 true（避免误判路径不存在）
                     SftpErrorKind::Transient => {
-                        log::warn!("SFTP exists transient error for {}: {:?}", path.display(), err);
+                        log::warn!(
+                            "SFTP exists transient error for {}: {:?}",
+                            path.display(),
+                            err
+                        );
                         Ok(true)
                     }
                     // 永久性错误 → false
                     SftpErrorKind::Permanent => {
-                        log::warn!("SFTP exists permanent error for {}: {:?}", path.display(), err);
+                        log::warn!(
+                            "SFTP exists permanent error for {}: {:?}",
+                            path.display(),
+                            err
+                        );
                         Ok(false)
                     }
                 }
@@ -190,13 +198,19 @@ impl FsProvider for SshFsProvider {
             path,
             || {
                 let bytes = self.blocking_sftp(sftp.read(&path_str))?;
-                String::from_utf8(bytes)
-                    .map_err(|e| SftpError::IO(format!("UTF-8 decode error for {}: {}", path_for_log.display(), e)))
+                String::from_utf8(bytes).map_err(|e| {
+                    SftpError::IO(format!(
+                        "UTF-8 decode error for {}: {}",
+                        path_for_log.display(),
+                        e
+                    ))
+                })
             },
             MAX_RETRIES,
             RETRY_BASE_DELAY_MS,
             &|err| classify_sftp_error(err) == SftpErrorKind::Transient,
-        ).map_err(|e| format_sftp_error(path, &e))
+        )
+        .map_err(|e| format_sftp_error(path, &e))
     }
 
     fn read_file_head(&self, path: &Path, max_lines: usize) -> Result<String, String> {
@@ -224,7 +238,8 @@ impl FsProvider for SshFsProvider {
             MAX_RETRIES,
             RETRY_BASE_DELAY_MS,
             &|err| classify_sftp_error(err) == SftpErrorKind::Transient,
-        ).map_err(|e| format_sftp_error(path, &e))
+        )
+        .map_err(|e| format_sftp_error(path, &e))
     }
 
     fn read_dir(&self, path: &Path) -> Result<Vec<FsDirent>, String> {
@@ -235,22 +250,29 @@ impl FsProvider for SshFsProvider {
             path,
             || {
                 self.blocking_sftp(sftp.read_dir(&path_str))
-                    .map(|read_dir| read_dir.map(|entry| {
-                        let meta = entry.metadata();
-                        FsDirent {
-                            name: entry.file_name(),
-                            is_file: entry.file_type().is_file(),
-                            is_directory: entry.file_type().is_dir(),
-                            size: Some(meta.len()),
-                            mtime_ms: Some(crate::utils::time::time_to_ms(meta.modified().ok())),
-                            birthtime_ms: None,
-                        }
-                    }).collect())
+                    .map(|read_dir| {
+                        read_dir
+                            .map(|entry| {
+                                let meta = entry.metadata();
+                                FsDirent {
+                                    name: entry.file_name(),
+                                    is_file: entry.file_type().is_file(),
+                                    is_directory: entry.file_type().is_dir(),
+                                    size: Some(meta.len()),
+                                    mtime_ms: Some(crate::utils::time::time_to_ms(
+                                        meta.modified().ok(),
+                                    )),
+                                    birthtime_ms: None,
+                                }
+                            })
+                            .collect()
+                    })
             },
             MAX_RETRIES,
             RETRY_BASE_DELAY_MS,
             &|err| classify_sftp_error(err) == SftpErrorKind::Transient,
-        ).map_err(|e| format_sftp_error(path, &e))
+        )
+        .map_err(|e| format_sftp_error(path, &e))
     }
 }
 
@@ -395,5 +417,4 @@ mod tests {
 
         assert_eq!(crate::utils::time::time_to_ms(None), 0);
     }
-
 }

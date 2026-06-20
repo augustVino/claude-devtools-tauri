@@ -17,10 +17,7 @@ const HARD_NOISE_TYPES: &[&str] = &[
 ];
 
 /// Tags that indicate a user message is noise (system-generated).
-const HARD_NOISE_TAGS: &[&str] = &[
-    "<local-command-caveat>",
-    "<system-reminder>",
-];
+const HARD_NOISE_TAGS: &[&str] = &["<local-command-caveat>", "<system-reminder>"];
 
 /// Check if a JSONL session file contains at least one non-noise (displayable) entry.
 ///
@@ -45,10 +42,15 @@ pub fn has_non_noise_messages(path: &Path, fs_provider: &dyn FsProvider) -> bool
 
         // Extract fields
         let msg_type = json.get("type").and_then(|v| v.as_str()).unwrap_or("");
-        let is_sidechain = json.get("isSidechain").and_then(|v| v.as_bool()).unwrap_or(false);
-        let model = json.get("model")
-            .and_then(|v| v.as_str())
-            .or_else(|| json.get("message").and_then(|m| m.get("model")).and_then(|v| v.as_str()));
+        let is_sidechain = json
+            .get("isSidechain")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let model = json.get("model").and_then(|v| v.as_str()).or_else(|| {
+            json.get("message")
+                .and_then(|m| m.get("model"))
+                .and_then(|v| v.as_str())
+        });
 
         // Skip hard noise types
         if HARD_NOISE_TYPES.contains(&msg_type) {
@@ -101,7 +103,10 @@ pub fn has_non_noise_messages(path: &Path, fs_provider: &dyn FsProvider) -> bool
             // Array content
             if let Some(blocks) = content.and_then(|c| c.as_array()) {
                 // Has tool_result block -> displayable
-                if blocks.iter().any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result")) {
+                if blocks
+                    .iter()
+                    .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result"))
+                {
                     return true;
                 }
                 // Has text/image blocks -> check noise tags per block
@@ -188,9 +193,7 @@ mod tests {
     fn test_is_meta_returns_true() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("meta.jsonl");
-        let lines = [
-            r#"{"type":"user","content":"","isMeta":true,"isSidechain":false}"#,
-        ];
+        let lines = [r#"{"type":"user","content":"","isMeta":true,"isSidechain":false}"#];
         fs::write(&path, lines.join("\n")).unwrap();
 
         assert!(has_non_noise_messages(&path, &provider()));
@@ -224,9 +227,8 @@ mod tests {
     fn test_sidechain_skipped() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sidechain.jsonl");
-        let lines = [
-            r#"{"type":"assistant","model":"claude-3-opus","isSidechain":true,"message":"side"}"#,
-        ];
+        let lines =
+            [r#"{"type":"assistant","model":"claude-3-opus","isSidechain":true,"message":"side"}"#];
         fs::write(&path, lines.join("\n")).unwrap();
 
         assert!(!has_non_noise_messages(&path, &provider()));
@@ -266,9 +268,7 @@ mod tests {
     fn test_file_history_snapshot_noise() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fhs.jsonl");
-        let lines = [
-            r#"{"type":"file-history-snapshot","files":[]}"#,
-        ];
+        let lines = [r#"{"type":"file-history-snapshot","files":[]}"#];
         fs::write(&path, lines.join("\n")).unwrap();
 
         assert!(!has_non_noise_messages(&path, &provider()));

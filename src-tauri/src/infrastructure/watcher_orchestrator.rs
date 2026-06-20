@@ -11,8 +11,7 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::infrastructure::{
-    ConfigManager, DataCache, FileWatcher, NotificationManager,
-    fs_provider::FsProvider,
+    fs_provider::FsProvider, ConfigManager, DataCache, FileWatcher, NotificationManager,
 };
 use tauri::Manager;
 
@@ -118,7 +117,9 @@ impl WatcherOrchestrator {
                         total_seeded += 1;
                         log::info!(
                             "[seed] Active session found: {}/{} (mtime={}ms)",
-                            project.name, entry.name, mtime_ms
+                            project.name,
+                            entry.name,
+                            mtime_ms
                         );
                     }
                 }
@@ -372,7 +373,10 @@ mod integration_tests {
         }
 
         // Verify callback was called with correct project_id
-        assert!(called.load(Ordering::SeqCst), "Cache invalidate callback should have been fired for test-project-abc123");
+        assert!(
+            called.load(Ordering::SeqCst),
+            "Cache invalidate callback should have been fired for test-project-abc123"
+        );
     }
 
     #[test]

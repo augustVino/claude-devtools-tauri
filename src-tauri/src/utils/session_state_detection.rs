@@ -54,9 +54,7 @@ fn is_ongoing_from_activities(activities: &[Activity]) -> bool {
         .find(|a| {
             matches!(
                 a.kind,
-                ActivityType::TextOutput
-                    | ActivityType::Interruption
-                    | ActivityType::ExitPlanMode
+                ActivityType::TextOutput | ActivityType::Interruption | ActivityType::ExitPlanMode
             )
         })
         .map(|a| a.index);
@@ -97,8 +95,7 @@ pub fn check_messages_ongoing(messages: &[ParsedMessage]) -> bool {
     let mut activity_index: usize = 0;
     // 跟踪 shutdown_response 类型的 tool_use ID，
     // 以便其 tool_result 也被标记为结束事件
-    let mut shutdown_tool_ids: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
+    let mut shutdown_tool_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for msg in messages {
         if msg.message_type == MessageType::Assistant {
@@ -118,14 +115,8 @@ pub fn check_messages_ongoing(messages: &[ParsedMessage]) -> bool {
                             }
                         }
                         Some("tool_use") => {
-                            let name = block
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            let id = block
-                                .get("id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
+                            let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            let id = block.get("id").and_then(|v| v.as_str()).unwrap_or("");
 
                             if name == "ExitPlanMode" {
                                 // ExitPlanMode 是特殊的结束工具
@@ -396,18 +387,16 @@ mod tests {
 
     #[test]
     fn test_shutdown_response_is_ending() {
-        let messages = vec![
-            make_assistant_msg(
-                "a1",
-                serde_json::json!([
-                    {"type": "tool_use", "id": "tu_1", "name": "SendMessage", "input": {
-                        "type": "shutdown_response",
-                        "request_id": "abc",
-                        "approve": true
-                    }}
-                ]),
-            ),
-        ];
+        let messages = vec![make_assistant_msg(
+            "a1",
+            serde_json::json!([
+                {"type": "tool_use", "id": "tu_1", "name": "SendMessage", "input": {
+                    "type": "shutdown_response",
+                    "request_id": "abc",
+                    "approve": true
+                }}
+            ]),
+        )];
         assert!(!check_messages_ongoing(&messages));
     }
 
@@ -456,7 +445,9 @@ mod tests {
                     "tool_use_id": "tu_1",
                     "content": "rejected"
                 }]),
-                Some(serde_json::Value::String("User rejected tool use".to_string())),
+                Some(serde_json::Value::String(
+                    "User rejected tool use".to_string(),
+                )),
             ),
         ];
         assert!(!check_messages_ongoing(&messages));

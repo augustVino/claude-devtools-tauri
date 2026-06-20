@@ -55,7 +55,10 @@ pub struct SubagentResolver {
 impl SubagentResolver {
     /// Create a new SubagentResolver.
     pub fn new(projects_dir: PathBuf, fs_provider: Arc<dyn FsProvider>) -> Self {
-        Self { projects_dir, fs_provider }
+        Self {
+            projects_dir,
+            fs_provider,
+        }
     }
 
     /// Resolve all subagents for a session.
@@ -70,7 +73,12 @@ impl SubagentResolver {
         messages: Option<&[ParsedMessage]>,
     ) -> Vec<Process> {
         // Get subagent files
-        let subagent_files = list_subagent_files(&self.projects_dir, self.fs_provider.as_ref(), project_id, session_id);
+        let subagent_files = list_subagent_files(
+            &self.projects_dir,
+            self.fs_provider.as_ref(),
+            project_id,
+            session_id,
+        );
 
         if subagent_files.is_empty() {
             return Vec::new();
@@ -104,7 +112,12 @@ impl SubagentResolver {
     /// Check if a session has subagents.
     #[allow(dead_code)]
     pub fn has_subagents(&self, project_id: &str, session_id: &str) -> bool {
-        has_subagent_files(&self.projects_dir, self.fs_provider.as_ref(), project_id, session_id)
+        has_subagent_files(
+            &self.projects_dir,
+            self.fs_provider.as_ref(),
+            project_id,
+            session_id,
+        )
     }
 
     /// Find a subagent by ID.
@@ -131,7 +144,8 @@ impl SubagentResolver {
             total_output += s.metrics.output_tokens;
             total_messages += s.metrics.message_count;
             total_cache_read = total_cache_read.saturating_add(s.metrics.cache_read_tokens);
-            total_cache_creation = total_cache_creation.saturating_add(s.metrics.cache_creation_tokens);
+            total_cache_creation =
+                total_cache_creation.saturating_add(s.metrics.cache_creation_tokens);
         }
 
         SessionMetrics {
@@ -149,7 +163,13 @@ impl SubagentResolver {
 
 /// Helper to create a minimal ParsedMessage for tests.
 #[cfg(test)]
-fn make_test_message(msg_type: MessageType, content: &str, uuid: &str, parent_uuid: Option<&str>, timestamp: &str) -> ParsedMessage {
+fn make_test_message(
+    msg_type: MessageType,
+    content: &str,
+    uuid: &str,
+    parent_uuid: Option<&str>,
+    timestamp: &str,
+) -> ParsedMessage {
     ParsedMessage {
         message_type: msg_type,
         content: serde_json::Value::String(content.to_string()),
@@ -163,10 +183,12 @@ fn make_test_message(msg_type: MessageType, content: &str, uuid: &str, parent_uu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::discovery::subagent_linking::{enrich_subagent_from_task, extract_team_message_summary};
+    use crate::discovery::subagent_linking::{
+        enrich_subagent_from_task, extract_team_message_summary,
+    };
+    use crate::infrastructure::fs_provider::LocalFsProvider;
     use crate::types::chunks::TeamInfo;
     use crate::types::domain::MessageType;
-    use crate::infrastructure::fs_provider::LocalFsProvider;
     use std::fs;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -183,7 +205,12 @@ mod tests {
     #[test]
     fn test_list_subagent_files_empty() {
         let (_temp_dir, resolver) = setup_test_env();
-        let files = list_subagent_files(&resolver.projects_dir, resolver.fs_provider.as_ref(), "-Users-test-project", "session-123");
+        let files = list_subagent_files(
+            &resolver.projects_dir,
+            resolver.fs_provider.as_ref(),
+            "-Users-test-project",
+            "session-123",
+        );
         assert!(files.is_empty());
     }
 
@@ -198,7 +225,8 @@ mod tests {
         let (temp_dir, resolver) = setup_test_env();
 
         // Create subagent directory
-        let subagents_dir = temp_dir.path()
+        let subagents_dir = temp_dir
+            .path()
             .join("projects")
             .join("-Users-test-project")
             .join("session-123")
@@ -212,7 +240,12 @@ mod tests {
         )
         .unwrap();
 
-        let files = list_subagent_files(&resolver.projects_dir, resolver.fs_provider.as_ref(), "-Users-test-project", "session-123");
+        let files = list_subagent_files(
+            &resolver.projects_dir,
+            resolver.fs_provider.as_ref(),
+            "-Users-test-project",
+            "session-123",
+        );
         assert_eq!(files.len(), 1);
     }
 
@@ -221,7 +254,8 @@ mod tests {
         let (temp_dir, resolver) = setup_test_env();
 
         // Create subagent directory
-        let subagents_dir = temp_dir.path()
+        let subagents_dir = temp_dir
+            .path()
             .join("projects")
             .join("-Users-test-project")
             .join("session-123")
@@ -236,7 +270,8 @@ mod tests {
         )
         .unwrap();
 
-        let subagents = resolver.resolve_subagents("-Users-test-project", "session-123", None, None);
+        let subagents =
+            resolver.resolve_subagents("-Users-test-project", "session-123", None, None);
         assert_eq!(subagents.len(), 1);
         assert_eq!(subagents[0].id, "test123");
     }
@@ -435,10 +470,7 @@ mod tests {
         let messages: Vec<ParsedMessage> = vec![];
         link_to_task_calls(&mut subagents, &task_calls, &messages);
         assert_eq!(subagents[0].task_id, Some("tc-team".to_string()));
-        assert_eq!(
-            subagents[0].team.as_ref().unwrap().team_name,
-            "my-team"
-        );
+        assert_eq!(subagents[0].team.as_ref().unwrap().team_name, "my-team");
     }
 
     #[test]
@@ -507,30 +539,68 @@ mod tests {
     fn test_propagate_team_metadata_chain() {
         let mut subagents = vec![
             Process {
-                id: "agent-main".to_string(), file_path: "/tmp/main.jsonl".to_string(),
-                start_time_ms: 1000, end_time_ms: 2000, duration_ms: 1000,
-                metrics: SessionMetrics::default(), is_parallel: false, is_ongoing: false,
+                id: "agent-main".to_string(),
+                file_path: "/tmp/main.jsonl".to_string(),
+                start_time_ms: 1000,
+                end_time_ms: 2000,
+                duration_ms: 1000,
+                metrics: SessionMetrics::default(),
+                is_parallel: false,
+                is_ongoing: false,
                 task_id: Some("tc-1".to_string()),
                 messages: vec![
-                    make_test_message(MessageType::User, "msg", "main-uuid", None, "2026-01-01T00:00:01+00:00"),
-                    make_test_message(MessageType::Assistant, "resp", "main-last", None, "2026-01-01T00:00:02+00:00"),
+                    make_test_message(
+                        MessageType::User,
+                        "msg",
+                        "main-uuid",
+                        None,
+                        "2026-01-01T00:00:01+00:00",
+                    ),
+                    make_test_message(
+                        MessageType::Assistant,
+                        "resp",
+                        "main-last",
+                        None,
+                        "2026-01-01T00:00:02+00:00",
+                    ),
                 ],
-                description: Some("Main task".to_string()), subagent_type: Some("Explore".to_string()),
+                description: Some("Main task".to_string()),
+                subagent_type: Some("Explore".to_string()),
                 team: Some(TeamInfo {
-                    team_name: "my-team".to_string(), member_name: "researcher".to_string(),
+                    team_name: "my-team".to_string(),
+                    member_name: "researcher".to_string(),
                     member_color: "#FF5733".to_string(),
                 }),
             },
             Process {
-                id: "agent-cont".to_string(), file_path: "/tmp/cont.jsonl".to_string(),
-                start_time_ms: 3000, end_time_ms: 4000, duration_ms: 1000,
-                metrics: SessionMetrics::default(), is_parallel: false, is_ongoing: false,
+                id: "agent-cont".to_string(),
+                file_path: "/tmp/cont.jsonl".to_string(),
+                start_time_ms: 3000,
+                end_time_ms: 4000,
+                duration_ms: 1000,
+                metrics: SessionMetrics::default(),
+                is_parallel: false,
+                is_ongoing: false,
                 task_id: None,
                 messages: vec![
-                    make_test_message(MessageType::User, "cont msg", "cont-uuid", Some("main-last"), "2026-01-01T00:00:03+00:00"),
-                    make_test_message(MessageType::Assistant, "cont resp", "cont-last", None, "2026-01-01T00:00:04+00:00"),
+                    make_test_message(
+                        MessageType::User,
+                        "cont msg",
+                        "cont-uuid",
+                        Some("main-last"),
+                        "2026-01-01T00:00:03+00:00",
+                    ),
+                    make_test_message(
+                        MessageType::Assistant,
+                        "cont resp",
+                        "cont-last",
+                        None,
+                        "2026-01-01T00:00:04+00:00",
+                    ),
                 ],
-                description: None, subagent_type: None, team: None,
+                description: None,
+                subagent_type: None,
+                team: None,
             },
         ];
 
@@ -570,7 +640,12 @@ mod tests {
         )
         .unwrap();
 
-        let files = list_subagent_files(&resolver.projects_dir, resolver.fs_provider.as_ref(), "-Users-test-project", "session-456");
+        let files = list_subagent_files(
+            &resolver.projects_dir,
+            resolver.fs_provider.as_ref(),
+            "-Users-test-project",
+            "session-456",
+        );
         assert_eq!(files.len(), 1);
         assert!(files[0].to_string_lossy().contains("agent-old123.jsonl"));
     }
@@ -604,7 +679,12 @@ mod tests {
         )
         .unwrap();
 
-        let files = list_subagent_files(&resolver.projects_dir, resolver.fs_provider.as_ref(), "-Users-test-project", "session-456");
+        let files = list_subagent_files(
+            &resolver.projects_dir,
+            resolver.fs_provider.as_ref(),
+            "-Users-test-project",
+            "session-456",
+        );
         assert_eq!(files.len(), 2);
     }
 
@@ -651,7 +731,12 @@ mod tests {
         )
         .unwrap();
 
-        let files = list_subagent_files(&resolver.projects_dir, resolver.fs_provider.as_ref(), "-Users-test-project", "session-456");
+        let files = list_subagent_files(
+            &resolver.projects_dir,
+            resolver.fs_provider.as_ref(),
+            "-Users-test-project",
+            "session-456",
+        );
         assert!(files.is_empty());
     }
 
@@ -664,12 +749,21 @@ mod tests {
         use crate::types::messages::ParsedMessage;
 
         let mut subagents = vec![Process {
-            id: "agent-1".to_string(), file_path: "/tmp/a1.jsonl".to_string(),
-            start_time_ms: 1000, end_time_ms: 2000, duration_ms: 1000,
-            metrics: SessionMetrics::default(), is_parallel: false, is_ongoing: false,
-            task_id: Some("tc-1".to_string()), messages: vec![], description: None, subagent_type: None,
+            id: "agent-1".to_string(),
+            file_path: "/tmp/a1.jsonl".to_string(),
+            start_time_ms: 1000,
+            end_time_ms: 2000,
+            duration_ms: 1000,
+            metrics: SessionMetrics::default(),
+            is_parallel: false,
+            is_ongoing: false,
+            task_id: Some("tc-1".to_string()),
+            messages: vec![],
+            description: None,
+            subagent_type: None,
             team: Some(TeamInfo {
-                team_name: "my-team".to_string(), member_name: "researcher".to_string(),
+                team_name: "my-team".to_string(),
+                member_name: "researcher".to_string(),
                 member_color: String::new(),
             }),
         }];

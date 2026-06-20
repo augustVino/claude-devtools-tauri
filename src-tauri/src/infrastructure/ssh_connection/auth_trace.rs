@@ -53,7 +53,12 @@ impl AuthTrace {
     }
 
     /// Append a single attempt with timing.
-    pub(crate) fn record_attempt(&mut self, source: impl Into<String>, outcome: AttemptOutcome, ms: u64) {
+    pub(crate) fn record_attempt(
+        &mut self,
+        source: impl Into<String>,
+        outcome: AttemptOutcome,
+        ms: u64,
+    ) {
         let source = source.into();
         self.attempts.push(AuthAttempt {
             source: source.clone(),
@@ -92,10 +97,20 @@ pub(crate) fn enrich_auth_error(root_message: &str, trace: &AuthTrace) -> String
     if has_timings {
         let mut timing = String::from("Timing:");
         if trace.timings.resolve_ms > 0 {
-            write!(timing, "\n\x20\x20• resolve: {}ms", trace.timings.resolve_ms).unwrap();
+            write!(
+                timing,
+                "\n\x20\x20• resolve: {}ms",
+                trace.timings.resolve_ms
+            )
+            .unwrap();
         }
         if trace.timings.tcp_probe_ms > 0 {
-            write!(timing, "\n\x20\x20• tcp probe: {}ms", trace.timings.tcp_probe_ms).unwrap();
+            write!(
+                timing,
+                "\n\x20\x20• tcp probe: {}ms",
+                trace.timings.tcp_probe_ms
+            )
+            .unwrap();
         }
         match trace.timings.tcp_handshake_ms {
             Some(ms) => write!(timing, "\n\x20\x20• tcp+handshake: {}ms", ms).unwrap(),
@@ -137,11 +152,7 @@ mod tests {
             },
             120,
         );
-        trace.record_attempt(
-            "IdentityAgent (1Password)",
-            AttemptOutcome::Used,
-            350,
-        );
+        trace.record_attempt("IdentityAgent (1Password)", AttemptOutcome::Used, 350);
 
         let msg = enrich_auth_error("Auto auth failed", &trace);
         assert!(msg.contains("Auto auth failed"));
@@ -211,17 +222,17 @@ mod tests {
         // 1 (resolve→tcp+handshake bullet) + 1 (tcp+handshake→attempts bullet) = 8
         // ⚠️ record_attempt 触发 attempts 行；tcp_handshake_ms=None 始终渲染 (in-flight) 行；
         // resolve_ms=1 触发 resolve 行。原 plan 算 7 是漏了 (in-flight) 行。
-        assert_eq!(msg.matches('\n').count(), 8, "Expected 8 newlines for multi-section format");
+        assert_eq!(
+            msg.matches('\n').count(),
+            8,
+            "Expected 8 newlines for multi-section format"
+        );
     }
 
     #[test]
     fn test_record_attempt_appends_to_both_attempts_and_timings() {
         let mut trace = AuthTrace::new();
-        trace.record_attempt(
-            "src1",
-            AttemptOutcome::Failed { reason: "x".into() },
-            100,
-        );
+        trace.record_attempt("src1", AttemptOutcome::Failed { reason: "x".into() }, 100);
         assert_eq!(trace.attempts.len(), 1);
         assert_eq!(trace.timings.auth_attempts_ms.len(), 1);
         assert_eq!(trace.timings.auth_attempts_ms[0], ("src1".to_string(), 100));

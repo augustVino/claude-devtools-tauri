@@ -17,10 +17,13 @@ pub async fn ssh_connect(
     ssh_svc: State<'_, Arc<dyn SshService>>,
     config: SshConnectionConfig,
 ) -> Result<SshConnectionStatus, String> {
-    let broadcaster = app.try_state::<crate::http::sse::SSEBroadcaster>()
+    let broadcaster = app
+        .try_state::<crate::http::sse::SSEBroadcaster>()
         .map(|s| s.inner().clone());
     // AppHandle 不再传入 service（H3: 已在构造时存储于 SshServiceImpl 内部）
-    ssh_svc.connect(config, broadcaster.as_ref()).await
+    ssh_svc
+        .connect(config, broadcaster.as_ref())
+        .await
         .map_err(|e| e.into_tauri_string())
 }
 
@@ -29,9 +32,12 @@ pub async fn ssh_disconnect(
     app: AppHandle,
     ssh_svc: State<'_, Arc<dyn SshService>>,
 ) -> Result<SshConnectionStatus, String> {
-    let broadcaster = app.try_state::<crate::http::sse::SSEBroadcaster>()
+    let broadcaster = app
+        .try_state::<crate::http::sse::SSEBroadcaster>()
         .map(|s| s.inner().clone());
-    ssh_svc.disconnect(broadcaster.as_ref()).await
+    ssh_svc
+        .disconnect(broadcaster.as_ref())
+        .await
         .map_err(|e| e.into_tauri_string())
 }
 
@@ -47,7 +53,10 @@ pub async fn ssh_test(
     ssh_svc: State<'_, Arc<dyn SshService>>,
     config: SshConnectionConfig,
 ) -> Result<SshTestResult, String> {
-    ssh_svc.test(&config).await.map_err(|e| e.into_tauri_string())
+    ssh_svc
+        .test(&config)
+        .await
+        .map_err(|e| e.into_tauri_string())
 }
 
 #[command]
@@ -79,7 +88,9 @@ pub async fn ssh_save_last_connection(
             "privateKeyPath": connection.private_key_path,
         }
     });
-    config_manager.update_config("ssh", connection_value).await
+    config_manager
+        .update_config("ssh", connection_value)
+        .await
         .map_err(|e| e.to_string())?;
     Ok(())
 }

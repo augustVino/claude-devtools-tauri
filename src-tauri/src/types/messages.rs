@@ -67,7 +67,10 @@ pub struct ParsedMessage {
     pub tool_results: Vec<ToolResult>,
     #[serde(rename = "sourceToolUseID", skip_serializing_if = "Option::is_none")]
     pub source_tool_use_id: Option<String>,
-    #[serde(rename = "sourceToolAssistantUUID", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "sourceToolAssistantUUID",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub source_tool_assistant_uuid: Option<String>,
     #[serde(rename = "toolUseResult", skip_serializing_if = "Option::is_none")]
     pub tool_use_result: Option<ToolUseResultData>,
@@ -124,7 +127,10 @@ pub struct SemanticStep {
     pub source_message_id: Option<String>,
     #[serde(rename = "effectiveEndTime", skip_serializing_if = "Option::is_none")]
     pub effective_end_time: Option<u64>,
-    #[serde(rename = "effectiveDurationMs", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "effectiveDurationMs",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub effective_duration_ms: Option<u64>,
     #[serde(rename = "isGapFilled", skip_serializing_if = "Option::is_none")]
     pub is_gap_filled: Option<bool>,
@@ -155,7 +161,10 @@ pub struct SemanticStepContent {
     pub tool_result_id: Option<String>,
     #[serde(rename = "subagentId", skip_serializing_if = "Option::is_none")]
     pub subagent_id: Option<String>,
-    #[serde(rename = "subagentDescription", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "subagentDescription",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub subagent_description: Option<String>,
     #[serde(rename = "toolUseResult", skip_serializing_if = "Option::is_none")]
     pub tool_use_result: Option<ToolUseResultData>,

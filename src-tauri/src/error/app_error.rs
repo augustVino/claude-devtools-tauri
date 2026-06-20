@@ -99,7 +99,7 @@ impl<T> From<std::sync::PoisonError<T>> for AppError {
 #[cfg(feature = "http")]
 impl axum::response::IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
-        use axum::{Json, http::StatusCode};
+        use axum::{http::StatusCode, Json};
         // 为避免循环依赖（error → http → routes → error），
         // 此处内联构造等价结构，不引用 http::routes::ErrorResponse
         let body = serde_json::json!({
@@ -122,10 +122,7 @@ mod tests {
 
     #[test]
     fn test_io_from_conversion() {
-        let err = AppError::from(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "missing",
-        ));
+        let err = AppError::from(std::io::Error::new(std::io::ErrorKind::NotFound, "missing"));
         assert!(err.to_string().contains("IO error"));
         assert!(err.to_string().contains("missing"));
     }
@@ -183,6 +180,9 @@ mod tests {
         let response = err.into_response();
 
         let content_type = response.headers().get("content-type").unwrap();
-        assert!(content_type.to_str().unwrap().starts_with("application/json"));
+        assert!(content_type
+            .to_str()
+            .unwrap()
+            .starts_with("application/json"));
     }
 }

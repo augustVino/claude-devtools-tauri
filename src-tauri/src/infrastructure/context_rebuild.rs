@@ -7,7 +7,9 @@
 use std::sync::Arc;
 
 use super::service_context::{ContextType, ServiceContext, ServiceContextConfig};
-use super::{ConfigManager, ContextManager, DataCache, FsProvider, LocalFsProvider, NotificationManager};
+use super::{
+    ConfigManager, ContextManager, DataCache, FsProvider, LocalFsProvider, NotificationManager,
+};
 use crate::services::SearchServiceFull;
 
 /// Rebuild the local ServiceContext when claude root path changes.
@@ -39,7 +41,8 @@ pub async fn rebuild_local_context(
     // Replace old context (cancels old watcher tasks)
     {
         let mut cm = context_manager.write().await;
-        cm.replace_context("local", new_context).await
+        cm.replace_context("local", new_context)
+            .await
             .map_err(|e| format!("Failed to replace local context: {e}"))?;
     }
 
@@ -48,18 +51,21 @@ pub async fn rebuild_local_context(
         let cm = context_manager.read().await;
         if let Some(local_ctx) = cm.get("local") {
             let local = local_ctx.read().await;
-            local.spawn_watcher_tasks(
-                app_handle.clone(),
-                config_manager.clone(),
-                notification_manager.clone(),
-            ).await;
+            local
+                .spawn_watcher_tasks(
+                    app_handle.clone(),
+                    config_manager.clone(),
+                    notification_manager.clone(),
+                )
+                .await;
         }
     }
 
     // Update SearchService internal searcher with new paths.
     // rebuild 是 sync no-op（SearchServiceImpl 现在从 active ServiceContext 拿 searcher），
     // 不需要 spawn_blocking。
-    search_service.rebuild(projects_dir, todos_dir, fs_provider)
+    search_service
+        .rebuild(projects_dir, todos_dir, fs_provider)
         .map_err(|e| e.to_string())?;
 
     Ok(())

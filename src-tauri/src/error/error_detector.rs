@@ -23,7 +23,9 @@ use crate::error::trigger::{
     matches_repository_scope, pre_resolve_repository_ids, RepositoryScopeTarget,
 };
 use crate::infrastructure::ConfigManager;
-use crate::types::config::{DetectedError, NotificationTrigger, TriggerContentType, TriggerTestResult};
+use crate::types::config::{
+    DetectedError, NotificationTrigger, TriggerContentType, TriggerTestResult,
+};
 use crate::types::messages::ParsedMessage;
 
 // =============================================================================
@@ -73,11 +75,7 @@ impl ErrorDetector {
         // 预解析此项目的仓库 ID 以填充缓存
         let cwd_hint = messages
             .iter()
-            .find(|m| {
-                m.cwd
-                    .as_ref()
-                    .map_or(false, |cwd| !cwd.trim().is_empty())
-            })
+            .find(|m| m.cwd.as_ref().map_or(false, |cwd| !cwd.trim().is_empty()))
             .and_then(|m| m.cwd.clone());
         pre_resolve_repository_ids(&[RepositoryScopeTarget {
             project_id: project_id.to_string(),
@@ -207,7 +205,6 @@ impl ErrorDetector {
         // Thinking 和 Text 内容类型尚未实现
         vec![]
     }
-
 }
 
 // =============================================================================
@@ -383,7 +380,11 @@ mod tests {
                 "Bash",
                 json!({"command": "npm build"}),
             )],
-            vec![make_tool_result("tc1", json!("Build failed: error E0425"), true)],
+            vec![make_tool_result(
+                "tc1",
+                json!("Build failed: error E0425"),
+                true,
+            )],
         )];
 
         let errors = detector
@@ -517,9 +518,7 @@ mod tests {
 
         // 委托给 ErrorTriggerTester，使用默认 ProjectScanner（扫描真实路径）
         // 只验证返回值结构正确，不验证具体数量（取决于本地环境）
-        let result = detector
-            .test_trigger(&make_error_trigger(), Some(50))
-            .await;
+        let result = detector.test_trigger(&make_error_trigger(), Some(50)).await;
 
         // 验证返回值是有效的 TriggerTestResult（而非 stub 的空值）
         // 只要没有 panic 即表示委托成功
@@ -541,20 +540,39 @@ mod tests {
         // 初始无触发器 → 不应检测到错误
         let messages = vec![make_assistant_message(
             json!("test"),
-            vec![make_tool_call("tc1", "Bash", json!({"command": "rm -rf /"}))],
+            vec![make_tool_call(
+                "tc1",
+                "Bash",
+                json!({"command": "rm -rf /"}),
+            )],
             vec![make_tool_result("tc1", json!("Permission denied"), true)],
         )];
-        let errors = detector.detect_errors(&messages, "s1", "-test", "/f.jsonl").await;
+        let errors = detector
+            .detect_errors(&messages, "s1", "-test", "/f.jsonl")
+            .await;
         assert!(errors.is_empty(), "no triggers → no errors");
 
         // 运行时添加触发器 → 下次检测应生效
-        config_manager.add_trigger(make_error_trigger()).await.unwrap();
-        let errors = detector.detect_errors(&messages, "s1", "-test", "/f.jsonl").await;
-        assert_eq!(errors.len(), 1, "trigger added at runtime → should detect error");
+        config_manager
+            .add_trigger(make_error_trigger())
+            .await
+            .unwrap();
+        let errors = detector
+            .detect_errors(&messages, "s1", "-test", "/f.jsonl")
+            .await;
+        assert_eq!(
+            errors.len(),
+            1,
+            "trigger added at runtime → should detect error"
+        );
 
         // 运行时禁用触发器 → 下次检测不应产生错误
-        let _ = config_manager.update_trigger("error-trigger", serde_json::json!({"enabled": false})).await;
-        let errors = detector.detect_errors(&messages, "s1", "-test", "/f.jsonl").await;
+        let _ = config_manager
+            .update_trigger("error-trigger", serde_json::json!({"enabled": false}))
+            .await;
+        let errors = detector
+            .detect_errors(&messages, "s1", "-test", "/f.jsonl")
+            .await;
         assert!(errors.is_empty(), "trigger disabled at runtime → no errors");
     }
 }
