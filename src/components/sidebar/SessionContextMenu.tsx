@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { useStore } from '@renderer/store';
 import { MAX_PANES } from '@renderer/types/panes';
 import { formatShortcut } from '@renderer/utils/stringUtils';
 import { Check, ClipboardCopy, Eye, EyeOff, Pin, PinOff, Terminal, Trash2 } from 'lucide-react';
@@ -89,9 +90,14 @@ export const SessionContextMenu = ({
   const handleDelete = async () => {
     onClose();
     const { confirm } = await import('@renderer/components/common/ConfirmDialog');
+    // SSH 模式下后端只清缓存，文件保留（与 Electron 一致：Electron 不支持远程删除）。
+    const isSsh = useStore.getState().connectionMode === 'ssh';
+    const message = isSsh
+      ? 'SSH 模式下删除仅清除本地缓存和固定/隐藏标记，远程文件不会被删除（与 Electron 行为一致）。是否继续？'
+      : '确定要删除此 session 吗？此操作不可撤销，将删除所有关联文件。';
     const confirmed = await confirm({
       title: '删除 Session',
-      message: '确定要删除此 session 吗？此操作不可撤销，将删除所有关联文件。',
+      message,
       confirmLabel: '删除',
       cancelLabel: '取消',
       variant: 'danger',
