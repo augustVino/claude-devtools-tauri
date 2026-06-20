@@ -322,63 +322,10 @@ impl SessionServiceImpl {
     ///
     /// 扫描项目目录下的 `.jsonl` 文件，构建会话元数据，并按文件修改时间降序排列。
     pub async fn get_sessions(&self, project_id: &str) -> Result<Vec<Session>, AppError> {
-        let project_dir = self.project_dir(project_id).await?;
-
-        if !self.path_exists(&project_dir).await? {
-            return Ok(Vec::new());
-        }
-
-        struct FileEntry {
-            path: PathBuf,
-            session_id: String,
-            mtime_ms: u64,
-        }
-
-        let mut file_entries = vec![];
-        let mut entries = tokio::fs::read_dir(&project_dir).await?;
-
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let path = entry.path();
-            if path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-                let session_id = path
-                    .file_stem()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let mtime_ms = entry
-                    .metadata()
-                    .await
-                    .ok()
-                    .and_then(|m: std::fs::Metadata| m.modified().ok())
-                    .and_then(|t: std::time::SystemTime| {
-                        t.duration_since(std::time::UNIX_EPOCH).ok()
-                    })
-                    .map(|d: std::time::Duration| d.as_millis() as u64)
-                    .unwrap_or(0);
-                file_entries.push(FileEntry {
-                    path,
-                    session_id,
-                    mtime_ms,
-                });
-            }
-        }
-
-        // Sort by file modification time (most recent first), matching Electron's mtimeMs sort.
-        // Tie-breaker: session ID alphabetical ascending.
-        file_entries.sort_by(|a, b| {
-            if b.mtime_ms != a.mtime_ms {
-                return b.mtime_ms.cmp(&a.mtime_ms);
-            }
-            a.session_id.cmp(&b.session_id)
-        });
-
-        let mut sessions = vec![];
-        for entry in &file_entries {
-            if let Some(session) = self.build_session_metadata(&entry.path, project_id).await? {
-                sessions.push(session);
-            }
-        }
-
-        Ok(sessions)
+        // 委托给 ProjectService::list_sessions（已 SSH-aware + 并发优化）。
+        // 原实现用 tokio::fs::read_dir 在 SSH 模式下报 ENOENT (os error 2)，
+        // 且与 list_sessions 是平行重复实现。统一走 list_sessions_async 路径。
+        self.project_service.list_sessions(project_id).await
     }
 
     /// 分页获取指定项目的会话列表。
