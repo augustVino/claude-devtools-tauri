@@ -172,7 +172,7 @@ pub(super) async fn build_connected_bundle(
     )
     .await;
     let status = crate::types::ssh::SshConnectionStatus::connected(
-        raw.merged_config.host.clone(),
+        pick_status_host(&request),
         remote_projects_path.clone(),
     );
 
@@ -185,6 +185,13 @@ pub(super) async fn build_connected_bundle(
         remote_projects_path,
         status,
     })
+}
+
+/// 决定 SshConnectionStatus.host 的来源（对齐 Electron connectedHost = config.host）。
+///
+/// 独立纯函数便于单测，避免依赖 RawConnection（russh session 不可 mock）。
+fn pick_status_host(request: &ConnectRequest) -> String {
+    request.original_host.clone()
 }
 
 /// Open SFTP subsystem with 8s timeout + diagnostic.
@@ -217,5 +224,44 @@ async fn open_sftp_subsystem_static(
             host,
             ssh_auth::SFTP_OPEN_TIMEOUT.as_secs(),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests_align_electron {
+    use super::*;
+    use crate::types::ssh::{SshAuthMethod, SshConnectionConfig};
+
+    fn make_request(host: &str) -> ConnectRequest {
+        let config = SshConnectionConfig {
+            host: host.to_string(),
+            port: 22,
+            username: String::new(),
+            auth_method: SshAuthMethod::Auto,
+            password: None,
+            private_key_path: None,
+        };
+        ConnectRequest::new(config)
+    }
+
+    /// 函数级测试：验证 pick_status_host 返回 original_host。
+    ///
+    /// **覆盖范围诚实声明**（v4-C3）：本测试只覆盖 pick_status_host 函数体逻辑，
+    /// 不覆盖 build_connected_bundle 是否真的调用了 pick_status_host。
+    /// 调用点正确性依赖：
+    ///   - 代码审查（Step 5 改动）
+    ///   - SSE 契约测试不破坏（Step 9）
+    ///   - 手动验证（Step 13）
+    /// 完整调用点覆盖需 russh session mock（独立工作）。
+    #[test]
+    fn test_pick_status_host_returns_original_host() {
+        let request = make_request("myserver");
+        assert_eq!(pick_status_host(&request), "myserver");
+    }
+
+    #[test]
+    fn test_pick_status_host_preserves_dotted_alias() {
+        let request = make_request("my-server.example.com");
+        assert_eq!(pick_status_host(&request), "my-server.example.com");
     }
 }
