@@ -1,4 +1,6 @@
-use crate::parsing::jsonl_parser::{calculate_metrics, get_task_calls, parse_jsonl_file};
+use crate::parsing::jsonl_parser::{
+    calculate_metrics, get_task_calls, parse_jsonl_file, parse_jsonl_file_with_provider,
+};
 use crate::parsing::message_classifier;
 use crate::types::domain::{MessageType, SessionMetrics};
 use crate::types::messages::{ParsedMessage, ToolCall};
@@ -54,8 +56,22 @@ impl ParsedSession {
 }
 
 /// Parse a session file from disk.
+///
+/// Legacy entry: 本地 fs 专用。SSH 模式必须用 `parse_session_file_with_provider`，
+/// 否则 `parse_jsonl_file` 内部用 tokio::fs 永远读不到远程文件。
 pub async fn parse_session_file(file_path: &std::path::Path) -> ParsedSession {
     let messages = parse_jsonl_file(file_path).await;
+    process_messages(&messages)
+}
+
+/// Parse a session file via an explicit FsProvider (SSH-aware).
+///
+/// 对齐 Electron：session 内容读取必须走 provider。
+pub async fn parse_session_file_with_provider(
+    file_path: &std::path::Path,
+    fs_provider: &dyn crate::infrastructure::fs_provider::FsProvider,
+) -> ParsedSession {
+    let messages = parse_jsonl_file_with_provider(file_path, fs_provider).await;
     process_messages(&messages)
 }
 

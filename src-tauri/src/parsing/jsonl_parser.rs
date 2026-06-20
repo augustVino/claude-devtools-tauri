@@ -308,6 +308,8 @@ fn parse_chat_history_entry(entry: &ChatHistoryEntry) -> Option<ParsedMessage> {
 // =============================================================================
 
 pub async fn parse_jsonl_file(file_path: &std::path::Path) -> Vec<ParsedMessage> {
+    // Legacy entry: 本地 fs 专用（保持向后兼容）。
+    // SSH 模式必须用 parse_jsonl_file_with_provider，否则 tokio::fs 永远读不到远程文件。
     if !file_path.exists() {
         return vec![];
     }
@@ -317,13 +319,32 @@ pub async fn parse_jsonl_file(file_path: &std::path::Path) -> Vec<ParsedMessage>
         Err(_) => return vec![],
     };
 
+    parse_jsonl_lines(&content)
+}
+
+/// Parse a JSONL file via an explicit FsProvider (SSH-aware).
+///
+/// 对齐 Electron parseSessionFile(fsProvider) 模式：所有读取走 provider，
+/// 不能用 tokio::fs / std::fs（SSH 模式下永远读不到远程文件）。
+pub async fn parse_jsonl_file_with_provider(
+    file_path: &std::path::Path,
+    fs_provider: &dyn crate::infrastructure::fs_provider::FsProvider,
+) -> Vec<ParsedMessage> {
+    let content = match fs_provider.read_file(file_path) {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    parse_jsonl_lines(&content)
+}
+
+/// Shared line-parsing logic (provider-agnostic).
+fn parse_jsonl_lines(content: &str) -> Vec<ParsedMessage> {
     let mut messages = vec![];
     for line in content.lines() {
         if let Some(msg) = parse_jsonl_line(line) {
             messages.push(msg);
         }
     }
-
     messages
 }
 
