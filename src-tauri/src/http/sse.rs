@@ -5,7 +5,7 @@
 use serde::Serialize;
 use tokio::sync::broadcast;
 
-use crate::events::{NotificationUpdatedPayload, TodoChangeEvent};
+use crate::events::{MemoryChangeEvent, NotificationUpdatedPayload, TodoChangeEvent};
 use crate::infrastructure::context_manager::ContextInfo;
 use crate::types::config::{DetectedError, StoredNotification};
 #[allow(unused_imports)]
@@ -18,6 +18,8 @@ use crate::types::ssh::SshConnectionStatus;
 pub enum BackendEvent {
     FileChange(FileChangeEvent),
     TodoChange(TodoChangeEvent),
+    /// Phase 3A: MEMORY.md 变更（projects/<id>/memory/*.md）
+    MemoryChange(MemoryChangeEvent),
     #[allow(dead_code)]
     NotificationNew(StoredNotification),
     #[allow(dead_code)]
@@ -39,6 +41,7 @@ impl BackendEvent {
         match self {
             BackendEvent::FileChange(_) => "file-change",
             BackendEvent::TodoChange(_) => "todo-change",
+            BackendEvent::MemoryChange(_) => "memory-change",
             BackendEvent::NotificationNew(_) => "notification:new",
             BackendEvent::NotificationUpdated(_) => "notification:updated",
             BackendEvent::NotificationClicked(_) => "notification:clicked",
@@ -93,6 +96,7 @@ mod tests {
             project_id: Some("proj".to_string()),
             session_id: Some("sess".to_string()),
             is_subagent: false,
+            kind: crate::types::domain::FileChangeEventKind::Session,
         });
         broadcaster.send(event);
 
@@ -109,6 +113,7 @@ mod tests {
                 project_id: None,
                 session_id: None,
                 is_subagent: false,
+                kind: crate::types::domain::FileChangeEventKind::Session,
             })
             .event_name(),
             "file-change"

@@ -176,6 +176,25 @@ impl WatcherOrchestrator {
                         result = receiver.recv() => {
                             match result {
                                 Ok(event) => {
+                                    // Phase 3A: Memory 事件分流（跳过 session cache + 走 memory-change channel）
+                                    if event.kind == crate::types::domain::FileChangeEventKind::Memory {
+                                        if let Some(pid) = &event.project_id {
+                                            let mem_event = crate::events::MemoryChangeEvent {
+                                                project_id: pid.clone(),
+                                            };
+                                            crate::events::emit_memory_change(&app, mem_event.clone());
+                                            if let Some(broadcaster) =
+                                                app.try_state::<crate::http::sse::SSEBroadcaster>()
+                                            {
+                                                let _ = broadcaster.inner().send(
+                                                    crate::http::sse::BackendEvent::MemoryChange(mem_event),
+                                                );
+                                            }
+                                        }
+                                        continue;
+                                    }
+
+                                    // Session 事件原流程
                                     if let (Some(pid), Some(sid)) =
                                         (&event.project_id, &event.session_id)
                                     {

@@ -30,6 +30,24 @@ pub fn emit_todo_change(app: &AppHandle, event: TodoChangeEvent) {
     }
 }
 
+/// Phase 3A: MEMORY.md 变更事件载荷（projects/<id>/memory/*.md 编辑时触发）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryChangeEvent {
+    pub project_id: String,
+}
+
+/// Phase 3A: 通知前端 MEMORY.md 变更事件。
+///
+/// SSE 路径走 BackendEvent::MemoryChange（http/sse.rs）；Tauri window 路径
+/// 走 app.emit("memory-change", ...)。本函数仅负责 Tauri window 路径，
+/// SSE 由 watcher_orchestrator 内的 broadcaster.send 触发。
+pub fn emit_memory_change(app: &AppHandle, event: MemoryChangeEvent) {
+    if let Err(e) = app.emit("memory-change", &event) {
+        log::error!("Failed to emit memory-change event: {}", e);
+    }
+}
+
 /// 通知前端新通知事件。
 #[allow(dead_code)]
 pub fn emit_notification_new(app: &AppHandle, notification: &StoredNotification) {

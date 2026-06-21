@@ -38,6 +38,7 @@ import type {
   PaginatedSessionsResult,
   FileChangeEvent,
   TodoChangeEvent,
+  MemoryChangeEvent,
   RepositoryGroup,
   RawSubagentDetail,
   ConversationGroup,
@@ -599,6 +600,22 @@ export class TauriAPIClient implements ElectronAPI {
       })
       .catch((err) => {
         console.error("Failed to listen to todo-change event:", err);
+      });
+    return () => {
+      if (unlisten) unlisten();
+    };
+  };
+
+  readonly onMemoryChange = (
+    callback: (event: MemoryChangeEvent) => void,
+  ): (() => void) => {
+    let unlisten: UnlistenFn | null = null;
+    listen<MemoryChangeEvent>("memory-change", (e) => callback(e.payload))
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch((err) => {
+        console.error("Failed to listen to memory-change event:", err);
       });
     return () => {
       if (unlisten) unlisten();

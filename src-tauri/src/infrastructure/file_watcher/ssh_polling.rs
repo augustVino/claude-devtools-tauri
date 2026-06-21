@@ -134,7 +134,7 @@ impl FileWatcher {
                 })
                 .collect()
         } else {
-            // projects 两层模式：枚举 project_dir/*.jsonl
+            // projects 两层模式：枚举 project_dir/*.jsonl + project_dir/memory/*.md（Phase 3A）
             let mut acc = Vec::new();
             for dir in &top_entries {
                 if !dir.is_directory {
@@ -155,6 +155,25 @@ impl FileWatcher {
                         .or_else(|| fs_provider.stat(&full_path).ok().map(|s| s.size))
                         .unwrap_or(0);
                     acc.push((full_path, size));
+                }
+
+                // Phase 3A: 枚举 project_dir/memory/*.md（MEMORY.md 及其他 .md 文件）
+                // 对齐 Electron FileWatcher.ts:490-502 路径模式 projects/<id>/memory/<any>.md
+                // TODO(perf): 50 项目 × 3s 间隔会增加 50 次 SFTP readdir。
+                //            后续可加 60s TTL memory 目录存在性缓存（plan v3 列入）
+                let memory_dir = project_path.join("memory");
+                if let Ok(memory_entries) = fs_provider.read_dir(&memory_dir) {
+                    for entry in &memory_entries {
+                        if !entry.is_file || !entry.name.ends_with(".md") {
+                            continue;
+                        }
+                        let full_path = memory_dir.join(&entry.name);
+                        let size = entry
+                            .size
+                            .or_else(|| fs_provider.stat(&full_path).ok().map(|s| s.size))
+                            .unwrap_or(0);
+                        acc.push((full_path, size));
+                    }
                 }
             }
             acc
@@ -209,9 +228,10 @@ impl FileWatcher {
 
     /// 构造并发送 FileChangeEvent。
     ///
-    /// 支持两种相对路径布局：
+    /// 支持三种相对路径布局：
     /// - **todos 平铺**：`["{sessionId}.json"]`（1 段 + `.json` 后缀）
     /// - **projects 两层**：`["projectId", "sessionId.jsonl"]`（含可选 subagents）
+    /// - **memory**（Phase 3A）：`["projectId", "memory", "{file}.md"]`
     pub(crate) fn emit_event(
         sender: &broadcast::Sender<FileChangeEvent>,
         file_path: &Path,
@@ -226,6 +246,21 @@ impl FileWatcher {
             .components()
             .filter_map(|c| c.as_os_str().to_str())
             .collect();
+
+        // Phase 3A: memory 路径分流
+        // projects/<id>/memory/<file>.md → Memory kind
+        if parts.len() >= 3 && parts[1] == "memory" && parts[parts.len() - 1].ends_with(".md") {
+            let event = FileChangeEvent {
+                event_type,
+                path: file_path.to_string_lossy().to_string(),
+                project_id: Some(parts[0].to_string()),
+                session_id: None,
+                is_subagent: false,
+                kind: crate::types::domain::FileChangeEventKind::Memory,
+            };
+            let _ = sender.send(event);
+            return;
+        }
 
         let (project_id, session_id, is_subagent) = if parts.len() == 1
             && parts[0].ends_with(".json")
@@ -246,6 +281,7 @@ impl FileWatcher {
             project_id,
             session_id,
             is_subagent,
+            kind: crate::types::domain::FileChangeEventKind::Session,
         };
         let _ = sender.send(event);
     }

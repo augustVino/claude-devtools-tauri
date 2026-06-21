@@ -83,30 +83,43 @@ impl FileWatcher {
         event: &DebouncedEvent,
         watch_path: &Path,
     ) -> Option<FileChangeEvent> {
-        // 仅处理 .jsonl 和 .json 文件
+        // Phase 3A: 接受 .jsonl / .json / .md（memory 目录下的 MEMORY.md 等）
         let extension = event.path.extension()?.to_str()?;
-
-        if extension != "jsonl" && extension != "json" {
+        let is_md = extension == "md";
+        if extension != "jsonl" && extension != "json" && !is_md {
             return None;
         }
 
         // 通过 FsProvider 检查文件是否存在来判断是新增/修改还是删除
-        // (debouncer-mini 不区分事件类型 — 仅返回 Any/AnyContinuous)
         let event_type = if fs_provider.exists(&event.path).unwrap_or(false) {
-            // 文件存在: 可能是新增或修改
-            // 统一报告 "change"（Electron 也对大多数情况报告 "change"）
             FileChangeType::Change
         } else {
-            // 文件不存在: 已被删除
             FileChangeType::Unlink
         };
 
-        // 解析相对路径以提取 projectId、sessionId、isSubagent
         let relative_path = event.path.strip_prefix(watch_path).ok()?;
         let parts: Vec<&str> = relative_path
             .components()
             .filter_map(|c| c.as_os_str().to_str())
             .collect();
+
+        // Phase 3A: MEMORY.md 分流 — parts[1] == "memory" 且扩展名 .md
+        // 对齐 Electron FileWatcher.ts:490-502 handleProjectsChange 路径判断
+        if is_md && parts.len() >= 2 && parts[1] == "memory" {
+            return Some(FileChangeEvent {
+                event_type,
+                path: event.path.to_string_lossy().to_string(),
+                project_id: Some(parts[0].to_string()),
+                session_id: None,
+                is_subagent: false,
+                kind: crate::types::domain::FileChangeEventKind::Memory,
+            });
+        }
+
+        // 非 memory 的 .md 不处理
+        if is_md {
+            return None;
+        }
 
         let (project_id, session_id, is_subagent) = Self::parse_path_parts(&parts);
 
@@ -116,6 +129,7 @@ impl FileWatcher {
             project_id,
             session_id,
             is_subagent,
+            kind: crate::types::domain::FileChangeEventKind::Session,
         })
     }
 }

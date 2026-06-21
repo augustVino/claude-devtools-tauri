@@ -253,6 +253,22 @@ export function initializeNotificationListeners(): () => void {
     }
   }
 
+  // Phase 3A: Listen for MEMORY.md / projects/<id>/memory/*.md changes
+  // 对齐 Electron FileWatcher memory-change event 转发到 memorySlice
+  if (api.onMemoryChange) {
+    const cleanup = api.onMemoryChange((event) => {
+      if (!event.projectId) return;
+      // 仅刷新当前已加载的 memory；未加载的不主动触发（避免无谓 SFTP read）
+      const state = useStore.getState();
+      if (state.indexByProjectId[event.projectId] !== undefined) {
+        void state.refreshMemoryForProject(event.projectId);
+      }
+    });
+    if (typeof cleanup === "function") {
+      cleanupFns.push(cleanup);
+    }
+  }
+
   // Listen for file changes to auto-refresh current session and detect new sessions
   if (api.onFileChange) {
     const cleanup = api.onFileChange((event) => {

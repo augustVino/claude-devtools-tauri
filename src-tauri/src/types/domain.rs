@@ -338,6 +338,16 @@ pub enum FileChangeType {
     Unlink,
 }
 
+/// 文件变更事件种类。Phase 3A：MEMORY.md 监听需要与 session 文件分流。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub enum FileChangeEventKind {
+    /// Session JSONL 文件变更（默认，向后兼容）
+    #[default]
+    Session,
+    /// Memory 目录下的 .md 文件变更（projects/<id>/memory/*.md）
+    Memory,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FileChangeEvent {
     #[serde(rename = "type")]
@@ -349,6 +359,9 @@ pub struct FileChangeEvent {
     pub session_id: Option<String>,
     #[serde(rename = "isSubagent")]
     pub is_subagent: bool,
+    /// Phase 3A：事件种类（默认 Session，向后兼容现有 emit 点）
+    #[serde(rename = "kind", default)]
+    pub kind: FileChangeEventKind,
 }
 
 // =============================================================================

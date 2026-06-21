@@ -40,6 +40,7 @@ import type {
   SshConnectionStatus,
   SshLastConnection,
   TodoChangeEvent,
+  MemoryChangeEvent,
   TriggerTestResult,
   WaterfallData,
   WslClaudeRootCandidate,
@@ -613,6 +614,9 @@ export class HttpAPIClient implements ElectronAPI {
 
   onTodoChange = (callback: (event: TodoChangeEvent) => void): (() => void) =>
     this.addEventListener("todo-change", callback);
+
+  onMemoryChange = (callback: (event: MemoryChangeEvent) => void): (() => void) =>
+    this.addEventListener("memory-change", callback);
 
   // No-op in browser mode — Ctrl+R refresh is Electron-only
   onSessionRefresh = (_callback: () => void): (() => void) => {

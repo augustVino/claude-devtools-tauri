@@ -493,6 +493,14 @@ export interface TodoChangeEvent {
   sessionId: string;
 }
 
+/**
+ * Memory change event (Phase 3A). Emitted when a `.md` file under
+ * `projects/<projectId>/memory/` is added/modified/deleted.
+ */
+export interface MemoryChangeEvent {
+  projectId: string;
+}
+
 // =============================================================================
 // Constants
 // =============================================================================

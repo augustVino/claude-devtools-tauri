@@ -19,6 +19,7 @@ import type {
   ConversationGroup,
   FileChangeEvent,
   TodoChangeEvent,
+  MemoryChangeEvent,
   PaginatedSessionsResult,
   Project,
   RepositoryGroup,
@@ -486,6 +487,11 @@ export interface ElectronAPI {
   // File change events (real-time updates)
   onFileChange: (callback: (event: FileChangeEvent) => void) => () => void;
   onTodoChange: (callback: (event: TodoChangeEvent) => void) => () => void;
+  /**
+   * Phase 3A: Subscribe to memory file changes (projects/<id>/memory/*.md).
+   * Fired when MEMORY.md or any other .md file in the memory directory changes.
+   */
+  onMemoryChange: (callback: (event: MemoryChangeEvent) => void) => () => void;
 
   // Session refresh (Ctrl+R / Cmd+R intercepted by main process)
   onSessionRefresh: (callback: () => void) => () => void;
