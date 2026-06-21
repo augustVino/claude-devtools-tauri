@@ -8,6 +8,7 @@
 import { api } from '@renderer/api';
 
 import { getFullResetState } from '../utils/stateResetHelpers';
+import { normalizeSshAuthMethod } from '@shared/types';
 
 import type { AppState } from '../types';
 import type {
