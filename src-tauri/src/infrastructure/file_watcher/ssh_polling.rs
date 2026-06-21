@@ -98,7 +98,7 @@ impl FileWatcher {
     ///
     /// 顶层若含 `.json` 文件即视为平铺模式；否则按两层模式枚举 `.jsonl`。
     /// 不递归进入 subagents/ 子目录。
-    async fn do_poll(
+    pub(crate) async fn do_poll(
         fs_provider: &Arc<dyn FsProvider>,
         projects_path: &Path,
         poll_state: &Arc<Mutex<SshPollState>>,
@@ -157,22 +157,59 @@ impl FileWatcher {
                     acc.push((full_path, size));
                 }
 
-                // Phase 3A: 枚举 project_dir/memory/*.md（MEMORY.md 及其他 .md 文件）
-                // 对齐 Electron FileWatcher.ts:490-502 路径模式 projects/<id>/memory/<any>.md
-                // TODO(perf): 50 项目 × 3s 间隔会增加 50 次 SFTP readdir。
-                //            后续可加 60s TTL memory 目录存在性缓存（plan v3 列入）
+                // Phase 3A + review #7: 枚举 project_dir/memory/*.md（带 60s TTL 缓存）
+                // 路径模式：projects/<id>/memory/<any>.md
+                // 性能：50 项目 × 3s 间隔时，对不存在 memory 目录的 project 用 cache 跳过 readdir，
+                // 避免每秒 ~17 次 SFTP readdir（慢速 SSH 主机会显著拖累 polling）。
+                // 注意：本 polling 是超出 Electron 行为的扩展（Electron SSH 不检测 memory）。
+                // 行为权衡：cache 命中 absent 时，新创建 memory 文件最多 60s 后才发现。
                 let memory_dir = project_path.join("memory");
-                if let Ok(memory_entries) = fs_provider.read_dir(&memory_dir) {
-                    for entry in &memory_entries {
-                        if !entry.is_file || !entry.name.ends_with(".md") {
-                            continue;
+                let memory_dir_key = memory_dir.to_string_lossy().to_string();
+                let should_skip = matches!(
+                    state.memory_dir_cache.get(&memory_dir_key),
+                    Some(entry) if entry.is_fresh() && !entry.exists
+                );
+                if !should_skip {
+                    match fs_provider.read_dir(&memory_dir) {
+                        Ok(memory_entries) => {
+                            state.memory_dir_cache.insert(
+                                memory_dir_key.clone(),
+                                super::MemoryDirCacheEntry {
+                                    exists: true,
+                                    last_check: std::time::Instant::now(),
+                                },
+                            );
+                            for entry in &memory_entries {
+                                if !entry.is_file || !entry.name.ends_with(".md") {
+                                    continue;
+                                }
+                                let full_path = memory_dir.join(&entry.name);
+                                let size = entry
+                                    .size
+                                    .or_else(|| fs_provider.stat(&full_path).ok().map(|s| s.size))
+                                    .unwrap_or(0);
+                                acc.push((full_path, size));
+                            }
                         }
-                        let full_path = memory_dir.join(&entry.name);
-                        let size = entry
-                            .size
-                            .or_else(|| fs_provider.stat(&full_path).ok().map(|s| s.size))
-                            .unwrap_or(0);
-                        acc.push((full_path, size));
+                        Err(err_msg) => {
+                            // review #4: 只在 Err 消息包含 POSIX "no such file" / "not a directory"
+                            // 或 russh-sftp "NoSuchFile" / "NotADirectory" 时标记 absent。
+                            // 瞬时网络 Err（timeout/IO）→ 不更新 cache，下一轮重试。
+                            let lower = err_msg.to_lowercase();
+                            let is_permanent_absent = lower.contains("no such file")
+                                || lower.contains("not a directory")
+                                || lower.contains("nosuchfile")
+                                || lower.contains("notadirectory");
+                            if is_permanent_absent {
+                                state.memory_dir_cache.insert(
+                                    memory_dir_key,
+                                    super::MemoryDirCacheEntry {
+                                        exists: false,
+                                        last_check: std::time::Instant::now(),
+                                    },
+                                );
+                            }
+                        }
                     }
                 }
             }

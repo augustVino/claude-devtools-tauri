@@ -50,6 +50,28 @@ pub(crate) enum WatchMode {
     SshPolling,
 }
 
+/// Phase 3A review #7: memory 目录存在性缓存（60s TTL）。
+///
+/// 用于 ssh_polling do_poll 跳过不存在 memory 目录的 project，
+/// 避免每个 polling 周期都发起一次 SFTP readdir（50 项目 × 3s = ~17/s）。
+///
+/// 注意：Phase 3A polling 是超出 Electron 行为的扩展（Electron SSH 模式
+/// 不检测 memory 文件）。本 cache 是在扩展功能上的性能优化。
+#[derive(Debug, Clone)]
+pub(crate) struct MemoryDirCacheEntry {
+    /// 目录是否存在
+    pub exists: bool,
+    /// 上次检查时间
+    pub last_check: std::time::Instant,
+}
+
+impl MemoryDirCacheEntry {
+    /// 60 秒内视为新鲜
+    pub fn is_fresh(&self) -> bool {
+        self.last_check.elapsed() < std::time::Duration::from_secs(60)
+    }
+}
+
 /// SSH 轮询状态。
 pub(crate) struct SshPollState {
     /// 轮询任务句柄（Option: 无轮询时为 None）
@@ -62,6 +84,10 @@ pub(crate) struct SshPollState {
     pub polled_file_sizes: HashMap<String, u64>,
     /// 防止重叠轮询的 guard
     pub poll_in_progress: bool,
+    /// Phase 3A review #7: per-project memory 目录存在性缓存。
+    /// key = memory 目录绝对路径字符串。
+    /// 裸 HashMap（非 Arc<Mutex>）— SshPollState 本身已被外层 Arc<Mutex<...>> 保护。
+    pub memory_dir_cache: HashMap<String, MemoryDirCacheEntry>,
 }
 
 /// 文件监听器，以防抖方式监听目录中的文件变更。
@@ -107,6 +133,7 @@ impl FileWatcher {
                 primed: false,
                 polled_file_sizes: HashMap::new(),
                 poll_in_progress: false,
+                memory_dir_cache: HashMap::new(),
             })),
         }
     }
@@ -131,6 +158,7 @@ impl FileWatcher {
                 primed: false,
                 polled_file_sizes: HashMap::new(),
                 poll_in_progress: false,
+                memory_dir_cache: HashMap::new(),
             })),
         }
     }

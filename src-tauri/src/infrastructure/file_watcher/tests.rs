@@ -18,6 +18,7 @@ struct MockFsProvider {
     provider_type_str: &'static str,
     entries: Arc<StdMutex<HashMap<String, Vec<MockDirent>>>>,
     ensure_dir_calls: Arc<StdMutex<Vec<String>>>,
+    read_dir_errors: Arc<StdMutex<HashMap<String, String>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -34,6 +35,7 @@ impl MockFsProvider {
             provider_type_str,
             entries: Arc::new(StdMutex::new(HashMap::new())),
             ensure_dir_calls: Arc::new(StdMutex::new(Vec::new())),
+            read_dir_errors: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
 
@@ -42,6 +44,13 @@ impl MockFsProvider {
             .lock()
             .unwrap()
             .insert(path.to_string(), dirents);
+    }
+
+    fn set_read_dir_error(&self, path: &str, error_msg: String) {
+        self.read_dir_errors
+            .lock()
+            .unwrap()
+            .insert(path.to_string(), error_msg);
     }
 
     fn clear_entries(&self) {
@@ -92,6 +101,10 @@ impl FsProvider for MockFsProvider {
     }
     fn read_dir(&self, path: &std::path::Path) -> Result<Vec<FsDirent>, String> {
         let key = path.to_string_lossy().to_string();
+        // 优先返回注入的错误（用于测试 Err 过滤逻辑）
+        if let Some(err_msg) = self.read_dir_errors.lock().unwrap().get(&key) {
+            return Err(err_msg.clone());
+        }
         let entries = self.entries.lock().unwrap();
         entries
             .get(&key)
@@ -934,4 +947,255 @@ fn test_emit_event_projects_two_level_path() {
     let event = rx.try_recv().expect("should emit");
     assert_eq!(event.project_id.as_deref(), Some("proj1"));
     assert_eq!(event.session_id.as_deref(), Some("sess"));
+}
+
+// ── Memory dir cache tests（review #7）──────────────────────────
+
+/// TTL 60s 内的 cache 条目应视为新鲜
+#[test]
+fn test_memory_dir_cache_ttl_fresh_within_60s() {
+    let entry = super::MemoryDirCacheEntry {
+        exists: false,
+        last_check: std::time::Instant::now() - std::time::Duration::from_secs(30),
+    };
+    assert!(entry.is_fresh(), "30s old entry should be fresh");
+}
+
+/// 超过 60s 的 cache 条目应视为过期
+#[test]
+fn test_memory_dir_cache_ttl_expires_after_60s() {
+    let entry = super::MemoryDirCacheEntry {
+        exists: false,
+        last_check: std::time::Instant::now() - std::time::Duration::from_secs(61),
+    };
+    assert!(!entry.is_fresh(), "61s old entry should be expired");
+}
+
+/// 验证 cache 标记 absent 时，do_poll **不调用** read_dir（用计数差断言）
+///
+/// 测试意图（I2 修复）：不只断言 result.is_ok()，而是验证 read_dir 调用次数
+/// 在 cache 命中时确实减少。如果 cache 跳过逻辑被删掉，本测试会失败。
+#[tokio::test]
+async fn test_memory_dir_cache_skips_readdir_when_absent() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let read_dir_counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = read_dir_counter.clone();
+
+    // 包装 MockFsProvider，记录 read_dir 调用次数
+    #[derive(Debug)]
+    struct CountingProvider {
+        inner: MockFsProvider,
+        counter: Arc<AtomicUsize>,
+    }
+    impl FsProvider for CountingProvider {
+        fn provider_type(&self) -> &'static str {
+            self.inner.provider_type()
+        }
+        fn exists(&self, p: &std::path::Path) -> Result<bool, String> {
+            self.inner.exists(p)
+        }
+        fn read_file(&self, p: &std::path::Path) -> Result<String, String> {
+            self.inner.read_file(p)
+        }
+        fn read_file_head(&self, p: &std::path::Path, max: usize) -> Result<String, String> {
+            self.inner.read_file_head(p, max)
+        }
+        fn read_file_range(
+            &self,
+            p: &std::path::Path,
+            off: u64,
+            len: Option<u64>,
+        ) -> Result<Vec<u8>, String> {
+            self.inner.read_file_range(p, off, len)
+        }
+        fn stat(&self, p: &std::path::Path) -> Result<FsStatResult, String> {
+            self.inner.stat(p)
+        }
+        fn read_dir(&self, p: &std::path::Path) -> Result<Vec<FsDirent>, String> {
+            self.counter.fetch_add(1, Ordering::SeqCst);
+            self.inner.read_dir(p)
+        }
+        fn ensure_dir(&self, p: &std::path::Path) -> Result<(), String> {
+            self.inner.ensure_dir(p)
+        }
+    }
+
+    let mock = MockFsProvider::new("ssh");
+    // /projects 顶层 1 个 project dir，project 内 0 个 .jsonl（避免干扰计数）
+    mock.set_entries(
+        "/projects",
+        vec![MockDirent {
+            name: "proj1".to_string(),
+            is_file: false,
+            is_directory: true,
+            size: None,
+        }],
+    );
+    mock.set_entries("/projects/proj1", vec![]);
+
+    let provider = Arc::new(CountingProvider {
+        inner: mock,
+        counter: counter_clone,
+    });
+    let provider_dyn: Arc<dyn FsProvider> = provider;
+
+    let poll_state = Arc::new(Mutex::new(SshPollState {
+        timer: None,
+        poll_interval_ms: 100,
+        primed: true,
+        polled_file_sizes: HashMap::new(),
+        poll_in_progress: false,
+        memory_dir_cache: HashMap::new(),
+    }));
+    let (tx, _rx) = broadcast::channel::<FileChangeEvent>(16);
+
+    // 第一次 poll：memory 目录不存在（mock 未设置 entries，read_dir 返回 Err）
+    // Err 消息格式 "No mock entries for ..." 不包含 "no such file"，**不会标记 absent**
+    FileWatcher::do_poll(
+        &provider_dyn,
+        std::path::Path::new("/projects"),
+        &poll_state,
+        &tx,
+    )
+    .await
+    .unwrap();
+    let first_count = read_dir_counter.load(Ordering::SeqCst);
+    // 至少 3 次：/projects + /projects/proj1 + /projects/proj1/memory（失败）
+    assert!(first_count >= 3, "first poll should call read_dir at least 3 times");
+
+    // 显式预填 cache，模拟"标记 absent"路径
+    {
+        let mut st = poll_state.lock().await;
+        st.memory_dir_cache.insert(
+            "/projects/proj1/memory".to_string(),
+            super::MemoryDirCacheEntry {
+                exists: false,
+                last_check: std::time::Instant::now(),
+            },
+        );
+    }
+    read_dir_counter.store(0, Ordering::SeqCst);
+
+    // 第二次 poll：cache 命中 absent → memory 目录 read_dir 必须被跳过
+    FileWatcher::do_poll(
+        &provider_dyn,
+        std::path::Path::new("/projects"),
+        &poll_state,
+        &tx,
+    )
+    .await
+    .unwrap();
+    let second_count = read_dir_counter.load(Ordering::SeqCst);
+
+    // 验证：第二次应该比第一次少 1 次（少了 memory 目录的 read_dir）
+    assert_eq!(
+        second_count, first_count - 1,
+        "cache hit must skip memory dir readdir ({} should be {})",
+        second_count, first_count - 1
+    );
+}
+
+/// I3 修复：扩展 MockFsProvider 支持注入 read_dir 错误消息，
+/// 验证 Err 过滤逻辑（is_permanent_absent 的 4 个 contains 检查）
+///
+/// 测试意图：覆盖 do_poll 中 Err 分支的字符串匹配逻辑。
+/// 之前 test_memory_dir_cache_skips_readdir_when_absent 用 MockFsProvider
+/// 的默认 Err（"No mock entries for ..."）→ 不含过滤子串 → 零覆盖。
+#[tokio::test]
+async fn test_memory_dir_cache_marks_absent_on_enoent_error() {
+    // 模拟 SFTP 返回 "no such file" 错误（russh-sftp format_sftp_error 输出格式）
+    let provider = Arc::new(MockFsProvider::new("ssh"));
+    provider.set_entries(
+        "/projects",
+        vec![MockDirent {
+            name: "proj1".to_string(),
+            is_file: false,
+            is_directory: true,
+            size: None,
+        }],
+    );
+    provider.set_entries("/projects/proj1", vec![]);
+    // 注入 memory 目录的 read_dir 错误（包含 "no such file"）
+    provider.set_read_dir_error(
+        "/projects/proj1/memory",
+        "SFTP error for /projects/proj1/memory: no such file (status NoSuchFile)".to_string(),
+    );
+
+    let provider_dyn: Arc<dyn FsProvider> = provider;
+    let poll_state = Arc::new(Mutex::new(SshPollState {
+        timer: None,
+        poll_interval_ms: 100,
+        primed: true,
+        polled_file_sizes: HashMap::new(),
+        poll_in_progress: false,
+        memory_dir_cache: HashMap::new(),
+    }));
+    let (tx, _rx) = broadcast::channel::<FileChangeEvent>(16);
+
+    FileWatcher::do_poll(
+        &provider_dyn,
+        std::path::Path::new("/projects"),
+        &poll_state,
+        &tx,
+    )
+    .await
+    .unwrap();
+
+    // 验证：Err 消息含 "no such file" → 标记 absent
+    let st = poll_state.lock().await;
+    let entry = st
+        .memory_dir_cache
+        .get("/projects/proj1/memory")
+        .expect("cache entry must be created on ENOENT error");
+    assert!(!entry.exists, "ENOENT error must mark exists=false");
+    assert!(entry.is_fresh(), "just-marked entry must be fresh");
+}
+
+/// I3 修复：瞬时网络错误（timeout/IO）不应标记 absent
+#[tokio::test]
+async fn test_memory_dir_cache_skips_marking_absent_on_transient_error() {
+    let provider = Arc::new(MockFsProvider::new("ssh"));
+    provider.set_entries(
+        "/projects",
+        vec![MockDirent {
+            name: "proj1".to_string(),
+            is_file: false,
+            is_directory: true,
+            size: None,
+        }],
+    );
+    provider.set_entries("/projects/proj1", vec![]);
+    // 注入瞬时错误（不含 "no such file" / "not a directory"）
+    provider.set_read_dir_error(
+        "/projects/proj1/memory",
+        "SFTP timeout for /projects/proj1/memory".to_string(),
+    );
+
+    let provider_dyn: Arc<dyn FsProvider> = provider;
+    let poll_state = Arc::new(Mutex::new(SshPollState {
+        timer: None,
+        poll_interval_ms: 100,
+        primed: true,
+        polled_file_sizes: HashMap::new(),
+        poll_in_progress: false,
+        memory_dir_cache: HashMap::new(),
+    }));
+    let (tx, _rx) = broadcast::channel::<FileChangeEvent>(16);
+
+    FileWatcher::do_poll(
+        &provider_dyn,
+        std::path::Path::new("/projects"),
+        &poll_state,
+        &tx,
+    )
+    .await
+    .unwrap();
+
+    // 验证：瞬时错误不标记 absent（cache 不更新，下一轮重试）
+    let st = poll_state.lock().await;
+    assert!(
+        !st.memory_dir_cache.contains_key("/projects/proj1/memory"),
+        "transient error (timeout) must NOT mark absent — next round retries"
+    );
 }
