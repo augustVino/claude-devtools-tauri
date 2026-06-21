@@ -15,6 +15,163 @@ use crate::infrastructure::{
 };
 use tauri::Manager;
 
+/// Phase 4B: 增量错误检测状态（纯内存，per-file）。
+///
+/// 对齐 Electron FileWatcher.ts:615-709 的 lastProcessedSize / lastProcessedLineCount
+/// / processingInProgress / pendingReprocess。不持久化到 DataCache（重启后所有文件
+/// 走全量重置，last_offset=0 + last_line_count=0 → 避免行号错位）。
+#[derive(Default)]
+struct IncrementalParseState {
+    /// 文件上次解析到的 byte offset（增量读取起点）
+    last_offset: std::collections::HashMap<String, u64>,
+    /// 文件上次已知的 size（与 stat 对比判断是否有变化）
+    last_size: std::collections::HashMap<String, u64>,
+    /// 文件上次已知的 mtime_ms（防 sed -i 原地改写：size 不变但内容变了）
+    last_mtime: std::collections::HashMap<String, u64>,
+    /// 文件已解析的行数（增量场景 error.line_number 偏移基准）
+    last_line_count: std::collections::HashMap<String, u64>,
+    /// 并发 guard：当前正在处理的文件集合
+    processing: std::collections::HashSet<String>,
+    /// 重处理队列：guard 持有期间又有 event 到达时入队
+    pending_reprocess: std::collections::HashSet<String>,
+}
+
+/// Phase 4B: 单文件错误检测的增量解析逻辑。
+///
+/// 步骤：
+/// 1. stat → current_size + current_mtime
+/// 2. 快速路径：size + mtime 都未变 + last_offset>0 → 跳过
+/// 3. 并发 guard：已 processing → 入 pending_reprocess 队列
+/// 4. 强制全量重置：current_size < last_offset || mtime 回退
+/// 5. 增量 vs 全量：last_offset>0 && current_size > last_size && mtime 未回退 → 增量
+/// 6. 增量调 parse_jsonl_from_offset，全量调 parse_jsonl_file_with_provider
+/// 7. error.line_number 偏移：增量场景 += last_line_count
+/// 8. 更新 state（含 last_line_count） + 释放 guard + 检查 pending
+async fn handle_error_event(
+    path_str: &str,
+    path: &std::path::Path,
+    state: &Arc<tokio::sync::Mutex<IncrementalParseState>>,
+    fs_provider: &Arc<dyn FsProvider>,
+    detector: &crate::error::error_detector::ErrorDetector,
+    notification_manager: &Arc<RwLock<NotificationManager>>,
+    _config_manager: &Arc<ConfigManager>,
+) {
+    let stat = match fs_provider.stat(path) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let current_size = stat.size;
+    let current_mtime = stat.mtime_ms;
+
+    // 并发 guard：检查是否已在处理
+    {
+        let mut st = state.lock().await;
+        if st.processing.contains(path_str) {
+            st.pending_reprocess.insert(path_str.to_string());
+            return;
+        }
+        // 快速路径：size + mtime 都未变且已有 offset → 跳过
+        let last_sz = st.last_size.get(path_str).copied().unwrap_or(0);
+        let last_mt = st.last_mtime.get(path_str).copied().unwrap_or(0);
+        let last_off = st.last_offset.get(path_str).copied().unwrap_or(0);
+        if last_off > 0 && current_size == last_sz && current_mtime == last_mt {
+            return;
+        }
+        st.processing.insert(path_str.to_string());
+    }
+
+    // 决定增量 vs 全量
+    let (last_offset, last_line_count, force_full) = {
+        let st = state.lock().await;
+        let off = st.last_offset.get(path_str).copied().unwrap_or(0);
+        let lc = st.last_line_count.get(path_str).copied().unwrap_or(0);
+        let last_sz = st.last_size.get(path_str).copied().unwrap_or(0);
+        let last_mt = st.last_mtime.get(path_str).copied().unwrap_or(0);
+        // 强制全量：文件被 truncate / 原地改写（size < offset）或 mtime 回退
+        let force = off > 0 && (current_size < off || current_mtime < last_mt || current_size < last_sz);
+        (off, lc, force)
+    };
+    let can_incremental = !force_full
+        && last_offset > 0
+        && current_size > *state.lock().await.last_size.get(path_str).unwrap_or(&0);
+
+    let (messages, new_offset, new_line_count) = if can_incremental {
+        // 增量解析
+        let (new_msgs, new_off) =
+            crate::parsing::jsonl_parser::parse_jsonl_from_offset(path, last_offset, fs_provider.as_ref()).await;
+        let count = last_line_count + new_msgs.len() as u64;
+        (new_msgs, new_off, count)
+    } else {
+        // 全量解析（首次 / 截断 / 重写）
+        let all_msgs = crate::parsing::jsonl_parser::parse_jsonl_file_with_provider(path, fs_provider.as_ref()).await;
+        let count = all_msgs.len() as u64;
+        (all_msgs, current_size, count)
+    };
+
+    if !messages.is_empty() {
+        let session_id = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        // project_id 反推（从 path 末两段，简化：仅 log，实际 detector 需要）
+        let project_id = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // 增量场景：error.line_number += last_line_count（已解析行偏移）
+        let errors = if can_incremental && last_line_count > 0 {
+            let raw_errors = detector
+                .detect_errors(&messages, &session_id, &project_id, path_str)
+                .await;
+            raw_errors
+                .into_iter()
+                .map(|mut e| {
+                    if let Some(line) = e.line_number.as_mut() {
+                        *line += last_line_count;
+                    }
+                    e
+                })
+                .collect::<Vec<_>>()
+        } else {
+            detector
+                .detect_errors(&messages, &session_id, &project_id, path_str)
+                .await
+        };
+
+        let mgr = notification_manager.read().await;
+        for detected_error in errors {
+            let _ = mgr.add_error(detected_error).await;
+        }
+    }
+
+    // 更新 state + 释放 guard + 检查 pending
+    let has_pending = {
+        let mut st = state.lock().await;
+        st.last_offset.insert(path_str.to_string(), new_offset);
+        st.last_size.insert(path_str.to_string(), current_size);
+        st.last_mtime.insert(path_str.to_string(), current_mtime);
+        st.last_line_count.insert(path_str.to_string(), new_line_count);
+        st.processing.remove(path_str);
+        st.pending_reprocess.remove(path_str)
+    };
+
+    // 如果 guard 持有期间又有 event，递归重处理一次（防丢失）
+    if has_pending {
+        Box::pin(handle_error_event(
+            path_str,
+            path,
+            state,
+            fs_provider,
+            detector,
+            notification_manager,
+            _config_manager,
+        ))
+        .await;
+    }
+}
+
 /// Watcher 编排器 — 管理文件监听任务的启动生命周期。
 pub struct WatcherOrchestrator {
     #[allow(dead_code)]
@@ -232,6 +389,7 @@ impl WatcherOrchestrator {
 
         // === 错误检测管道任务 ===
         // 共享主 file_watcher 的 broadcast receiver，不创建独立 watcher
+        // Phase 4B: 增量解析 + 并发 guard + catch-up scan（对齐 Electron FileWatcher.ts:615-709, 900-950）
         {
             let cancel = cancel_token.clone();
             let file_watcher_for_error = self.file_watcher.clone();
@@ -241,7 +399,63 @@ impl WatcherOrchestrator {
                 // 订阅主 watcher 的事件
                 let mut error_rx = { file_watcher_for_error.lock().await.receiver() };
                 let detector = crate::error::error_detector::ErrorDetector::new(config_manager.clone());
-                // config_manager clone 保留用于 subagent gate（动态读 notification 配置）
+
+                // Phase 4B: 增量解析状态（纯内存，重启后所有文件走全量重置）
+                // 简化持久化决策：不持久化到 DataCache。重启后 last_offset=0 触发全量重检，
+                // error.line_number 不偏移（last_line_count=0）→ 避免行号错位（reviewer v2 指出的关键风险）。
+                // 代价：重启后已知错误可能再次冒泡（用户可 dismiss）。比"行号错位指向错误位置"好。
+                let state: Arc<tokio::sync::Mutex<IncrementalParseState>> =
+                    Arc::new(tokio::sync::Mutex::new(IncrementalParseState::default()));
+
+                // Phase 4B: 独立 catch-up task（30s interval，避免 biased select 饥饿）
+                // 对齐 Electron runCatchUpScan（FileWatcher.ts:916-950）
+                {
+                    let cancel_catchup = cancel.clone();
+                    let state_catchup = state.clone();
+                    let fs_catchup = error_fs_provider.clone();
+                    let config_catchup = config_manager.clone();
+                    let notif_catchup = notification_manager.clone();
+                    tauri::async_runtime::spawn(async move {
+                        // 重建 detector（ErrorDetector 不 Clone，但内部仅 Arc<ConfigManager>，等价）
+                        let detector_catchup = crate::error::error_detector::ErrorDetector::new(config_catchup.clone());
+                        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                        interval.tick().await; // 跳过立即触发
+                        loop {
+                            tokio::select! {
+                                _ = interval.tick() => {
+                                    let snapshot = state_catchup.lock().await.last_size.clone();
+                                    for (path_str, _last_sz) in snapshot {
+                                        let path = std::path::PathBuf::from(&path_str);
+                                        let stat = match fs_catchup.stat(&path) {
+                                            Ok(s) => s,
+                                            Err(_) => continue,
+                                        };
+                                        let should_rescan = {
+                                            let st = state_catchup.lock().await;
+                                            let last_sz = st.last_size.get(&path_str).copied().unwrap_or(0);
+                                            let last_mt = st.last_mtime.get(&path_str).copied().unwrap_or(0);
+                                            stat.size != last_sz || stat.mtime_ms != last_mt
+                                        };
+                                        if should_rescan {
+                                            handle_error_event(
+                                                &path_str,
+                                                &path,
+                                                &state_catchup,
+                                                &fs_catchup,
+                                                &detector_catchup,
+                                                &notif_catchup,
+                                                &config_catchup,
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                }
+                                _ = cancel_catchup.cancelled() => break,
+                            }
+                        }
+                    });
+                }
+
                 loop {
                     tokio::select! {
                         result = error_rx.recv() => {
@@ -251,10 +465,11 @@ impl WatcherOrchestrator {
                                     if path.extension().map(|e| e != "jsonl").unwrap_or(true) {
                                         continue;
                                     }
-                                    // includeSubagentErrors gate（对齐 Electron FileWatcher.ts:583-596）：
-                                    // 默认 true，但仅在配置开启时处理 subagent 文件。
-                                    // ⚠️ 行为变更：之前无条件 continue 跳过所有 subagent，
-                                    // 接线后默认 true 的用户首次会收到 subagent 错误通知。
+                                    // Phase 3A: Memory 事件跳过错误检测
+                                    if event.kind == crate::types::domain::FileChangeEventKind::Memory {
+                                        continue;
+                                    }
+                                    // includeSubagentErrors gate（对齐 Electron FileWatcher.ts:583-596）
                                     let include_subagent = config_manager
                                         .get_config()
                                         .await
@@ -263,21 +478,15 @@ impl WatcherOrchestrator {
                                     if !include_subagent && crate::utils::is_subagent_file(&event.path) {
                                         continue;
                                     }
-                                    let session_id = path.file_stem()
-                                        .map(|s| s.to_string_lossy().to_string())
-                                        .unwrap_or_default();
-                                    let project_id = event.project_id.clone().unwrap_or_default();
-                                    let messages = crate::parsing::jsonl_parser::parse_jsonl_file_with_provider(path, error_fs_provider.as_ref()).await;
-                                    if messages.is_empty() {
-                                        continue;
-                                    }
-                                    let errors = detector.detect_errors(
-                                        &messages, &session_id, &project_id, &event.path,
+                                    handle_error_event(
+                                        &event.path,
+                                        path,
+                                        &state,
+                                        &error_fs_provider,
+                                        &detector,
+                                        &notification_manager,
+                                        &config_manager,
                                     ).await;
-                                    let mgr = notification_manager.read().await;
-                                    for detected_error in errors {
-                                        let _ = mgr.add_error(detected_error).await;
-                                    }
                                 }
                                 Err(_) => break,
                             }
