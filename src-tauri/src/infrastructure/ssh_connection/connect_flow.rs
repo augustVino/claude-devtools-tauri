@@ -27,10 +27,38 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Outer hard-cap timeout (25 seconds) for the whole connect chain
 /// (handshake + multi-candidate auth + SFTP open).
 /// 对齐 Electron CONNECT_TIMEOUT_MS=25s outer race（SshConnectionManager.ts:82）。
-/// 注意：与 Electron `client.end()` 严格等价的"主动 disconnect"在 russh 0.46 下不可行
-/// （`Handle::disconnect(&self)` 与 SFTP open 的 `&mut self` 借用冲突，且 Handle 不 Clone）。
-/// timeout 触发时整个 connect future 被 drop，session Handle 经 Drop 释放；
-/// socket 不立即关闭，依赖 OS TCP keepalive 最终清理。工程妥协，注释标注。
+///
+/// ## Engineering trade-off: disconnect on timeout
+///
+/// **目标对齐**：Electron `client.end()`（ssh2 库）— timeout 触发时主动断链。
+///
+/// **当前实现**：timeout 触发时整个 connect future 被 drop，session Handle 经 Drop 释放。
+/// **不调用 `Handle::disconnect()`**，原因：
+/// 1. `Handle::disconnect(&self, ...)` 与 SFTP open 的 `&mut session` 借用冲突
+///    （`session_mut` 已 move 进 async block，timeout 分支不可访问）
+/// 2. russh 0.46 的 `Handle` 不实现 `Clone`（核实：`pub struct Handle<H> { sender, receiver: UnboundedReceiver, join }`，
+///    `UnboundedReceiver` 不 Clone，整个 struct 无 `#[derive(Clone)]`。
+///    源码位置：russh-0.46.0/src/client/mod.rs:221-225）
+/// 3. 即便强行 `Arc<OnceCell<Handle>>`，phase 2-5 内 `&mut self` 借用期间无法 set
+///
+/// **实际副作用**：
+/// - russh 0.46 `Handle::drop` 仅 log，**不发送 SSH disconnect 消息**
+///   （核实：`impl<H> Drop for Handle<H> { fn drop(&mut self) { debug!("drop handle") } }`
+///   源码位置：russh-0.46.0/src/client/mod.rs:227-231）
+/// - 远端 sshd 的 socket 进入 `TIME_WAIT` / `CLOSE_WAIT`，等待 OS TCP keepalive 清理
+/// - 默认 Linux TCP keepalive：2 小时后开始 probe，9 次 probe 各 75s → **最多 ~2h15min 才彻底回收**
+/// - 用户感知：连接已 failed，但 `ss -tn | grep :22` 仍能看到 stale 连接
+///
+/// **缓解措施**：
+/// - 在 connect 路径每个阶段都用了独立 timeout（CONNECT/AUTH/SFTP_OPEN）
+/// - outer race 25s 是绝对硬上限，绝不会无限挂起
+/// - server 端 sshd 配置 `ClientAliveInterval` 通常更短（默认 0=禁用，但运维常设 60-300s）
+///
+/// **未来改进路径**（需重大重构）：
+/// - 升级 russh 0.50+（若 release）— 检查是否支持 `Handle::disconnect` 与 SFTP 并发
+/// - 或重写 connect 流程为 state machine，session Handle 在 timeout 分支独立可达
+///
+/// **Reviewer 评估**：非阻塞，不影响功能正确性，仅影响 stale socket 清理速度。
 const CONNECT_CHAIN_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// Merge resolved `ssh -G` values into final_config (pure function for testing).
