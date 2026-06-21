@@ -591,6 +591,7 @@ impl WatcherOrchestrator {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
+    use std::io::Write;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
@@ -700,5 +701,276 @@ mod integration_tests {
 
         // By default, no callback registered — should not panic when accessed
         assert!(orch.on_project_cache_invalidate.is_none());
+    }
+
+    /// Phase 4B review #5: handle_error_event 集成测试 — 增量场景 line_number 偏移
+    ///
+    /// 场景：
+    /// 1. 初始 3 行 user 消息（无错误）
+    /// 2. 调 handle_error_event 填充 last_line_count = 3, last_offset = X
+    /// 3. Append 1 行 user 消息，content 数组内嵌 tool_result block（is_error=true）
+    /// 4. 再次调 handle_error_event → 错误 line_number 应为 Some(4)，last_offset 应推进
+    ///
+    /// fixture 格式关键：content 必须是数组，元素 type=="tool_result"
+    /// （对齐 extract_tool_results 的提取逻辑，jsonl_parser.rs:67-102）
+    #[tokio::test]
+    async fn test_handle_error_event_incremental_line_number_offset() {
+        use crate::error::error_detector::ErrorDetector;
+        use crate::infrastructure::config::ConfigManager;
+        use crate::infrastructure::fs_provider::LocalFsProvider;
+        use crate::infrastructure::notification::NotificationManager;
+        use crate::types::config::{NotificationTrigger, TriggerContentType, TriggerMode};
+
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("-Users-test-proj");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("sess1.jsonl");
+
+        // 初始 3 行 user 文本消息（content 是字符串，extract_tool_results 返回空）
+        let initial = "{\"type\":\"user\",\"uuid\":\"u1\",\"message\":{\"role\":\"user\",\"content\":\"a\"}}\n\
+                       {\"type\":\"user\",\"uuid\":\"u2\",\"message\":{\"role\":\"user\",\"content\":\"b\"}}\n\
+                       {\"type\":\"user\",\"uuid\":\"u3\",\"message\":{\"role\":\"user\",\"content\":\"c\"}}\n";
+        std::fs::write(&session_path, &initial).unwrap();
+
+        let fs_provider: Arc<dyn FsProvider> = Arc::new(LocalFsProvider::new());
+        let state: Arc<Mutex<IncrementalParseState>> =
+            Arc::new(Mutex::new(IncrementalParseState::default()));
+
+        // C1 修复：必须用 with_path(tempdir) 隔离，避免 ConfigManager::new() 污染
+        // 开发者真实配置 ~/.claude/claude-devtools-config.json。
+        // add_trigger() → persist_inner() → tokio::fs::write(config_path) 会覆盖写真实文件。
+        // 对齐既有约定（notification/tests.rs:93 等都用 with_path）。
+        let config_manager = Arc::new(ConfigManager::with_path(
+            dir.path().join("config.json"),
+        ));
+        let trigger = NotificationTrigger {
+            id: "err-trigger".to_string(),
+            name: "Err".to_string(),
+            enabled: true,
+            content_type: TriggerContentType::ToolResult,
+            tool_name: None,
+            is_builtin: None,
+            ignore_patterns: None,
+            mode: TriggerMode::ErrorStatus,
+            require_error: Some(true),
+            match_field: None,
+            match_pattern: None,
+            token_threshold: None,
+            token_type: None,
+            repository_ids: None,
+            color: Some("red".to_string()),
+        };
+        let _ = config_manager.add_trigger(trigger).await;
+        let detector = ErrorDetector::new(config_manager.clone());
+        let notif_mgr = Arc::new(tokio::sync::RwLock::new(
+            NotificationManager::new_for_test(config_manager.clone()),
+        ));
+
+        let path_str = session_path.to_string_lossy().to_string();
+
+        // 第一次：全量解析 3 行（无错误）
+        handle_error_event(
+            &path_str, &session_path, "-Users-test-proj", "sess1",
+            &state, &fs_provider, &detector, &notif_mgr, &config_manager,
+        )
+        .await;
+
+        // 验证 state 正确填充 + offset 推进
+        let first_offset = {
+            let st = state.lock().await;
+            assert_eq!(*st.last_line_count.get(&path_str).unwrap(), 3);
+            let off = st.last_offset.get(&path_str).copied().unwrap_or(0);
+            assert!(off > 0, "last_offset must advance past initial 3 lines");
+            off
+        };
+
+        // 通知应为空（无错误） — std::sync::RwLock 用 .unwrap()，不用 .await
+        assert_eq!(
+            notif_mgr.read().await.notifications.read().unwrap().len(),
+            0,
+            "no errors in initial 3 lines"
+        );
+
+        // Append 1 行 user 消息，content 是数组内嵌 tool_result block（is_error=true）
+        // 关键：必须用此格式，extract_tool_results 才能提取（C1 修复）
+        let appended = "{\"type\":\"user\",\"uuid\":\"u4\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tc1\",\"content\":\"Build failed\",\"is_error\":true}]}}\n";
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&session_path)
+            .unwrap()
+            .write_all(appended.as_bytes())
+            .unwrap();
+
+        // 第二次：增量解析
+        handle_error_event(
+            &path_str, &session_path, "-Users-test-proj", "sess1",
+            &state, &fs_provider, &detector, &notif_mgr, &config_manager,
+        )
+        .await;
+
+        // 显式验证 can_incremental 决策：last_offset 必须推进（I8 修复）
+        {
+            let st = state.lock().await;
+            let new_off = st.last_offset.get(&path_str).copied().unwrap_or(0);
+            assert!(
+                new_off > first_offset,
+                "can_incremental=true: last_offset must advance further ({} > {})",
+                new_off, first_offset
+            );
+            assert_eq!(*st.last_line_count.get(&path_str).unwrap(), 4);
+        }
+
+        // 验证通知：1 条错误，error.line_number = Some(4)（= 3 已有 + 1 新行）
+        // StoredNotification.error: DetectedError，line_number: Option<u64>
+        let notifs = notif_mgr
+            .read()
+            .await
+            .notifications
+            .read()
+            .unwrap()
+            .clone();
+        assert_eq!(notifs.len(), 1, "should detect 1 error in appended line");
+        assert_eq!(
+            notifs[0].error.line_number,
+            Some(4),
+            "line_number must offset by last_line_count=3 → 3+1=4"
+        );
+    }
+
+    /// Phase 4B review #5: handle_error_event 集成测试 — 全量场景 line_number 无偏移
+    ///
+    /// 场景：last_offset=0（无缓存），2 行其中第 2 行 user 消息含 tool_result 错误
+    /// → line_number = Some(2)（无偏移）
+    #[tokio::test]
+    async fn test_handle_error_event_full_parse_line_number_no_offset() {
+        use crate::error::error_detector::ErrorDetector;
+        use crate::infrastructure::config::ConfigManager;
+        use crate::infrastructure::fs_provider::LocalFsProvider;
+        use crate::infrastructure::notification::NotificationManager;
+        use crate::types::config::{NotificationTrigger, TriggerContentType, TriggerMode};
+
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("-Users-test-proj2");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("sess2.jsonl");
+
+        // 2 行：第 1 行无错误，第 2 行 user 消息含 tool_result 错误
+        let content = "{\"type\":\"user\",\"uuid\":\"u1\",\"message\":{\"role\":\"user\",\"content\":\"a\"}}\n\
+                       {\"type\":\"user\",\"uuid\":\"u2\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tc1\",\"content\":\"Build failed\",\"is_error\":true}]}}\n";
+        std::fs::write(&session_path, content).unwrap();
+
+        let fs_provider: Arc<dyn FsProvider> = Arc::new(LocalFsProvider::new());
+        let state: Arc<Mutex<IncrementalParseState>> =
+            Arc::new(Mutex::new(IncrementalParseState::default()));
+        // C1 修复：用 with_path(tempdir) 隔离（同 Step 2）
+        let config_manager = Arc::new(ConfigManager::with_path(
+            dir.path().join("config.json"),
+        ));
+        let trigger = NotificationTrigger {
+            id: "err-trigger2".to_string(),
+            name: "Err2".to_string(),
+            enabled: true,
+            content_type: TriggerContentType::ToolResult,
+            tool_name: None,
+            is_builtin: None,
+            ignore_patterns: None,
+            mode: TriggerMode::ErrorStatus,
+            require_error: Some(true),
+            match_field: None,
+            match_pattern: None,
+            token_threshold: None,
+            token_type: None,
+            repository_ids: None,
+            color: Some("red".to_string()),
+        };
+        let _ = config_manager.add_trigger(trigger).await;
+        let detector = ErrorDetector::new(config_manager.clone());
+        let notif_mgr = Arc::new(tokio::sync::RwLock::new(
+            NotificationManager::new_for_test(config_manager.clone()),
+        ));
+
+        let path_str = session_path.to_string_lossy().to_string();
+
+        handle_error_event(
+            &path_str, &session_path, "-Users-test-proj2", "sess2",
+            &state, &fs_provider, &detector, &notif_mgr, &config_manager,
+        )
+        .await;
+
+        let notifs = notif_mgr.read().await.notifications.read().unwrap().clone();
+        assert_eq!(notifs.len(), 1, "should detect 1 error");
+        assert_eq!(
+            notifs[0].error.line_number,
+            Some(2),
+            "full parse: line_number is 1-based, no offset → Some(2)"
+        );
+    }
+
+    /// Phase 4B review #5: handle_error_event 集成测试 — stat 失败（ENOENT）清理 state
+    ///
+    /// 场景：填充 state 后删除文件 → 调 handle_error_event → state 条目应被清理
+    #[tokio::test]
+    async fn test_handle_error_event_stat_fail_clears_state() {
+        use crate::infrastructure::fs_provider::LocalFsProvider;
+
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("-Users-test-proj3");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let session_path = project_dir.join("sess3.jsonl");
+        std::fs::write(&session_path, "{}\n").unwrap();
+
+        let fs_provider: Arc<dyn FsProvider> = Arc::new(LocalFsProvider::new());
+        let state: Arc<Mutex<IncrementalParseState>> =
+            Arc::new(Mutex::new(IncrementalParseState::default()));
+
+        // 预填充 state（模拟之前已处理）— **包含 processing**
+        // 关键（C2 修复）：必须预填 processing，否则 !st.processing.contains(path_str) 恒过
+        {
+            let mut st = state.lock().await;
+            let path_str = session_path.to_string_lossy().to_string();
+            st.last_offset.insert(path_str.clone(), 100);
+            st.last_size.insert(path_str.clone(), 100);
+            st.last_mtime.insert(path_str.clone(), 1000);
+            st.last_line_count.insert(path_str.clone(), 1);
+            st.project_id.insert(path_str.clone(), "-Users-test-proj3".into());
+            st.session_id.insert(path_str.clone(), "sess3".into());
+            st.processing.insert(path_str.clone());
+            st.pending_reprocess.insert(path_str);
+        }
+
+        // 删除文件
+        std::fs::remove_file(&session_path).unwrap();
+
+        // C1 修复：用 with_path(tempdir) 隔离（虽然本测试不调 add_trigger，规范一致）
+        let config_manager = Arc::new(ConfigManager::with_path(
+            dir.path().join("config.json"),
+        ));
+        let detector = crate::error::error_detector::ErrorDetector::new(config_manager.clone());
+        let notif_mgr = Arc::new(tokio::sync::RwLock::new(
+            crate::infrastructure::notification::NotificationManager::new_for_test(
+                config_manager.clone(),
+            ),
+        ));
+
+        let path_str = session_path.to_string_lossy().to_string();
+
+        // stat 失败分支应清理 state
+        handle_error_event(
+            &path_str, &session_path, "-Users-test-proj3", "sess3",
+            &state, &fs_provider, &detector, &notif_mgr, &config_manager,
+        )
+        .await;
+
+        // 验证 state 全部 8 个字段已清理（I2 修复 — 对齐 watcher_orchestrator.rs:70-77 清理范围）
+        // 漏清理任一字段都会导致 catch-up 路径错误恢复上下文 → 重复通知
+        let st = state.lock().await;
+        assert!(!st.last_offset.contains_key(&path_str), "last_offset must be cleared");
+        assert!(!st.last_size.contains_key(&path_str), "last_size must be cleared");
+        assert!(!st.last_mtime.contains_key(&path_str), "last_mtime must be cleared");
+        assert!(!st.last_line_count.contains_key(&path_str), "last_line_count must be cleared");
+        assert!(!st.project_id.contains_key(&path_str), "project_id must be cleared");
+        assert!(!st.session_id.contains_key(&path_str), "session_id must be cleared");
+        assert!(!st.processing.contains(&path_str), "processing must be cleared");
+        assert!(!st.pending_reprocess.contains(&path_str), "pending_reprocess must be cleared");
     }
 }
