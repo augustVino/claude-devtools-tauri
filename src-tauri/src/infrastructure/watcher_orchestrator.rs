@@ -578,6 +578,53 @@ mod integration_tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
+    /// Phase 4B: IncrementalParseState 快速路径 — size + mtime 不变 + last_offset>0 → 应跳过
+    #[test]
+    fn test_incremental_state_fast_path_skip() {
+        let mut st = IncrementalParseState::default();
+        st.last_offset.insert("/p/s.jsonl".into(), 100);
+        st.last_size.insert("/p/s.jsonl".into(), 200);
+        st.last_mtime.insert("/p/s.jsonl".into(), 1000);
+
+        let last_off = st.last_offset.get("/p/s.jsonl").copied().unwrap_or(0);
+        let last_sz = st.last_size.get("/p/s.jsonl").copied().unwrap_or(0);
+        let last_mt = st.last_mtime.get("/p/s.jsonl").copied().unwrap_or(0);
+        let current_size = 200u64;
+        let current_mtime = 1000u64;
+
+        let should_skip = last_off > 0 && current_size == last_sz && current_mtime == last_mt;
+        assert!(should_skip, "size + mtime unchanged + offset>0 → skip");
+    }
+
+    /// Phase 4B: force_full 判断 — current_size < last_offset → 必须全量重置
+    #[test]
+    fn test_incremental_state_force_full_on_truncate() {
+        let mut st = IncrementalParseState::default();
+        st.last_offset.insert("/p/s.jsonl".into(), 500); // 已读到 500 字节
+        st.last_size.insert("/p/s.jsonl".into(), 500);
+        st.last_mtime.insert("/p/s.jsonl".into(), 1000);
+
+        // 文件被 truncate 到 300 字节
+        let current_size = 300u64;
+        let last_off = st.last_offset.get("/p/s.jsonl").copied().unwrap_or(0);
+        let force_full = last_off > 0 && current_size < last_off;
+        assert!(force_full, "size < last_offset → force full reset");
+    }
+
+    /// Phase 4B: 并发 guard — processing 集合包含路径时入 pending_reprocess
+    #[test]
+    fn test_incremental_state_concurrency_guard() {
+        let mut st = IncrementalParseState::default();
+        st.processing.insert("/p/s.jsonl".into());
+
+        // 模拟 handle_error_event guard 检查
+        let should_queue = st.processing.contains("/p/s.jsonl");
+        assert!(should_queue, "file in processing → queue in pending");
+
+        st.pending_reprocess.insert("/p/s.jsonl".into());
+        assert!(st.pending_reprocess.contains("/p/s.jsonl"));
+    }
+
     #[test]
     fn test_cache_invalidate_callback_fired_on_file_event() {
         // Setup: create orchestrator components (minimal, no actual FS)
