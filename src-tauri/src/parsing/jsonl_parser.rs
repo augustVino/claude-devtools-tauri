@@ -521,6 +521,7 @@ pub fn get_task_calls(messages: &[ParsedMessage]) -> Vec<ToolCall> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn test_parse_user_entry() {
@@ -801,5 +802,3 @@ mod tests {
         assert_eq!(offset, initial_size, "offset unchanged when nothing to read");
     }
 }
-
-use std::io::Write;
