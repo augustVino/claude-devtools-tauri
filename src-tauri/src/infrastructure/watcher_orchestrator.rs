@@ -30,6 +30,10 @@ struct IncrementalParseState {
     last_mtime: std::collections::HashMap<String, u64>,
     /// 文件已解析的行数（增量场景 error.line_number 偏移基准）
     last_line_count: std::collections::HashMap<String, u64>,
+    /// 文件关联的 project_id（catch-up 路径无 FileChangeEvent，需 state 恢复）
+    project_id: std::collections::HashMap<String, String>,
+    /// 文件关联的 session_id（catch-up 路径无 FileChangeEvent，需 state 恢复）
+    session_id: std::collections::HashMap<String, String>,
     /// 并发 guard：当前正在处理的文件集合
     processing: std::collections::HashSet<String>,
     /// 重处理队列：guard 持有期间又有 event 到达时入队
@@ -50,6 +54,8 @@ struct IncrementalParseState {
 async fn handle_error_event(
     path_str: &str,
     path: &std::path::Path,
+    project_id: &str,
+    session_id: &str,
     state: &Arc<tokio::sync::Mutex<IncrementalParseState>>,
     fs_provider: &Arc<dyn FsProvider>,
     detector: &crate::error::error_detector::ErrorDetector,
@@ -58,72 +64,64 @@ async fn handle_error_event(
 ) {
     let stat = match fs_provider.stat(path) {
         Ok(s) => s,
-        Err(_) => return,
+        Err(_) => {
+            // Phase 4B reviewer fix #4: stat 失败（文件已删除）→ 从 state 回收
+            let mut st = state.lock().await;
+            st.last_offset.remove(path_str);
+            st.last_size.remove(path_str);
+            st.last_mtime.remove(path_str);
+            st.last_line_count.remove(path_str);
+            st.project_id.remove(path_str);
+            st.session_id.remove(path_str);
+            st.processing.remove(path_str);
+            st.pending_reprocess.remove(path_str);
+            return;
+        }
     };
     let current_size = stat.size;
     let current_mtime = stat.mtime_ms;
 
-    // 并发 guard：检查是否已在处理
-    {
+    // 合并锁：guard + 快速路径 + force_full + can_incremental 一次临界区（reviewer fix #3）
+    let (last_offset, last_line_count, force_full, can_incremental) = {
         let mut st = state.lock().await;
+        // 并发 guard
         if st.processing.contains(path_str) {
             st.pending_reprocess.insert(path_str.to_string());
             return;
         }
-        // 快速路径：size + mtime 都未变且已有 offset → 跳过
+        let last_off = st.last_offset.get(path_str).copied().unwrap_or(0);
         let last_sz = st.last_size.get(path_str).copied().unwrap_or(0);
         let last_mt = st.last_mtime.get(path_str).copied().unwrap_or(0);
-        let last_off = st.last_offset.get(path_str).copied().unwrap_or(0);
+        let last_lc = st.last_line_count.get(path_str).copied().unwrap_or(0);
+        // 快速路径
         if last_off > 0 && current_size == last_sz && current_mtime == last_mt {
             return;
         }
+        // 强制全量：truncate / sed -i rewrite / mtime 回退
+        let force = last_off > 0
+            && (current_size < last_off || current_mtime < last_mt || current_size < last_sz);
+        let can_inc = !force && last_off > 0 && current_size > last_sz;
         st.processing.insert(path_str.to_string());
-    }
-
-    // 决定增量 vs 全量
-    let (last_offset, last_line_count, force_full) = {
-        let st = state.lock().await;
-        let off = st.last_offset.get(path_str).copied().unwrap_or(0);
-        let lc = st.last_line_count.get(path_str).copied().unwrap_or(0);
-        let last_sz = st.last_size.get(path_str).copied().unwrap_or(0);
-        let last_mt = st.last_mtime.get(path_str).copied().unwrap_or(0);
-        // 强制全量：文件被 truncate / 原地改写（size < offset）或 mtime 回退
-        let force = off > 0 && (current_size < off || current_mtime < last_mt || current_size < last_sz);
-        (off, lc, force)
+        (last_off, last_lc, force, can_inc)
     };
-    let can_incremental = !force_full
-        && last_offset > 0
-        && current_size > *state.lock().await.last_size.get(path_str).unwrap_or(&0);
 
     let (messages, new_offset, new_line_count) = if can_incremental {
-        // 增量解析
         let (new_msgs, new_off) =
             crate::parsing::jsonl_parser::parse_jsonl_from_offset(path, last_offset, fs_provider.as_ref()).await;
         let count = last_line_count + new_msgs.len() as u64;
         (new_msgs, new_off, count)
     } else {
-        // 全量解析（首次 / 截断 / 重写）
         let all_msgs = crate::parsing::jsonl_parser::parse_jsonl_file_with_provider(path, fs_provider.as_ref()).await;
         let count = all_msgs.len() as u64;
         (all_msgs, current_size, count)
     };
 
     if !messages.is_empty() {
-        let session_id = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
-        // project_id 反推（从 path 末两段，简化：仅 log，实际 detector 需要）
-        let project_id = path
-            .parent()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-
-        // 增量场景：error.line_number += last_line_count（已解析行偏移）
+        // reviewer fix #1/#2: 用传入的 project_id/session_id（从 FileChangeEvent 携带或 state 恢复），
+        // 不再从 path 推导（对 subagent 路径会拿到 "subagents" 错误值）
         let errors = if can_incremental && last_line_count > 0 {
             let raw_errors = detector
-                .detect_errors(&messages, &session_id, &project_id, path_str)
+                .detect_errors(&messages, session_id, project_id, path_str)
                 .await;
             raw_errors
                 .into_iter()
@@ -136,7 +134,7 @@ async fn handle_error_event(
                 .collect::<Vec<_>>()
         } else {
             detector
-                .detect_errors(&messages, &session_id, &project_id, path_str)
+                .detect_errors(&messages, session_id, project_id, path_str)
                 .await
         };
 
@@ -153,15 +151,19 @@ async fn handle_error_event(
         st.last_size.insert(path_str.to_string(), current_size);
         st.last_mtime.insert(path_str.to_string(), current_mtime);
         st.last_line_count.insert(path_str.to_string(), new_line_count);
+        // 持久化 project_id/session_id 供 catch-up 路径恢复
+        st.project_id.insert(path_str.to_string(), project_id.to_string());
+        st.session_id.insert(path_str.to_string(), session_id.to_string());
         st.processing.remove(path_str);
         st.pending_reprocess.remove(path_str)
     };
 
-    // 如果 guard 持有期间又有 event，递归重处理一次（防丢失）
     if has_pending {
         Box::pin(handle_error_event(
             path_str,
             path,
+            project_id,
+            session_id,
             state,
             fs_provider,
             detector,
@@ -423,23 +425,30 @@ impl WatcherOrchestrator {
                         loop {
                             tokio::select! {
                                 _ = interval.tick() => {
-                                    let snapshot = state_catchup.lock().await.last_size.clone();
-                                    for (path_str, _last_sz) in snapshot {
+                                    // snapshot 包含 path_str → (size, project_id, session_id)
+                                    let snapshot: Vec<(String, u64, String, String)> = {
+                                        let st = state_catchup.lock().await;
+                                        st.last_size.iter().filter_map(|(k, &sz)| {
+                                            let pid = st.project_id.get(k).cloned().unwrap_or_default();
+                                            let sid = st.session_id.get(k).cloned().unwrap_or_default();
+                                            Some((k.clone(), sz, pid, sid))
+                                        }).collect()
+                                    };
+                                    for (path_str, last_sz, project_id, session_id) in snapshot {
                                         let path = std::path::PathBuf::from(&path_str);
                                         let stat = match fs_catchup.stat(&path) {
                                             Ok(s) => s,
                                             Err(_) => continue,
                                         };
-                                        let should_rescan = {
-                                            let st = state_catchup.lock().await;
-                                            let last_sz = st.last_size.get(&path_str).copied().unwrap_or(0);
-                                            let last_mt = st.last_mtime.get(&path_str).copied().unwrap_or(0);
-                                            stat.size != last_sz || stat.mtime_ms != last_mt
-                                        };
+                                        let last_mt = state_catchup.lock().await
+                                            .last_mtime.get(&path_str).copied().unwrap_or(0);
+                                        let should_rescan = stat.size != last_sz || stat.mtime_ms != last_mt;
                                         if should_rescan {
                                             handle_error_event(
                                                 &path_str,
                                                 &path,
+                                                &project_id,
+                                                &session_id,
                                                 &state_catchup,
                                                 &fs_catchup,
                                                 &detector_catchup,
@@ -481,6 +490,13 @@ impl WatcherOrchestrator {
                                     handle_error_event(
                                         &event.path,
                                         path,
+                                        &event.project_id.clone().unwrap_or_default(),
+                                        &event.session_id.clone().unwrap_or_else(|| {
+                                            // event.session_id 在 polling 可能未填，fallback file_stem
+                                            path.file_stem()
+                                                .map(|s| s.to_string_lossy().to_string())
+                                                .unwrap_or_default()
+                                        }),
                                         &state,
                                         &error_fs_provider,
                                         &detector,
