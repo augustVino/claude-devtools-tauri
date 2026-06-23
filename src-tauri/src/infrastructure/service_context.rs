@@ -160,10 +160,78 @@ impl ServiceContext {
     /// 取消当前 token 并清除引用。后续 `spawn_watcher_tasks` 会创建新 token，
     /// 确保可重复的 stop/start 生命周期（与 Electron 行为对齐）。
     pub async fn stop_watcher_tasks(&self) {
-        let mut guard = self.watcher_cancel_token.write().await;
-        if let Some(token) = guard.take() {
-            token.cancel();
-            log::info!("ServiceContext '{}': watcher tasks cancelled", self.id);
+        {
+            let mut guard = self.watcher_cancel_token.write().await;
+            if let Some(token) = guard.take() {
+                token.cancel();
+                log::info!("ServiceContext '{}': watcher tasks cancelled", self.id);
+            }
+        }
+        // 主动 stop FileWatcher，确保 is_watching 在新任务 watch 前被重置。
+        //
+        // 必要性：旧监听任务从收到 cancel 到自行执行 stop() 是异步的（select
+        // 唤醒 → 抢 FileWatcher 锁 → stop）。快速切换（local→ssh→local）时，
+        // 新任务可能抢先 watch，触发 watch_local 的 is_watching 防重入检查返回
+        // "Already watching" 而夭折；随后旧任务 stop 退出 → 监听真空 → 会话详情
+        // 不再更新。这里同步 stop 保证 is_watching 在 spawn 新任务前已被清理。
+        //
+        // 与 spawn_all 协作：主/todo 监听任务退出时不再调用 stop()，FileWatcher
+        // 清理统一由本方法负责（stop() 幂等，可安全多次调用）。
+        self.file_watcher.lock().await.stop().await;
+        self.todo_watcher.lock().await.stop().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infrastructure::fs_provider::LocalFsProvider;
+
+    fn make_local_context(dir: &std::path::Path) -> ServiceContext {
+        ServiceContext::new(ServiceContextConfig {
+            id: "test".to_string(),
+            context_type: ContextType::Local,
+            projects_dir: dir.to_path_buf(),
+            todos_dir: dir.join("todos"),
+            fs_provider: std::sync::Arc::new(LocalFsProvider::new()),
+            cache: None,
+        })
+    }
+
+    /// 复现快速切换（local→ssh→local）竞态的回归测试。
+    ///
+    /// 主监听任务已 watch（is_watching=true）后，context 切换会调用
+    /// `stop_watcher_tasks`。它必须主动重置 `is_watching`，否则切回 local 后
+    /// 新任务的 `watch_local` 会因防重入返回 "Already watching" 而夭折，
+    /// 导致 local 监听永久死亡、会话详情不再更新。
+    #[tokio::test]
+    async fn stop_watcher_tasks_resets_is_watching_for_rewatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ctx = make_local_context(tmp.path());
+
+        // 模拟主监听任务已执行 watch（is_watching=true）
+        {
+            let mut fw = ctx.file_watcher.lock().await;
+            fw.watch(tmp.path()).await.unwrap();
+            assert!(fw.is_watching().await);
+        }
+
+        // context 切换时的 stop：必须重置 is_watching
+        ctx.stop_watcher_tasks().await;
+        {
+            let fw = ctx.file_watcher.lock().await;
+            assert!(
+                !fw.is_watching().await,
+                "stop_watcher_tasks 必须重置 is_watching，否则快速切换后新任务 watch 会夭折"
+            );
+        }
+
+        // 切回后新任务 watch：应成功（不再 "Already watching"）
+        {
+            let mut fw = ctx.file_watcher.lock().await;
+            fw.watch(tmp.path()).await.expect(
+                "stop_watcher_tasks 后必须能重新 watch —— local→ssh→local 不丢失监听的前提",
+            );
         }
     }
 }

@@ -373,9 +373,20 @@ impl WatcherOrchestrator {
                                         );
                                     }
                                 }
-                                Err(_) => {
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                                     log::info!("Main FileWatcher receiver closed");
                                     break;
+                                }
+                                // Lagged: 消费端落后超过 channel 容量(64)。
+                                // 正确处理是跳过丢失的消息继续接收，而非退出——否则 watcher 任务
+                                // 会退出并 stop()，导致 emit_file_change 永久停止、会话详情不再更新。
+                                // 对齐 lib.rs 中 ssh_status_rx 的 Err(Lagged) => continue 范式。
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                    log::warn!(
+                                        "Main FileWatcher receiver lagged by {} messages, skipping lost events",
+                                        n
+                                    );
+                                    continue;
                                 }
                             }
                         }
@@ -385,7 +396,9 @@ impl WatcherOrchestrator {
                         }
                     }
                 }
-                file_watcher.lock().await.stop().await;
+                // FileWatcher 的清理由 ServiceContext::stop_watcher_tasks 统一负责
+                // （主动 stop 重置 is_watching）。此处不再 stop：旧任务滞后 stop 会
+                // take 掉新任务刚建立的 debouncer，破坏快速切换后的监听。
             });
         }
 
@@ -504,7 +517,15 @@ impl WatcherOrchestrator {
                                         &config_manager,
                                     ).await;
                                 }
-                                Err(_) => break,
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                                // Lagged 时跳过丢失消息继续接收（见主监听任务同名注释）。
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                    log::warn!(
+                                        "Error detection pipeline receiver lagged by {} messages, skipping lost events",
+                                        n
+                                    );
+                                    continue;
+                                }
                             }
                         }
                         _ = cancel.cancelled() => {
@@ -559,7 +580,15 @@ impl WatcherOrchestrator {
                                         );
                                     }
                                 }
-                                Err(_) => break,
+                                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                                // Lagged 时跳过丢失消息继续接收（见主监听任务同名注释）。
+                                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                    log::warn!(
+                                        "Todo FileWatcher receiver lagged by {} messages, skipping lost events",
+                                        n
+                                    );
+                                    continue;
+                                }
                             }
                         }
                         _ = cancel.cancelled() => {
@@ -568,7 +597,7 @@ impl WatcherOrchestrator {
                         }
                     }
                 }
-                todo_watcher.lock().await.stop().await;
+                // 同主任务：FileWatcher 清理由 stop_watcher_tasks 统一负责。
             });
         }
 

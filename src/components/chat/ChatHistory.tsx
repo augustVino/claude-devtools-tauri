@@ -852,8 +852,9 @@ export const ChatHistory = ({ tabId }: ChatHistoryProps): React.ReactElement => 
               scrollToBottom('smooth');
               setShowScrollButton(false);
             }}
-            className="absolute bottom-5 z-20 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs shadow-lg transition-[background-color,box-shadow]"
+            className="absolute z-20 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs shadow-lg transition-[background-color,box-shadow]"
             style={{
+              bottom: 'calc(1.25rem + 36px)',
               right:
                 isContextPanelVisible && allContextInjections.length > 0
                   ? `calc(${CONTEXT_PANEL_WIDTH_PX}px + 1rem)`
