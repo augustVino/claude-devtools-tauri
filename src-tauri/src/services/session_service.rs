@@ -22,7 +22,7 @@ use crate::types::chunks::{
     ConversationGroup, Process, SessionDetail, SessionDetailResponse, SessionDetailUnchanged,
 };
 use crate::types::domain::{
-    AgentKind, DeleteSessionResult, PaginatedSessionsResult, Session, SessionMetrics,
+    DeleteSessionResult, PaginatedSessionsResult, Session, SessionMetrics,
     SessionsPaginationOptions,
 };
 use crate::utils::content_sanitizer::{
@@ -118,9 +118,36 @@ impl SessionServiceImpl {
     }
 
     /// 构建会话文件路径。
+    ///
+    /// 先按 claude 布局直推（零开销，旧路径行为不变）；miss 时依次尝试
+    /// 其他 agent 的 locate（如 pi：目录编码不同构，枚举匹配）。都不存在时
+    /// 返回 claude 直推路径（下游 exists 检查按旧语义处理）。
     async fn session_path(&self, project_id: &str, session_id: &str) -> Result<PathBuf, AppError> {
         let project_dir = self.project_dir(project_id).await?;
-        Ok(project_dir.join(format!("{}.jsonl", session_id)))
+        let claude_path = project_dir.join(format!("{}.jsonl", session_id));
+        if self.path_exists(&claude_path).await? {
+            return Ok(claude_path);
+        }
+        let fs_provider = self.fs_provider().await?;
+        let (projects_dir, home_dir) = {
+            let active_arc = {
+                let mgr = self.context_manager.read().await;
+                mgr.get_active()
+                    .ok_or_else(|| AppError::Internal("No active ServiceContext".into()))?
+            };
+            let ctx = active_arc.read().await;
+            (ctx.projects_dir.clone(), ctx.home_dir.clone())
+        };
+        if let Some(p) = crate::agents::locate_extra_session(
+            &projects_dir,
+            &home_dir,
+            project_id,
+            session_id,
+            fs_provider.as_ref(),
+        ) {
+            return Ok(p);
+        }
+        Ok(claude_path)
     }
 
     /// 解析子 Agent 数据并转换为 chunks::Process 列表。
@@ -160,6 +187,7 @@ impl SessionServiceImpl {
         &self,
         path: &Path,
         project_id: &str,
+        session_id: &str,
     ) -> Result<Option<Session>, AppError> {
         // SSH-aware: 通过 fs_provider 获取元数据（不能用 path.metadata() 本地 fs）。
         let fs_provider = self.fs_provider().await?;
@@ -171,6 +199,7 @@ impl SessionServiceImpl {
         Ok(Self::build_session_metadata_inner(
             path,
             project_id,
+            session_id,
             &parsed,
             stat.mtime_ms,
             stat.birthtime_ms,
@@ -178,16 +207,18 @@ impl SessionServiceImpl {
     }
 
     /// 纯函数：从已 parse 的 ParsedSession 构建 Session 元数据。
-    /// 调用方持有 parsed 时复用，避免重复 parse_session_file_with_provider（SSH 上每次 read 全文 ~秒级）。
+    /// 调用方持有 parsed 时复用，避免重复 parse（SSH 上每次 read 全文 ~秒级）。
+    ///
+    /// `session_id` 是统一寻址 id（前端 tab/列表用它）：claude 文件 stem 即
+    /// id，但 pi 等家的文件名带时间戳前缀，**不能用 file_stem**。
     fn build_session_metadata_inner(
         path: &Path,
         project_id: &str,
+        session_id: &str,
         parsed: &ParsedSession,
         mtime_ms: u64,
         birthtime_ms: u64,
     ) -> Option<Session> {
-        let filename = path.file_stem()?.to_string_lossy().to_string();
-
         // Note: Electron does NOT check isMeta for title extraction — it processes all type='user' entries.
         // Slash commands are meta messages (isMeta: true) — we must still detect them as command fallback titles.
         let mut first_user_text: Option<String> = None;
@@ -266,7 +297,7 @@ impl SessionServiceImpl {
             .unwrap_or(birthtime_ms);
 
         Some(Session {
-            id: filename,
+            id: session_id.to_string(),
             agent: agent_for_path(path),
             project_id: project_id.to_string(),
             project_path,
@@ -292,13 +323,14 @@ impl SessionServiceImpl {
         session_id: &str,
         project_id: &str,
         parsed: &ParsedSession,
+        path: &Path,
     ) -> Session {
         let fallback_path =
             Self::extract_cwd_from_messages(parsed).unwrap_or_else(|| decode_path(project_id));
 
         Session {
             id: session_id.to_string(),
-            agent: AgentKind::ClaudeCode,
+            agent: crate::agents::agent_for_path(path),
             project_id: project_id.to_string(),
             project_path: fallback_path,
             created_at: 0,
@@ -430,11 +462,12 @@ impl SessionServiceImpl {
         let session = Self::build_session_metadata_inner(
             &session_path,
             project_id,
+            session_id,
             &parsed,
             stat.as_ref().map(|s| s.mtime_ms).unwrap_or(0),
             stat.as_ref().map(|s| s.birthtime_ms).unwrap_or(0),
         )
-        .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
+        .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed, &session_path));
 
         let subagents = self
             .resolve_subagents(project_id, session_id, &parsed)
@@ -502,11 +535,12 @@ impl SessionServiceImpl {
         let session = Self::build_session_metadata_inner(
             &session_path,
             project_id,
+            session_id,
             &parsed,
             stat.as_ref().map(|s| s.mtime_ms).unwrap_or(0),
             stat.as_ref().map(|s| s.birthtime_ms).unwrap_or(0),
         )
-        .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
+        .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed, &session_path));
 
         let subagents = self
             .resolve_subagents(project_id, session_id, &parsed)
@@ -593,11 +627,12 @@ impl SessionServiceImpl {
         let session = Self::build_session_metadata_inner(
             &session_path,
             project_id,
+            session_id,
             &parsed,
             stat.as_ref().map(|s| s.mtime_ms).unwrap_or(0),
             stat.as_ref().map(|s| s.birthtime_ms).unwrap_or(0),
         )
-        .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed));
+        .unwrap_or_else(|| self.fallback_session(session_id, project_id, &parsed, &session_path));
 
         let subagents = self
             .resolve_subagents(project_id, session_id, &parsed)
@@ -658,8 +693,10 @@ impl SessionServiceImpl {
             tokio::fs::remove_dir_all(path).await.is_ok()
         }
 
-        // 1. Main JSONL file
-        let jsonl_path = project_dir.join(format!("{}.jsonl", session_id));
+        // 1. Main JSONL file — 统一寻址（claude 直推 → 其他 agent locate
+        //    fallback），pi 等家的会话删除不再落空。注意删除本身是本地
+        // fs 能力（tokio::fs），SSH 模式下与既有行为一致地不生效。
+        let jsonl_path = self.session_path(project_id, session_id).await?;
         if jsonl_path.exists() {
             if try_remove_file(&jsonl_path).await {
                 main_file_deleted = true;

@@ -211,6 +211,7 @@ mod tests {
         mgr.register_context(ServiceContext::new(ServiceContextConfig {
             id: "local".to_string(),
             context_type: ContextType::Local,
+            home_dir: Some(PathBuf::new()),
             projects_dir,
             todos_dir,
             fs_provider: Arc::new(LocalFsProvider::new()),
@@ -246,6 +247,7 @@ mod tests {
         mgr.register_context(ServiceContext::new(ServiceContextConfig {
             id: "ssh-test".to_string(),
             context_type: ContextType::Ssh,
+            home_dir: Some(PathBuf::new()),
             projects_dir: PathBuf::from("/projects"),
             todos_dir: PathBuf::from("/todos"),
             fs_provider: Arc::new(provider.clone()),

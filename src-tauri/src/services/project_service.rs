@@ -38,18 +38,63 @@ impl ProjectServiceImpl {
             ctx.fs_provider.clone(),
         ))
     }
+    /// 从 active ServiceContext 取 fs_provider / projects_dir / home_dir
+    /// （多 agent 聚合用；home 为空时聚合层自动降级为仅 claude）。
+    async fn context_deps(
+        &self,
+    ) -> Result<
+        (
+            std::sync::Arc<dyn crate::infrastructure::fs_provider::FsProvider>,
+            std::path::PathBuf,
+            std::path::PathBuf,
+        ),
+        AppError,
+    > {
+        let active_arc = {
+            let mgr = self.context_manager.read().await;
+            mgr.get_active()
+                .ok_or_else(|| AppError::Internal("No active ServiceContext".into()))?
+        };
+        let ctx = active_arc.read().await;
+        Ok((
+            ctx.fs_provider.clone(),
+            ctx.projects_dir.clone(),
+            ctx.home_dir.clone(),
+        ))
+    }
 }
 
 #[async_trait::async_trait]
 impl super::project_service_trait::ProjectService for ProjectServiceImpl {
     async fn scan_projects(&self) -> Result<Vec<Project>, AppError> {
         let scanner = self.scanner().await?;
-        Ok(scanner.scan_async().await)
+        let projects = scanner.scan_async().await;
+        // 多 agent 聚合：额外 agent（Pi 起）的项目归并进 claude 结果。
+        // 聚合是同步阻塞 IO（SFTP read），包 spawn_blocking 对齐 scan_async
+        // 的既有模式（避免在 async 上下文串行阻塞触发 IPC 超时）
+        let (fs, home) = {
+            let (fs, _projects_dir, home) = self.context_deps().await?;
+            (fs, home)
+        };
+        let merged = tokio::task::spawn_blocking(move || {
+            crate::agents::merge_extra_projects(projects, fs.as_ref(), &home)
+        })
+        .await
+        .map_err(|e| AppError::Internal(format!("scan aggregation join error: {e}")))?;
+        Ok(merged)
     }
 
     async fn list_sessions(&self, project_id: &str) -> Result<Vec<Session>, AppError> {
         let scanner = self.scanner().await?;
-        Ok(scanner.list_sessions_async(project_id).await)
+        let sessions = scanner.list_sessions_async(project_id).await;
+        let (fs, projects_dir, home) = self.context_deps().await?;
+        let project_id = project_id.to_string();
+        let appended = tokio::task::spawn_blocking(move || {
+            crate::agents::append_extra_sessions(sessions, fs.as_ref(), &projects_dir, &home, &project_id)
+        })
+        .await
+        .map_err(|e| AppError::Internal(format!("list aggregation join error: {e}")))?;
+        Ok(appended)
     }
 
     async fn get_repository_groups(&self) -> Result<Vec<RepositoryGroup>, AppError> {
@@ -71,7 +116,20 @@ impl super::project_service_trait::ProjectService for ProjectServiceImpl {
 
         // scan_async 内部已用 fs_provider.exists 检查 projects_dir，
         // 替代原 Path::exists()（本地 fs，SSH 模式下永远 false）。
-        let projects = scanner.scan_async().await;
+        let mut projects = scanner.scan_async().await;
+        // 多 agent：分组视图与项目列表必须给出一致的「有哪些项目」答案，
+        // 同样走归并（cwd 匹配，见 agents 模块文档）
+        {
+            let (fs, home) = {
+                let (fs, _projects_dir, home) = self.context_deps().await?;
+                (fs, home)
+            };
+            projects = tokio::task::spawn_blocking(move || {
+                crate::agents::merge_extra_projects(projects, fs.as_ref(), &home)
+            })
+            .await
+            .map_err(|e| AppError::Internal(format!("groups aggregation join error: {e}")))?;
+        }
         if projects.is_empty() {
             return Ok(Vec::new());
         }
@@ -106,6 +164,7 @@ mod tests {
         mgr.register_context(ServiceContext::new(ServiceContextConfig {
             id: "local".to_string(),
             context_type: ContextType::Local,
+            home_dir: Some(PathBuf::new()),
             projects_dir,
             todos_dir,
             fs_provider: Arc::new(LocalFsProvider::new()),

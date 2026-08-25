@@ -155,6 +155,7 @@ mod tests {
         mgr.register_context(ServiceContext::new(ServiceContextConfig {
             id: "local".to_string(),
             context_type: ContextType::Local,
+            home_dir: Some(PathBuf::new()),
             projects_dir,
             todos_dir,
             fs_provider: Arc::new(LocalFsProvider::new()),

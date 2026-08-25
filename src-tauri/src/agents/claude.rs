@@ -41,6 +41,11 @@ impl AgentAdapter for ClaudeAdapter {
         AgentKind::ClaudeCode
     }
 
+    fn owns_path(&self, path: &Path) -> bool {
+        // 结构特征：组件序列含 `.claude/projects`（本地与 SSH 远端路径通用）
+        crate::agents::path_has_components(path, &[".claude", "projects"])
+    }
+
     fn data_roots(&self) -> Vec<PathBuf> {
         vec![self.projects_dir.clone()]
     }

@@ -17,7 +17,17 @@ import { OngoingIndicator } from '../common/OngoingIndicator';
 
 import { SessionContextMenu } from './SessionContextMenu';
 
-import type { PhaseTokenBreakdown, Session } from '@renderer/types/data';
+import type { AgentKind, PhaseTokenBreakdown, Session } from '@renderer/types/data';
+
+/** agent 徽标展示配置（claude-code 为默认主力，不展示徽标） */
+const AGENT_BADGES: Record<Exclude<AgentKind, 'claude-code'>, { label: string; color: string }> = {
+  pi: { label: 'Pi', color: '#8b5cf6' },
+  codex: { label: 'Codex', color: '#10b981' },
+  opencode: { label: 'OC', color: '#f59e0b' },
+  dsh: { label: 'DSH', color: '#3b82f6' },
+};
+
+
 
 interface SessionItemProps {
   session: Session;
@@ -195,6 +205,12 @@ export const SessionItem = React.memo(function SessionItem({
 
   const sessionLabel = session.firstMessage?.slice(0, 50) ?? 'Session';
 
+  // 多 agent 徽标：claude-code 为默认主力不显示，其余 agent 显示小标签
+  const agentBadge =
+    session.agent && session.agent !== 'claude-code'
+      ? AGENT_BADGES[session.agent]
+      : undefined;
+
   const handleOpenInCurrentPane = useCallback(() => {
     if (!activeProjectId) return;
     openTab(
@@ -277,11 +293,23 @@ export const SessionItem = React.memo(function SessionItem({
           </span>
         </div>
 
-        {/* Second line: message count + time + context consumption */}
+        {/* Second line: agent badge + message count + time + context consumption */}
         <div
           className="mt-0.5 flex items-center gap-2 text-[10px] leading-tight"
           style={{ color: 'var(--color-text-muted)' }}
         >
+          {agentBadge && (
+            <span
+              className="shrink-0 rounded-[3px] border px-1 py-px text-[9px] font-medium uppercase tracking-wide"
+              style={{
+                borderColor: agentBadge.color,
+                color: agentBadge.color,
+              }}
+              title={`Agent: ${agentBadge.label}`}
+            >
+              {agentBadge.label}
+            </span>
+          )}
           <span className="flex items-center gap-0.5">
             <MessageSquare className="size-2.5" />
             {session.messageCount}

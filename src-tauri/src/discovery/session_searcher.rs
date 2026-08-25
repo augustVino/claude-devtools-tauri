@@ -45,6 +45,8 @@ struct CacheEntry {
 /// SessionSearcher provides methods for searching sessions.
 pub struct SessionSearcher {
     projects_dir: PathBuf,
+    /// 当前上下文 home（多 agent 搜索追加用；空 = 降级为仅 claude）
+    home_dir: PathBuf,
     fs_provider: Arc<dyn FsProvider>,
     // LRU cache: file_path -> CacheEntry (with mtime-based invalidation and capacity eviction)
     cache: moka::sync::Cache<String, CacheEntry>,
@@ -71,12 +73,14 @@ impl SessionSearcher {
         projects_dir: PathBuf,
         todos_dir: PathBuf,
         fs_provider: Arc<dyn FsProvider>,
+        home_dir: PathBuf,
         subproject_registry: Option<Arc<std::sync::Mutex<SubprojectRegistry>>>,
     ) -> Self {
         let project_scanner =
             ProjectScanner::with_paths(projects_dir.clone(), todos_dir, fs_provider.clone());
         Self {
             projects_dir,
+            home_dir,
             fs_provider,
             cache: moka::sync::Cache::builder()
                 .max_capacity(CACHE_MAX_CAPACITY)
@@ -139,6 +143,8 @@ impl SessionSearcher {
             }
         };
 
+        // 元组语义：(session_id, path, mtime)。claude 侧从文件名 stem 提取；
+        // 其他 agent 侧由 adapter 给出（pi 文件名带时间戳前缀，不能 stem 直取）
         let mut session_files: Vec<(String, PathBuf, u64)> = Vec::new();
 
         for dirent in entries {
@@ -155,8 +161,17 @@ impl SessionSearcher {
                     .map(|m| m.mtime_ms)
                     .unwrap_or(0),
             };
-            session_files.push((dirent.name, path, mtime));
+            session_files.push((path_decoder::extract_session_id(&dirent.name), path, mtime));
         }
+
+        // 多 agent：追加本项目下的其他 agent 会话文件（pi 起，复用同一匹配/
+        // 分页机制；归并项目靠 cwd 双通道匹配，见 agents 模块文档）
+        session_files.extend(crate::agents::extra_search_files(
+            self.fs_provider.as_ref(),
+            &self.projects_dir,
+            &self.home_dir,
+            project_id,
+        ));
 
         // Sort by modification time (most recent first)
         session_files.sort_by(|a, b| b.2.cmp(&a.2));
@@ -176,7 +191,7 @@ impl SessionSearcher {
         };
 
         // Search each session file
-        for (idx, (file_name, file_path, mtime)) in session_files.iter().enumerate() {
+        for (idx, (session_id, file_path, mtime)) in session_files.iter().enumerate() {
             if results.len() >= max_results as usize {
                 break;
             }
@@ -197,7 +212,7 @@ impl SessionSearcher {
                 }
             }
 
-            let session_id = path_decoder::extract_session_id(file_name);
+            let session_id = session_id.clone();
 
             // Skip sessions not belonging to this subproject
             if let Some(ref filter) = session_filter {
@@ -334,6 +349,22 @@ impl SessionSearcher {
             }
         }
 
+        // 多 agent：claude 目录未命中时追加查找（pi 起）
+        let extras = crate::agents::find_extra_sessions(
+            self.fs_provider.as_ref(),
+            &self.projects_dir,
+            &self.home_dir,
+            session_id,
+            false,
+        );
+        if let Some((project_id, session)) = extras.into_iter().next() {
+            return FindSessionByIdResult {
+                found: true,
+                project_id: Some(project_id),
+                session: Some(session),
+            };
+        }
+
         FindSessionByIdResult {
             found: false,
             project_id: None,
@@ -398,6 +429,22 @@ impl SessionSearcher {
 
             if all_matches.len() >= max_results {
                 break;
+            }
+        }
+
+        // 多 agent：追加其他 agent 的部分 id 匹配（pi 起）
+        if all_matches.len() < max_results {
+            for (project_id, session) in crate::agents::find_extra_sessions(
+                self.fs_provider.as_ref(),
+                &self.projects_dir,
+                &self.home_dir,
+                &lower_fragment,
+                true,
+            ) {
+                all_matches.push(PartialIdMatch { project_id, session });
+                if all_matches.len() >= max_results {
+                    break;
+                }
             }
         }
 
@@ -721,6 +768,7 @@ mod tests {
             projects_dir,
             todos_dir,
             Arc::new(LocalFsProvider::new()),
+            PathBuf::new(),
             None,
         );
         (temp_dir, searcher)

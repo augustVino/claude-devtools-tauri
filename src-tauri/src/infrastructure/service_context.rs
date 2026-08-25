@@ -17,6 +17,10 @@ pub struct ServiceContextConfig {
     pub id: String,
     pub context_type: ContextType,
     pub projects_dir: PathBuf,
+    /// 显式指定上下文 home（多 agent 聚合的数据根推导基准）。
+    /// None → 按默认推导（Local=真实用户 home；Ssh=projects_dir 标准布局
+    /// 反推）。生产路径不传；测试传 tempdir 隔离真实 home 的 ~/.pi 等数据。
+    pub home_dir: Option<PathBuf>,
     #[allow(dead_code)]
     pub todos_dir: PathBuf,
     pub fs_provider: Arc<dyn FsProvider>,
@@ -38,6 +42,11 @@ pub struct ServiceContext {
     pub id: String,
     pub context_type: ContextType,
     pub projects_dir: PathBuf,
+    /// 当前上下文的 home 目录（多 agent 聚合用：推导 ~/.pi 等数据根）。
+    /// Local：真实用户 home（不受 claude_root_path 自定义影响）；
+    /// Ssh：仅当 projects_dir 呈 `{home}/.claude/projects` 标准布局时可推导，
+    /// 否则为空 PathBuf —— 聚合层降级为无额外 agent（debug 日志可排查）。
+    pub home_dir: PathBuf,
     pub todos_dir: PathBuf,
     pub fs_provider: Arc<dyn FsProvider>,
     pub cache: DataCache,
@@ -61,10 +70,34 @@ impl ServiceContext {
             config.todos_dir.clone(),
             config.fs_provider.clone(),
         );
+        // home 推导：Local 用真实用户 home（不受 claude_root_path 自定义影响，
+        // 修复自定义根下 ~/.pi 探测落空）；Ssh 仅标准布局可推导，否则空
+        // （聚合层降级为无额外 agent）
+        let home_dir = config.home_dir.unwrap_or_else(|| match config.context_type {
+            ContextType::Local => dirs::home_dir().unwrap_or_default(),
+            ContextType::Ssh => {
+                let inferred = config
+                    .projects_dir
+                    .parent()
+                    .and_then(|p| p.parent())
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_default();
+                if config.projects_dir.ends_with(".claude/projects") {
+                    inferred
+                } else {
+                    log::warn!(
+                        "ServiceContext: non-standard ssh projects_dir {} — extra-agent aggregation disabled",
+                        config.projects_dir.display()
+                    );
+                    PathBuf::new()
+                }
+            }
+        });
         let session_searcher = Arc::new(Mutex::new(SessionSearcher::new(
             config.projects_dir.clone(),
             config.todos_dir.clone(),
             config.fs_provider.clone(),
+            home_dir.clone(),
             None,
         )));
         let subagent_resolver =
@@ -87,6 +120,7 @@ impl ServiceContext {
             id: config.id,
             context_type: config.context_type,
             projects_dir: config.projects_dir,
+            home_dir,
             todos_dir: config.todos_dir,
             fs_provider: config.fs_provider,
             cache,
@@ -191,6 +225,7 @@ mod tests {
         ServiceContext::new(ServiceContextConfig {
             id: "test".to_string(),
             context_type: ContextType::Local,
+            home_dir: Some(PathBuf::new()),
             projects_dir: dir.to_path_buf(),
             todos_dir: dir.join("todos"),
             fs_provider: std::sync::Arc::new(LocalFsProvider::new()),

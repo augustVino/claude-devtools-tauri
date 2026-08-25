@@ -147,6 +147,7 @@ impl SshServiceImpl {
         Ok(ServiceContext::new(ServiceContextConfig {
             id: self.ssh_context_id(&host),
             context_type: ContextType::Ssh,
+            home_dir: Some(PathBuf::new()),
             projects_dir: PathBuf::from(&remote_projects_path),
             todos_dir: remote_todos_path,
             fs_provider,

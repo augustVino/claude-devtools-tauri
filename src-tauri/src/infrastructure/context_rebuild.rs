@@ -32,6 +32,7 @@ pub async fn rebuild_local_context(
     let new_context = ServiceContext::new(ServiceContextConfig {
         id: "local".to_string(),
         context_type: ContextType::Local,
+        home_dir: None,
         projects_dir: projects_dir.clone(),
         todos_dir: todos_dir.clone(),
         fs_provider: fs_provider.clone(),

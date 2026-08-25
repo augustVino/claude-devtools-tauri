@@ -254,6 +254,7 @@ mod tests {
         ServiceContextConfig {
             id: id.to_string(),
             context_type,
+            home_dir: Some(PathBuf::new()),
             projects_dir: PathBuf::from("/tmp/test-projects"),
             todos_dir: PathBuf::from("/tmp/test-todos"),
             fs_provider: std::sync::Arc::new(

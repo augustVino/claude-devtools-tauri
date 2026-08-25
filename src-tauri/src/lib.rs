@@ -53,6 +53,7 @@ pub fn run() {
             infrastructure::service_context::ServiceContextConfig {
                 id: "local".to_string(),
                 context_type: infrastructure::service_context::ContextType::Local,
+                home_dir: None,
                 projects_dir: local_projects_dir.clone(),
                 todos_dir: local_todos_dir.clone(),
                 fs_provider: local_fs_provider.clone(),
