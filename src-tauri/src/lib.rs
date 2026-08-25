@@ -3,6 +3,7 @@
 //! 初始化应用状态、注册插件和 IPC 命令、启动后台文件监听器，
 //! 并构建 Tauri 应用实例。
 
+mod agents;
 mod analysis;
 mod commands;
 mod constants;

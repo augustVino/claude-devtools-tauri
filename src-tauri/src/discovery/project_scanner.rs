@@ -7,7 +7,7 @@
 //! - Return sorted list of projects by recent activity
 
 use crate::infrastructure::fs_provider::{FsProvider, LocalFsProvider};
-use crate::types::domain::{Project, Session, SessionMetadataLevel};
+use crate::types::domain::{AgentKind, Project, Session, SessionMetadataLevel};
 use crate::utils::content_sanitizer::{
     extract_command_display, is_command_output_content, sanitize_display_content,
 };
@@ -486,6 +486,7 @@ impl ProjectScanner {
 
         Some(Session {
             id: info.session_id,
+            agent: AgentKind::ClaudeCode,
             project_id: project_id.to_string(),
             project_path: decoded_path,
             created_at,
@@ -732,6 +733,7 @@ impl ProjectScanner {
 
         Some(Session {
             id: session_id.to_string(),
+            agent: AgentKind::ClaudeCode,
             project_id: project_id.to_string(),
             project_path: decoded_path,
             created_at,

@@ -65,6 +65,12 @@ export interface Project {
 export type SessionMetadataLevel = 'light' | 'deep';
 
 /**
+ * Agent tool that produced the session (Rust 侧 AgentKind 的 kebab-case 序列化)。
+ * 旧数据/旧缓存无此字段，消费方按 claude-code 兼容处理。
+ */
+export type AgentKind = 'claude-code' | 'codex' | 'opencode' | 'pi' | 'dsh';
+
+/**
  * Per-phase token breakdown for compaction-aware context consumption.
  */
 export interface PhaseTokenBreakdown {
@@ -81,6 +87,8 @@ export interface PhaseTokenBreakdown {
 export interface Session {
   /** Session UUID (JSONL filename without extension) */
   id: string;
+  /** Agent tool that produced this session (defaults to claude-code) */
+  agent?: AgentKind;
   /** Parent project ID */
   projectId: string;
   /** Project filesystem path */

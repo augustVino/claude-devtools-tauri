@@ -55,6 +55,53 @@ pub enum SessionMetadataLevel {
     Deep,
 }
 
+/// 产生会话的 agent 工具类型。
+///
+/// `ALL` 顺序即前端展示序（对齐 Wake 的约定：新增变体时同步维护 ALL，
+/// 不擅动既有条目位置）。serde 线上格式为 kebab-case（"claude-code" 等）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentKind {
+    ClaudeCode,
+    Codex,
+    Opencode,
+    Pi,
+    Dsh,
+}
+
+impl AgentKind {
+    /// 全部已接入的 agent（展示序）。新接入一家时在此追加。
+    pub const ALL: [AgentKind; 5] = [
+        AgentKind::ClaudeCode,
+        AgentKind::Codex,
+        AgentKind::Opencode,
+        AgentKind::Pi,
+        AgentKind::Dsh,
+    ];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AgentKind::ClaudeCode => "claude-code",
+            AgentKind::Codex => "codex",
+            AgentKind::Opencode => "opencode",
+            AgentKind::Pi => "pi",
+            AgentKind::Dsh => "dsh",
+        }
+    }
+}
+
+impl Default for AgentKind {
+    fn default() -> Self {
+        AgentKind::ClaudeCode
+    }
+}
+
+impl std::fmt::Display for AgentKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum WorktreeSource {
     #[serde(rename = "vibe-kanban")]
@@ -105,6 +152,9 @@ pub struct PhaseTokenBreakdown {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Session {
     pub id: String,
+    /// 产生该会话的 agent 工具（旧数据/旧缓存无此字段时反序列化为 claude-code）
+    #[serde(default)]
+    pub agent: AgentKind,
     #[serde(rename = "projectId")]
     pub project_id: String,
     #[serde(rename = "projectPath")]
@@ -387,4 +437,49 @@ pub struct DeleteSessionResult {
     pub associated_deleted: u32,
     /// 失败的删除操作数量（不影响整体成功）
     pub errors: u32,
+}
+
+#[cfg(test)]
+mod agent_kind_tests {
+    use super::*;
+
+    /// 旧缓存/旧前端数据无 agent 字段 → 反序列化为 claude-code（P0 兼容性红线）。
+    #[test]
+    fn session_without_agent_field_defaults_to_claude_code() {
+        let legacy_json = r#"{
+            "id": "s1",
+            "projectId": "-Users-x-proj",
+            "projectPath": "/Users/x/proj",
+            "createdAt": 0,
+            "hasSubagents": false,
+            "messageCount": 0
+        }"#;
+        let session: Session = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(session.agent, AgentKind::ClaudeCode);
+    }
+
+    #[test]
+    fn agent_kind_serializes_as_kebab_case() {
+        assert_eq!(
+            serde_json::to_string(&AgentKind::ClaudeCode).unwrap(),
+            "\"claude-code\""
+        );
+        assert_eq!(
+            serde_json::to_string(&AgentKind::Opencode).unwrap(),
+            "\"opencode\""
+        );
+        let session: Session = serde_json::from_str(
+            r#"{"id":"s","projectId":"p","projectPath":"/p","createdAt":0,"hasSubagents":false,"messageCount":0,"agent":"codex"}"#,
+        )
+        .unwrap();
+        assert_eq!(session.agent, AgentKind::Codex);
+    }
+
+    #[test]
+    fn agent_kind_all_covers_every_variant() {
+        let all_str: Vec<&str> = AgentKind::ALL.iter().map(|k| k.as_str()).collect();
+        for k in AgentKind::ALL {
+            assert!(all_str.contains(&k.as_str()), "missing {}", k.as_str());
+        }
+    }
 }

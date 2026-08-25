@@ -16,12 +16,13 @@ use crate::discovery::subagent_resolver::SubagentResolver;
 use crate::error::AppError;
 use crate::infrastructure::fs_provider::FsProvider;
 use crate::infrastructure::{ConfigManager, ContextManager, DataCache};
-use crate::parsing::{parse_session_file_with_provider, ParsedSession};
+use crate::agents::{agent_for_path, parse_session_for};
+use crate::parsing::ParsedSession;
 use crate::types::chunks::{
     ConversationGroup, Process, SessionDetail, SessionDetailResponse, SessionDetailUnchanged,
 };
 use crate::types::domain::{
-    DeleteSessionResult, PaginatedSessionsResult, Session, SessionMetrics,
+    AgentKind, DeleteSessionResult, PaginatedSessionsResult, Session, SessionMetrics,
     SessionsPaginationOptions,
 };
 use crate::utils::content_sanitizer::{
@@ -166,7 +167,7 @@ impl SessionServiceImpl {
             Ok(s) => s,
             Err(_) => return Ok(None),
         };
-        let parsed = parse_session_file_with_provider(path, fs_provider.as_ref()).await;
+        let parsed = parse_session_for(path, fs_provider.as_ref());
         Ok(Self::build_session_metadata_inner(
             path,
             project_id,
@@ -266,6 +267,7 @@ impl SessionServiceImpl {
 
         Some(Session {
             id: filename,
+            agent: agent_for_path(path),
             project_id: project_id.to_string(),
             project_path,
             created_at,
@@ -296,6 +298,7 @@ impl SessionServiceImpl {
 
         Session {
             id: session_id.to_string(),
+            agent: AgentKind::ClaudeCode,
             project_id: project_id.to_string(),
             project_path: fallback_path,
             created_at: 0,
@@ -421,7 +424,7 @@ impl SessionServiceImpl {
             return Ok(None);
         }
 
-        let parsed = parse_session_file_with_provider(&session_path, fs_provider.as_ref()).await;
+        let parsed = parse_session_for(&session_path, fs_provider.as_ref());
         // 复用 parsed 避免重复读全文（SSH 上每次 read ~秒级）
         let stat = fs_provider.stat(&session_path).ok();
         let session = Self::build_session_metadata_inner(
@@ -493,7 +496,7 @@ impl SessionServiceImpl {
             )?)));
         }
 
-        let parsed = parse_session_file_with_provider(&session_path, fs_provider.as_ref()).await;
+        let parsed = parse_session_for(&session_path, fs_provider.as_ref());
         // 复用 parsed：build_session_metadata_inner 不再二次 parse（避免 SSH 上重复读全文）
         let stat = fs_provider.stat(&session_path).ok();
         let session = Self::build_session_metadata_inner(
@@ -539,7 +542,7 @@ impl SessionServiceImpl {
             return Ok(None);
         }
 
-        let parsed = parse_session_file_with_provider(&session_path, fs_provider.as_ref()).await;
+        let parsed = parse_session_for(&session_path, fs_provider.as_ref());
         Ok(Some(parsed.metrics))
     }
 
@@ -561,7 +564,7 @@ impl SessionServiceImpl {
             return Ok(vec![]);
         }
 
-        let parsed = parse_session_file_with_provider(&session_path, fs_provider.as_ref()).await;
+        let parsed = parse_session_for(&session_path, fs_provider.as_ref());
         let subagents = self
             .resolve_subagents(project_id, session_id, &parsed)
             .await?;
@@ -584,7 +587,7 @@ impl SessionServiceImpl {
             return Ok(None);
         }
 
-        let parsed = parse_session_file_with_provider(&session_path, fs_provider.as_ref()).await;
+        let parsed = parse_session_for(&session_path, fs_provider.as_ref());
         // 复用 parsed 避免重复读全文
         let stat = fs_provider.stat(&session_path).ok();
         let session = Self::build_session_metadata_inner(
