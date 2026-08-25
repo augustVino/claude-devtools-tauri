@@ -147,7 +147,11 @@ impl SshServiceImpl {
         Ok(ServiceContext::new(ServiceContextConfig {
             id: self.ssh_context_id(&host),
             context_type: ContextType::Ssh,
-            home_dir: Some(PathBuf::new()),
+            // None → ServiceContext::new 的 SSH 推导分支生效（从
+            // remote_projects_path 的 `.claude/projects` 组件推导远端 home）。
+            // 注：不能传 Some(空)——会短路推导分支，多 agent 聚合全部静默禁用
+            //（曾因误传空值导致 SSH 模式看不到 pi/codex 会话）。
+            home_dir: None,
             projects_dir: PathBuf::from(&remote_projects_path),
             todos_dir: remote_todos_path,
             fs_provider,

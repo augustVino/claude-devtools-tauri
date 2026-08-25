@@ -188,9 +188,9 @@ async fn test_create_watcher() {
 #[tokio::test]
 async fn test_watch_nonexistent_path() {
     let mut watcher = FileWatcher::new(local_provider());
-    let result = watcher.watch(Path::new("/nonexistent/path/12345")).await;
+    let result = watcher.watch(&[std::path::PathBuf::from("/nonexistent/path/12345")]).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("does not exist"));
+    assert!(result.unwrap_err().contains("No watchable paths"));
 }
 
 #[tokio::test]
@@ -304,7 +304,7 @@ async fn test_ssh_poll_baseline_priming() {
     let mut rx = watcher.receiver();
 
     watcher
-        .start_ssh_polling(std::path::Path::new("/projects"))
+        .start_ssh_polling(&[std::path::PathBuf::from("/projects")])
         .await
         .unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -339,7 +339,7 @@ async fn test_ssh_poll_detects_new_file() {
     let mut rx = watcher.receiver();
 
     watcher
-        .start_ssh_polling(std::path::Path::new("/projects"))
+        .start_ssh_polling(&[std::path::PathBuf::from("/projects")])
         .await
         .unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -383,11 +383,11 @@ async fn test_rewatch_local_mode() {
     // Watch a temp dir (local mode) — will use notify
     let tmp = std::env::temp_dir().join("file_watcher_test_rewatch");
     let _ = std::fs::create_dir_all(&tmp);
-    watcher.watch(&tmp).await.unwrap();
+    watcher.watch(&[tmp.clone()]).await.unwrap();
     assert!(watcher.is_watching().await);
 
     // Rewatch should work — stop + watch on same path
-    watcher.rewatch(&tmp).await.unwrap();
+    watcher.rewatch(&[tmp.clone()]).await.unwrap();
     assert!(watcher.is_watching().await);
     watcher.stop().await;
     assert!(!watcher.is_watching().await);
@@ -426,7 +426,7 @@ async fn test_ssh_poll_detects_file_change() {
     let mut rx = watcher.receiver();
 
     watcher
-        .start_ssh_polling(std::path::Path::new("/projects"))
+        .start_ssh_polling(&[std::path::PathBuf::from("/projects")])
         .await
         .unwrap();
     // Wait for baseline poll to complete
@@ -492,7 +492,7 @@ async fn test_ssh_poll_detects_file_deletion() {
     let mut rx = watcher.receiver();
 
     watcher
-        .start_ssh_polling(std::path::Path::new("/projects"))
+        .start_ssh_polling(&[std::path::PathBuf::from("/projects")])
         .await
         .unwrap();
     // Wait for baseline poll to complete
@@ -545,7 +545,7 @@ async fn test_ssh_poll_guard_flag_lifecycle() {
     }
 
     watcher
-        .start_ssh_polling(std::path::Path::new("/projects"))
+        .start_ssh_polling(&[std::path::PathBuf::from("/projects")])
         .await
         .unwrap();
     // Wait for baseline poll to complete
@@ -600,7 +600,7 @@ async fn test_ssh_poll_stop_during_active_poll() {
     let mut rx = watcher.receiver();
 
     watcher
-        .start_ssh_polling(std::path::Path::new("/projects"))
+        .start_ssh_polling(&[std::path::PathBuf::from("/projects")])
         .await
         .unwrap();
 
@@ -653,7 +653,7 @@ async fn test_ssh_poll_io_error_recovery() {
     let mut rx = watcher.receiver();
 
     watcher
-        .start_ssh_polling(std::path::Path::new("/projects"))
+        .start_ssh_polling(&[std::path::PathBuf::from("/projects")])
         .await
         .unwrap();
 
@@ -699,7 +699,7 @@ async fn test_context_switch_local_to_ssh_to_local() {
     {
         let mut local_watcher = FileWatcher::new(local_provider);
         assert_eq!(local_watcher.mode, WatchMode::Local);
-        local_watcher.watch(&tmp).await.unwrap();
+        local_watcher.watch(&[tmp.clone()]).await.unwrap();
         assert!(local_watcher.is_watching().await);
         local_watcher.stop().await;
         assert!(!local_watcher.is_watching().await);
@@ -731,7 +731,7 @@ async fn test_context_switch_local_to_ssh_to_local() {
         assert_eq!(ssh_watcher.mode, WatchMode::SshPolling);
 
         ssh_watcher
-            .start_ssh_polling(std::path::Path::new("/ssh-projects"))
+            .start_ssh_polling(&[std::path::PathBuf::from("/ssh-projects")])
             .await
             .unwrap();
         assert!(ssh_watcher.is_watching().await);
@@ -752,7 +752,7 @@ async fn test_context_switch_local_to_ssh_to_local() {
         assert_eq!(local_watcher2.mode, WatchMode::Local);
         assert!(!local_watcher2.is_watching().await);
         // Watch should work on a real temp dir
-        local_watcher2.watch(&tmp).await.unwrap();
+        local_watcher2.watch(&[tmp.clone()]).await.unwrap();
         assert!(local_watcher2.is_watching().await);
         local_watcher2.stop().await;
         assert!(!local_watcher2.is_watching().await);
@@ -791,7 +791,7 @@ async fn test_ssh_poll_todos_flat_directory_detects_new_json() {
     let mut rx = watcher.receiver();
 
     watcher
-        .start_ssh_polling(std::path::Path::new("/todos"))
+        .start_ssh_polling(&[std::path::PathBuf::from("/todos")])
         .await
         .unwrap();
     drain_baseline(&mut rx).await;
@@ -847,7 +847,7 @@ async fn test_ssh_poll_todos_detects_size_change() {
     let mut rx = watcher.receiver();
 
     watcher
-        .start_ssh_polling(std::path::Path::new("/todos"))
+        .start_ssh_polling(&[std::path::PathBuf::from("/todos")])
         .await
         .unwrap();
     drain_baseline(&mut rx).await;
@@ -897,7 +897,7 @@ async fn test_ssh_poll_projects_two_level_still_works() {
     let mut rx = watcher.receiver();
 
     watcher
-        .start_ssh_polling(std::path::Path::new("/projects"))
+        .start_ssh_polling(&[std::path::PathBuf::from("/projects")])
         .await
         .unwrap();
     drain_baseline(&mut rx).await;
@@ -930,7 +930,8 @@ fn test_emit_event_todos_flat_path() {
     let (tx, mut rx) = broadcast::channel::<FileChangeEvent>(10);
     let path = std::path::Path::new("/todos/sess-abc.json");
     let base = std::path::Path::new("/todos");
-    FileWatcher::emit_event(&tx, path, base, FileChangeType::Add);
+    let fs = local_provider();
+    FileWatcher::emit_event(&tx, path, base, &fs, FileChangeType::Add);
     let event = rx.try_recv().expect("should emit");
     assert_eq!(event.session_id.as_deref(), Some("sess-abc"));
     assert!(event.project_id.is_none());
@@ -943,7 +944,8 @@ fn test_emit_event_projects_two_level_path() {
     let (tx, mut rx) = broadcast::channel::<FileChangeEvent>(10);
     let path = std::path::Path::new("/projects/proj1/sess.jsonl");
     let base = std::path::Path::new("/projects");
-    FileWatcher::emit_event(&tx, path, base, FileChangeType::Change);
+    let fs = local_provider();
+    FileWatcher::emit_event(&tx, path, base, &fs, FileChangeType::Change);
     let event = rx.try_recv().expect("should emit");
     assert_eq!(event.project_id.as_deref(), Some("proj1"));
     assert_eq!(event.session_id.as_deref(), Some("sess"));
@@ -1054,7 +1056,7 @@ async fn test_memory_dir_cache_skips_readdir_when_absent() {
     // Err 消息格式 "No mock entries for ..." 不包含 "no such file"，**不会标记 absent**
     FileWatcher::do_poll(
         &provider_dyn,
-        std::path::Path::new("/projects"),
+        &[std::path::PathBuf::from("/projects")],
         &poll_state,
         &tx,
     )
@@ -1080,7 +1082,7 @@ async fn test_memory_dir_cache_skips_readdir_when_absent() {
     // 第二次 poll：cache 命中 absent → memory 目录 read_dir 必须被跳过
     FileWatcher::do_poll(
         &provider_dyn,
-        std::path::Path::new("/projects"),
+        &[std::path::PathBuf::from("/projects")],
         &poll_state,
         &tx,
     )
@@ -1135,7 +1137,7 @@ async fn test_memory_dir_cache_marks_absent_on_enoent_error() {
 
     FileWatcher::do_poll(
         &provider_dyn,
-        std::path::Path::new("/projects"),
+        &[std::path::PathBuf::from("/projects")],
         &poll_state,
         &tx,
     )
@@ -1185,7 +1187,7 @@ async fn test_memory_dir_cache_skips_marking_absent_on_transient_error() {
 
     FileWatcher::do_poll(
         &provider_dyn,
-        std::path::Path::new("/projects"),
+        &[std::path::PathBuf::from("/projects")],
         &poll_state,
         &tx,
     )
@@ -1198,4 +1200,147 @@ async fn test_memory_dir_cache_skips_marking_absent_on_transient_error() {
         !st.memory_dir_cache.contains_key("/projects/proj1/memory"),
         "transient error (timeout) must NOT mark absent — next round retries"
     );
+}
+
+// ── 多 agent 根监听（P2b）────────────────────────────────────
+
+/// extra agent 事件分派：pi 会话文件路径 → 读头解析出 (pid=encode_path(cwd), sid)。
+#[test]
+fn test_process_debounced_event_pi_root_dispatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join(".pi").join("agent").join("sessions");
+    let proj = root.join("--Users-x-proj--");
+    std::fs::create_dir_all(&proj).unwrap();
+    let path = proj.join("2026-08-25T05-41-57-146Z_01a03770-891a-7792-a043-5f1dc085467b.jsonl");
+    std::fs::write(
+        &path,
+        "{\"type\":\"session\",\"cwd\":\"/Users/x/proj\",\"timestamp\":\"2026-08-25T05:41:57.146Z\"}\n",
+    )
+    .unwrap();
+
+    let fs = local_provider();
+    let debounced = notify_debouncer_mini::DebouncedEvent {
+        path: path.clone(),
+        kind: notify_debouncer_mini::DebouncedEventKind::Any,
+    };
+    let claude_root = dir.path().join(".claude").join("projects");
+    let change = FileWatcher::process_debounced_event_with_provider(&fs, &debounced, &claude_root)
+        .expect("pi event should resolve");
+    assert_eq!(change.agent, Some(crate::types::domain::AgentKind::Pi));
+    assert_eq!(change.session_id.as_deref(), Some("01a03770-891a-7792-a043-5f1dc085467b"));
+    assert_eq!(change.project_id.as_deref(), Some("-Users-x-proj"));
+}
+
+/// pi 半写文件（无有效头）→ 事件静默丢弃（不 panic、不产生半解析事件）。
+#[test]
+fn test_process_debounced_event_pi_partial_write_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join(".pi").join("agent").join("sessions");
+    let proj = root.join("--x--");
+    std::fs::create_dir_all(&proj).unwrap();
+    let path = proj.join("2026-08-25T05-41-57-146Z_partialwrite.jsonl");
+    std::fs::write(&path, "").unwrap();
+
+    let fs = local_provider();
+    let debounced = notify_debouncer_mini::DebouncedEvent {
+        path: path.clone(),
+        kind: notify_debouncer_mini::DebouncedEventKind::Any,
+    };
+    let change = FileWatcher::process_debounced_event_with_provider(
+        &fs,
+        &debounced,
+        &dir.path().join("projects"),
+    );
+    assert!(change.is_none(), "partial write must be dropped");
+}
+
+/// SSH emit_event 的 extra 分派：pi 路径 → 事件带 agent + encode_path(cwd)。
+#[tokio::test]
+async fn test_emit_event_pi_root_dispatch() {
+    use tokio::sync::broadcast;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join(".pi").join("agent").join("sessions");
+    let proj = root.join("--Users-x-proj--");
+    std::fs::create_dir_all(&proj).unwrap();
+    let path = proj.join("2026-08-25T00-00-00-000Z_00000000-0000-4000-8000-000000000000.jsonl");
+    std::fs::write(
+        &path,
+        "{\"type\":\"session\",\"cwd\":\"/Users/x/proj\",\"timestamp\":\"2026-08-25T00:00:00.000Z\"}\n",
+    )
+    .unwrap();
+
+    let (tx, mut rx) = broadcast::channel::<FileChangeEvent>(10);
+    let fs = local_provider();
+    FileWatcher::emit_event(
+        &tx,
+        &path,
+        &dir.path().join("projects"),
+        &fs,
+        FileChangeType::Change,
+    );
+    let event = rx.try_recv().expect("pi event should emit");
+    assert_eq!(event.agent, Some(crate::types::domain::AgentKind::Pi));
+    assert_eq!(event.session_id.as_deref(), Some("00000000-0000-4000-8000-000000000000"));
+    assert_eq!(event.project_id.as_deref(), Some("-Users-x-proj"));
+}
+
+/// 端到端（真实 notify）：多根监听下 pi 会话文件追加 → 广播事件带
+/// agent=Pi + sessionId + encode_path(cwd)。手动触发：`cargo test -- --ignored`
+#[tokio::test]
+#[ignore = "依赖真实 OS 文件事件（CI 环境事件延迟不稳定）"]
+async fn e2e_multi_root_pi_session_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().to_path_buf();
+    let claude_root = home.join(".claude").join("projects");
+    let pi_root = home.join(".pi").join("agent").join("sessions");
+    let proj = pi_root.join("--Users-x-proj--");
+    std::fs::create_dir_all(&claude_root).unwrap();
+    std::fs::create_dir_all(&proj).unwrap();
+    let session = proj.join("2026-08-25T00-00-00-000Z_00000000-0000-4000-8000-000000000000.jsonl");
+    std::fs::write(
+        &session,
+        "{\"type\":\"session\",\"cwd\":\"/Users/x/proj\",\"timestamp\":\"2026-08-25T00:00:00.000Z\"}\n",
+    )
+    .unwrap();
+
+    let mut watcher = FileWatcher::new(local_provider());
+    let mut rx = watcher.receiver();
+    watcher
+        .watch(&[claude_root, pi_root])
+        .await
+        .expect("watch should start");
+
+    // 等 notify 建立 watch（防启动竞态）
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    // 追加一条消息 → 触发 change 事件
+    let mut f = std::fs::OpenOptions::new().append(true).open(&session).unwrap();
+    use std::io::Write;
+    writeln!(
+        f,
+        "{{\"type\":\"message\",\"id\":\"m1\",\"timestamp\":\"2026-08-25T00:00:01.000Z\",\"message\":{{\"role\":\"user\",\"content\":[{{\"type\":\"text\",\"text\":\"hi\"}}]}}}}"
+    )
+    .unwrap();
+    drop(f);
+
+    // 事件到达（notify + 100ms debounce；10s 超时兜底）
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut got = None;
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv()).await {
+            Ok(Ok(event)) => {
+                if event.path.ends_with("00000000-0000-4000-8000-000000000000.jsonl") {
+                    got = Some(event);
+                    break;
+                }
+            }
+            _ => continue,
+        }
+    }
+    watcher.stop().await;
+
+    let event = got.expect("pi session change event should arrive");
+    assert_eq!(event.agent, Some(crate::types::domain::AgentKind::Pi));
+    assert_eq!(event.session_id.as_deref(), Some("00000000-0000-4000-8000-000000000000"));
+    assert_eq!(event.project_id.as_deref(), Some("-Users-x-proj"));
 }

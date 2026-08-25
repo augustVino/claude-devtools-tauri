@@ -1,10 +1,13 @@
-//! 文件监听器 — 监听 Claude Code 项目文件的变化。
+//! 文件监听器 — 多根监听 Claude Code + 其他 agent 的会话文件变化。
 //!
 //! 职责:
-//! - 监听目录中会话文件的变更
+//! - 多根监听（主根 = claude projects_dir；extra 根 = agents::watch_roots
+//!   产出，如 pi/codex 的数据目录）
 //! - 对快速连续的文件事件进行防抖（100ms）
-//! - 解析路径以提取 projectId、sessionId、isSubagent
-//! - 向订阅者广播 FileChangeEvent
+//! - 解析路径：claude 根按相对路径布局提取 projectId/sessionId/isSubagent；
+//!   extra 根按路径结构特征分派到对应 agent adapter 读头解析
+//! - 向订阅者广播 FileChangeEvent（extra agent 事件带 agent 字段，
+//!   orchestrator 消费后置 projectId=None 再发前端）
 
 pub mod local_watcher;
 pub mod path_parser;
@@ -14,7 +17,7 @@ pub mod ssh_polling;
 mod tests;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
@@ -163,19 +166,17 @@ impl FileWatcher {
         }
     }
 
-    /// 启动对指定目录的监听。
+    /// 启动对多个根的监听。
     ///
     /// 根据当前模式选择本地 OS 级监听或 SSH 轮询。
-    /// 仅对 `.jsonl` 和 `.json` 文件发出事件。
-    /// 解析路径以提取 projectId、sessionId 和 isSubagent。
-    ///
-    /// 路径模式:
-    /// - 会话文件: `watchPath/projectId/sessionId.jsonl`
-    /// - 子代理文件: `watchPath/projectId/sessionId/subagents/agent-hash.jsonl`
-    pub async fn watch(&mut self, path: &Path) -> Result<(), String> {
+    /// `paths[0]` 为主根（claude projects_dir），其余为 extra agent 根
+    /// （`agents::watch_roots` 产出；单根缺失自动跳过）。
+    /// 仅对 `.jsonl` 和 `.json` 文件发出事件；claude 根解析
+    /// projectId/sessionId/isSubagent，extra 根按 adapter 读头解析。
+    pub async fn watch(&mut self, paths: &[PathBuf]) -> Result<(), String> {
         match self.mode {
-            WatchMode::Local => self.watch_local(path).await,
-            WatchMode::SshPolling => self.start_ssh_polling(path).await,
+            WatchMode::Local => self.watch_local(paths).await,
+            WatchMode::SshPolling => self.start_ssh_polling(paths).await,
         }
     }
 
@@ -201,13 +202,13 @@ impl FileWatcher {
         *self.is_watching.lock().await = false;
     }
 
-    /// 停止当前监听并切换到新目录。
+    /// 停止当前监听并切换到新目录集合。
     ///
     /// 用于上下文切换时重新配置监听路径。
     #[allow(dead_code)]
-    pub async fn rewatch(&mut self, new_path: &Path) -> Result<(), String> {
+    pub async fn rewatch(&mut self, new_paths: &[PathBuf]) -> Result<(), String> {
         self.stop().await;
-        self.watch(new_path).await
+        self.watch(new_paths).await
     }
 
     /// 返回文件变更事件的广播接收端。

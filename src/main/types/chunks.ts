@@ -484,6 +484,9 @@ export interface FileChangeEvent {
   projectId?: string;
   sessionId?: string;
   isSubagent: boolean;
+  /** 事件归属 agent（kebab-case，如 "pi"/"codex"；缺省 = claude）。
+  * 多 agent 事件发前端前 projectId 已置空（前端靠 sessionId 匹配 tab 刷新）。 */
+  agent?: string;
 }
 
 /**

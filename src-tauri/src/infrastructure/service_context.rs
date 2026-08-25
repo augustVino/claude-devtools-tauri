@@ -71,25 +71,34 @@ impl ServiceContext {
             config.fs_provider.clone(),
         );
         // home 推导：Local 用真实用户 home（不受 claude_root_path 自定义影响，
-        // 修复自定义根下 ~/.pi 探测落空）；Ssh 仅标准布局可推导，否则空
-        // （聚合层降级为无额外 agent）
+        // 修复自定义根下 ~/.pi 探测落空）；Ssh 从 projects_dir 的
+        // `.claude/projects` 组件序列推导（任意深度命中均认，覆盖
+        // `/home/u/…`、`/root/…`、`/Users/x/…` 等远端形态），推导不出则空
+        // （聚合层降级为仅 claude，warn 可诊断）
         let home_dir = config.home_dir.unwrap_or_else(|| match config.context_type {
             ContextType::Local => dirs::home_dir().unwrap_or_default(),
             ContextType::Ssh => {
-                let inferred = config
-                    .projects_dir
-                    .parent()
-                    .and_then(|p| p.parent())
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_default();
-                if config.projects_dir.ends_with(".claude/projects") {
-                    inferred
-                } else {
-                    log::warn!(
-                        "ServiceContext: non-standard ssh projects_dir {} — extra-agent aggregation disabled",
-                        config.projects_dir.display()
-                    );
-                    PathBuf::new()
+                let comps: Vec<_> = config.projects_dir.components().collect();
+                let hit = comps.windows(2).position(|w| {
+                    w == [std::path::Component::Normal(".claude".as_ref()),
+                          std::path::Component::Normal("projects".as_ref())]
+                });
+                match hit {
+                    Some(idx) => {
+                        let home = PathBuf::from(comps[..idx].iter().cloned().collect::<PathBuf>());
+                        log::info!(
+                            "ServiceContext: inferred remote home {} — extra-agent aggregation enabled",
+                            home.display()
+                        );
+                        home
+                    }
+                    None => {
+                        log::warn!(
+                            "ServiceContext: cannot infer remote home from ssh projects_dir {} — extra-agent aggregation disabled",
+                            config.projects_dir.display()
+                        );
+                        PathBuf::new()
+                    }
                 }
             }
         });
@@ -148,6 +157,7 @@ impl ServiceContext {
         let mut orchestrator = WatcherOrchestrator::new(
             self.projects_dir.clone(),
             self.todos_dir.clone(),
+            self.home_dir.clone(),
             self.fs_provider.clone(),
             self.cache.clone(),
             self.file_watcher.clone(),
@@ -219,6 +229,36 @@ impl ServiceContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SSH home 推导：`.claude/projects` 组件序列任意深度命中。
+    /// 回归：build_ssh_context 误传 Some(空) 短路推导 → SSH 模式 extra agent
+    /// 全部不可见（2026-08 用户实测抓到）。
+    #[test]
+    fn ssh_home_inferred_from_claude_projects_component() {
+        let mk = |projects: &str| {
+            ServiceContext::new(ServiceContextConfig {
+                id: "t".into(),
+                context_type: ContextType::Ssh,
+                home_dir: None,
+                projects_dir: PathBuf::from(projects),
+                todos_dir: PathBuf::from("/todos"),
+                fs_provider: Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
+                cache: None,
+            })
+        };
+        assert_eq!(mk("/home/deploy/.claude/projects").home_dir, PathBuf::from("/home/deploy"));
+        assert_eq!(mk("/root/.claude/projects").home_dir, PathBuf::from("/root"));
+        assert_eq!(mk("/Users/x/.claude/projects").home_dir, PathBuf::from("/Users/x"));
+        assert_eq!(mk("/data/mnt/.claude/projects").home_dir, PathBuf::from("/data/mnt"));
+        // 无 .claude/projects 组件 → 空（聚合禁用，可诊断）
+        assert_eq!(mk("/data/cc/projects").home_dir, PathBuf::new());
+        // 显式空 home 仍短路推导（测试隔离语义不变）
+        let mut cfg_overlay = mk("/home/deploy/.claude/projects");
+        cfg_overlay.home_dir = PathBuf::new();
+        assert_eq!(cfg_overlay.home_dir, PathBuf::new());
+    }
+
+    use super::*;
     use crate::infrastructure::fs_provider::LocalFsProvider;
 
     fn make_local_context(dir: &std::path::Path) -> ServiceContext {
@@ -247,7 +287,7 @@ mod tests {
         // 模拟主监听任务已执行 watch（is_watching=true）
         {
             let mut fw = ctx.file_watcher.lock().await;
-            fw.watch(tmp.path()).await.unwrap();
+            fw.watch(&[tmp.path().to_path_buf()]).await.unwrap();
             assert!(fw.is_watching().await);
         }
 
@@ -264,7 +304,7 @@ mod tests {
         // 切回后新任务 watch：应成功（不再 "Already watching"）
         {
             let mut fw = ctx.file_watcher.lock().await;
-            fw.watch(tmp.path()).await.expect(
+            fw.watch(&[tmp.path().to_path_buf()]).await.expect(
                 "stop_watcher_tasks 后必须能重新 watch —— local→ssh→local 不丢失监听的前提",
             );
         }

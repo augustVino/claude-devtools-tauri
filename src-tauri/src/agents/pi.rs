@@ -450,6 +450,21 @@ impl AgentAdapter for PiAdapter {
             phase_breakdown: None,
         })
     }
+
+    fn resolve_watch_event(
+        &self,
+        path: &Path,
+        fs: &dyn FsProvider,
+    ) -> Option<(String, String)> {
+        let name = path.file_name()?.to_str()?;
+        if !name.ends_with(".jsonl") {
+            return None;
+        }
+        let stem = name.trim_end_matches(".jsonl");
+        // 只处理会话文件命名（{ts}_{uuid}.jsonl）；其他 jsonl（边车）不产事件
+        let (cwd, _) = read_session_head(path, fs)?;
+        Some((session_id_from_stem(stem), cwd))
+    }
 }
 
 #[cfg(test)]

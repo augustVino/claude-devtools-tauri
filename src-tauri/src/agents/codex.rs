@@ -619,6 +619,13 @@ impl AgentAdapter for CodexAdapter {
         home.join(".codex")
     }
 
+    fn watch_roots_under(&self, home: &Path) -> Vec<PathBuf> {
+        // 递归监听两个子根而非 .codex 整树：sqlite-wal/config/logs 的高频
+        // 写入会以无效事件刷屏 debounce 队列
+        let base = self.data_root_under(home);
+        vec![base.join("sessions"), base.join("archived_sessions")]
+    }
+
     fn scan_sessions(&self, root: &Path, fs: &dyn FsProvider) -> Vec<AgentSessionEntry> {
         // root = .../.codex；两个子根都扫
         let mut entries = Vec::new();
@@ -716,6 +723,20 @@ impl AgentAdapter for CodexAdapter {
             compaction_count: None,
             phase_breakdown: None,
         })
+    }
+
+    fn resolve_watch_event(
+        &self,
+        path: &Path,
+        fs: &dyn FsProvider,
+    ) -> Option<(String, String)> {
+        let name = path.file_name()?.to_str()?;
+        if !(name.starts_with("rollout-") && name.ends_with(".jsonl")) {
+            return None;
+        }
+        let stem = name.trim_end_matches(".jsonl");
+        let (cwd, _, _) = read_rollout_head(path, fs)?;
+        Some((session_id_from_stem(stem), cwd))
     }
 }
 
@@ -849,6 +870,26 @@ mod tests {
             "/home/u/.codex/archived_sessions/rollout-x-uuid.jsonl"
         )));
         assert!(!CodexAdapter::new().owns_path(Path::new("/home/u/.claude/projects/-x-/a.jsonl")));
+    }
+
+    /// resolve_watch_event：rollout 文件读头 → (sid 剥前缀, cwd)。
+    #[test]
+    fn resolve_watch_event_reads_rollout_head() {
+        let dir = tempfile::tempdir().unwrap();
+        let day = dir.path().join("2026").join("08").join("25");
+        std::fs::create_dir_all(&day).unwrap();
+        let path = day.join("rollout-2026-08-25T05-00-00-175821ac-a6a6-4c50-9487-67f90762b04a.jsonl");
+        std::fs::write(&path, SAMPLE).unwrap();
+        let fs = Arc::new(LocalFsProvider::new());
+        let (sid, cwd) = CodexAdapter::new()
+            .resolve_watch_event(&path, fs.as_ref())
+            .expect("rollout head should resolve");
+        assert_eq!(sid, "175821ac-a6a6-4c50-9487-67f90762b04a");
+        assert_eq!(cwd, "/Users/x/proj");
+        // 非 rollout 命名 → None
+        let other = day.join("notes.jsonl");
+        std::fs::write(&other, "{}\n").unwrap();
+        assert!(CodexAdapter::new().resolve_watch_event(&other, fs.as_ref()).is_none());
     }
 
     /// 真实数据 smoke（本机装有 codex 时）：`cargo test -- --ignored`

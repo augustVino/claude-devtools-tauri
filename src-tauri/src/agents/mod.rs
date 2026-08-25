@@ -48,12 +48,15 @@
 //!   以自编码 id（`encode_path(cwd)`）独立成项 —— 自编码 id **仅保证本模块
 //!   内部一致**（list/locate 复用同一函数），不承诺与 Claude 目录名一致。
 //!
-//! # 覆盖范围声明（截至 P1）
+//! # 覆盖范围声明（截至 P2b）
 //!
-//! 已接入 Pi 的入口：项目列表、会话列表、会话详情/指标/分组/瀑布、全局与
-//! 项目内搜索、按 id/部分 id 查找、仓库分组、删除（本地模式）。
-//! **未接入**：文件监听（watcher 仍仅监听 Claude projects 目录，新 agent
-//! 会话无实时刷新，拉模式可用）。
+//! 已接入 Pi / Codex 的入口：项目列表、会话列表、会话详情/指标/分组/瀑布、
+//! 全局与项目内搜索、按 id/部分 id 查找、仓库分组、删除（本地模式）、
+//! **文件监听实时刷新**（本地：notify 递归监听 pi sessions 与 codex
+//! sessions/archived_sessions 根；SSH：轮询两层布局根 —— pi 可用，
+//! **codex 日期树在 SSH 模式下不实时**（拉模式可用，见 [`watch_roots`]））。
+//! 错误检测通知（error_detector）为 claude JSONL 语义，extra agent 会话
+//! 不参与（入口按 `event.agent` 过滤）。
 //!
 //! # 新增 agent 的检查单
 //!
@@ -161,6 +164,25 @@ pub trait AgentAdapter: Send + Sync {
         let _ = (entry, fs);
         None
     }
+
+    /// 实时监听根（相对当前上下文 home）。默认 = [`Self::data_root_under`]；
+    /// 需要多子根的布局（如 codex 的 sessions + archived_sessions）覆写。
+    /// local notify 递归监听这些根；ssh 轮询仅支持两层布局的根（深层树成本
+    /// 爆炸，见 [`crate::agents::watch_roots`]）。
+    fn watch_roots_under(&self, home: &Path) -> Vec<PathBuf> {
+        vec![self.data_root_under(home)]
+    }
+
+    /// watcher 事件路径 → `(session_id, cwd)`。同步读文件头；
+    /// None = 非会话文件（边车/噪声）或头损坏（半写）。claude 不实现
+    /// （走既有 parse_path_parts 管线）。
+    fn resolve_watch_event(
+        &self,
+        _path: &Path,
+        _fs: &dyn FsProvider,
+    ) -> Option<(String, String)> {
+        None
+    }
 }
 
 /// 扫描产物：单个会话文件的轻量元数据。
@@ -226,6 +248,39 @@ pub(crate) fn path_has_components(path: &Path, seq: &[&str]) -> bool {
         .filter_map(|c| c.as_os_str().to_str())
         .collect();
     comps.windows(seq.len()).any(|w| w == seq)
+}
+
+/// 实时监听根：当前上下文存在的 extra agent 根（claude 除外，主 watcher
+/// 已监听 projects_dir）。
+///
+/// SSH 轮询只支持两层布局（根/项目目录/文件）—— codex 的日期树
+/// （sessions/YYYY/MM/DD，百级目录 × 3s 轮询 = SFTP readdir 爆炸）排除，
+/// SSH 下 codex 会话无实时刷新（拉模式可用）；local notify 递归监听
+/// 全部根不受此限。
+pub fn watch_roots(home: &Path, fs: &dyn FsProvider) -> Vec<PathBuf> {
+    if home.as_os_str().is_empty() {
+        return Vec::new();
+    }
+    let is_ssh = fs.provider_type() == "ssh";
+    let mut roots = Vec::new();
+    for adapter in registry() {
+        if adapter.kind() == AgentKind::ClaudeCode {
+            continue;
+        }
+        if is_ssh && adapter.kind() == AgentKind::Codex {
+            log::info!("agents: codex realtime watch skipped in SSH mode (date-tree polling too costly)");
+            continue;
+        }
+        for root in adapter.watch_roots_under(home) {
+            if root.as_os_str().is_empty() {
+                continue;
+            }
+            if fs.exists(&root).unwrap_or(false) {
+                roots.push(root);
+            }
+        }
+    }
+    roots
 }
 
 // ── 多 agent 聚合层 ──────────────────────────────────────────────────
@@ -690,6 +745,29 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].0, "-Users-x-my-repo");
         assert_eq!(found[0].1.agent, AgentKind::Pi);
+    }
+
+    /// watch_roots：本地模式含 pi + codex 双子根；SSH 排除 codex；缺根跳过。
+    #[test]
+    fn watch_roots_respect_context_and_existence() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_path_buf();
+        // 只有 pi 根存在
+        std::fs::create_dir_all(home.join(".pi").join("agent").join("sessions")).unwrap();
+
+        let local = Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new());
+        let roots = watch_roots(&home, local.as_ref());
+        assert_eq!(roots, vec![home.join(".pi").join("agent").join("sessions")],
+            "codex 根不存在 → 跳过；只返回存在的 pi 根");
+
+        // codex sessions 存在 → local 模式返回 pi + codex sessions + archived
+        std::fs::create_dir_all(home.join(".codex").join("sessions")).unwrap();
+        let roots = watch_roots(&home, local.as_ref());
+        assert_eq!(roots.len(), 2);
+        assert!(roots.contains(&home.join(".codex").join("sessions")));
+
+        // 空 home → 空 roots（SSH 自定义根降级）
+        assert!(watch_roots(&Path::new(""), local.as_ref()).is_empty());
     }
 
     /// 搜索追加：归并项目下 pi 文件可见。

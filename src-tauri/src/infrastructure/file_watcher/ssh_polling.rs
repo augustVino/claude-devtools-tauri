@@ -1,7 +1,7 @@
 //! SSH 轮询模式 — 通过 FsProvider 定期扫描文件变更。
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,14 +13,21 @@ use crate::infrastructure::fs_provider::FsProvider;
 use crate::types::domain::{FileChangeEvent, FileChangeType};
 
 impl FileWatcher {
-    /// 启动 SSH 轮询模式。
-    pub(crate) async fn start_ssh_polling(&mut self, path: &Path) -> Result<(), String> {
-        if !self
-            .fs_provider
-            .exists(path)
-            .map_err(|e| format!("SSH exists check: {}", e))?
-        {
-            return Err(format!("Path does not exist (SSH): {}", path.display()));
+    /// 启动 SSH 轮询模式（多根）。
+    ///
+    /// `paths[0]` 为主根（claude projects_dir / todos_dir），其余为 extra
+    /// agent 根（两层布局；codex 日期树由 `agents::watch_roots` 排除）。
+    pub(crate) async fn start_ssh_polling(&mut self, paths: &[PathBuf]) -> Result<(), String> {
+        let watchable: Vec<PathBuf> = paths
+            .iter()
+            .filter(|p| self.fs_provider.exists(p).unwrap_or(false))
+            .cloned()
+            .collect();
+        if watchable.is_empty() {
+            return Err(format!(
+                "No watchable paths (SSH) among: {}",
+                paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+            ));
         }
 
         let mut is_watching = self.is_watching.lock().await;
@@ -31,7 +38,7 @@ impl FileWatcher {
         let sender = self.sender.clone();
         let fs_provider = self.fs_provider.clone();
         let poll_state = self.ssh_poll_state.clone();
-        let projects_path = path.to_path_buf();
+        let roots = watchable;
 
         // 读取间隔（允许测试覆盖）
         let poll_interval = self.ssh_poll_state.lock().await.poll_interval_ms;
@@ -44,13 +51,14 @@ impl FileWatcher {
             state.poll_in_progress = false;
         }
 
+        let roots_len = roots.len();
         let handle = tokio::spawn(async move {
             // 立即执行首次基线扫描
-            Self::poll_for_changes(&fs_provider, &projects_path, &poll_state, &sender).await;
+            Self::poll_for_changes(&fs_provider, &roots, &poll_state, &sender).await;
 
             loop {
                 tokio::time::sleep(Duration::from_millis(poll_interval)).await;
-                Self::poll_for_changes(&fs_provider, &projects_path, &poll_state, &sender).await;
+                Self::poll_for_changes(&fs_provider, &roots, &poll_state, &sender).await;
             }
         });
 
@@ -58,8 +66,8 @@ impl FileWatcher {
         *is_watching = true;
 
         log::info!(
-            "FileWatcher: Started SSH polling {} (interval={}ms)",
-            path.display(),
+            "FileWatcher: Started SSH polling {} roots (interval={}ms)",
+            roots_len,
             poll_interval
         );
         Ok(())
@@ -68,7 +76,7 @@ impl FileWatcher {
     /// 执行一次 SSH 轮询扫描。
     pub(crate) async fn poll_for_changes(
         fs_provider: &Arc<dyn FsProvider>,
-        projects_path: &Path,
+        roots: &[PathBuf],
         poll_state: &Arc<Mutex<SshPollState>>,
         sender: &broadcast::Sender<FileChangeEvent>,
     ) {
@@ -81,7 +89,7 @@ impl FileWatcher {
             state.poll_in_progress = true;
         }
 
-        let result = Self::do_poll(fs_provider, projects_path, poll_state, sender).await;
+        let result = Self::do_poll(fs_provider, roots, poll_state, sender).await;
 
         poll_state.lock().await.poll_in_progress = false;
 
@@ -90,17 +98,17 @@ impl FileWatcher {
         }
     }
 
-    /// 实际的轮询逻辑。
+    /// 实际的轮询逻辑（多根）。
     ///
-    /// 支持两种目录布局：
-    /// - **projects 两层**：`projects/{projectId}/{sessionId}.jsonl`
+    /// 每个根支持两种目录布局：
+    /// - **projects 两层**：`projects/{projectId}/{sessionId}.jsonl`（claude
+    ///   与 pi 同构；extra agent 的解析在 emit 阶段按路径特征分派）
     /// - **todos 平铺**：`todos/{sessionId}.json`
     ///
-    /// 顶层若含 `.json` 文件即视为平铺模式；否则按两层模式枚举 `.jsonl`。
-    /// 不递归进入 subagents/ 子目录。
+    /// 单根枚举失败只跳过该根（warn），全部失败才向上报错。
     pub(crate) async fn do_poll(
         fs_provider: &Arc<dyn FsProvider>,
-        projects_path: &Path,
+        roots: &[PathBuf],
         poll_state: &Arc<Mutex<SshPollState>>,
         sender: &broadcast::Sender<FileChangeEvent>,
     ) -> Result<(), String> {
@@ -109,8 +117,79 @@ impl FileWatcher {
         let mut seen_files = HashSet::new();
         let mut pending_events: Vec<(std::path::PathBuf, FileChangeType)> = Vec::new();
 
+        let mut file_entries: Vec<(std::path::PathBuf, u64)> = Vec::new();
+        let mut failed_roots = 0usize;
+        for root in roots {
+            match Self::enumerate_root_files(fs_provider, root, &mut state) {
+                Ok(entries) => file_entries.extend(entries),
+                Err(e) => {
+                    failed_roots += 1;
+                    log::warn!("SSH poll root {} failed: {}", root.display(), e);
+                }
+            }
+        }
+        if failed_roots == roots.len() {
+            return Err("SSH read_dir failed for all roots".to_string());
+        }
+
+        // 统一 size 差异检测
+        for (full_path, observed_size) in file_entries {
+            let path_str = full_path.to_string_lossy().to_string();
+            seen_files.insert(path_str.clone());
+            match state.polled_file_sizes.get(&path_str) {
+                None => {
+                    state.polled_file_sizes.insert(path_str.clone(), observed_size);
+                    if primed {
+                        pending_events.push((full_path, FileChangeType::Add));
+                    }
+                }
+                Some(&last_size) if observed_size != last_size => {
+                    state.polled_file_sizes.insert(path_str, observed_size);
+                    pending_events.push((full_path, FileChangeType::Change));
+                }
+                _ => {}
+            }
+        }
+
+        // 删除检测（仅基线之后）
+        if primed {
+            let removed: Vec<String> = state
+                .polled_file_sizes
+                .keys()
+                .filter(|k| !seen_files.contains(*k))
+                .cloned()
+                .collect();
+            for removed_path in removed {
+                state.polled_file_sizes.remove(&removed_path);
+                pending_events.push((
+                    std::path::PathBuf::from(&removed_path),
+                    FileChangeType::Unlink,
+                ));
+            }
+        } else {
+            state.primed = true;
+        }
+
+        // 统一释放锁后发送事件（减少锁竞争）
+        drop(state);
+        for (path, event_type) in pending_events {
+            Self::emit_event(sender, &path, &roots[0], fs_provider, event_type);
+        }
+
+        Ok(())
+    }
+
+    /// 单根文件枚举（同步）：平铺（todos .json）/ 两层（claude·pi .jsonl + memory .md）。
+    /// 布局判定：顶层含 .json 文件 → 平铺；否则两层。memory 枚举带 60s TTL
+    /// absent 缓存（review #7，细节见原注释）。
+    fn enumerate_root_files(
+        fs_provider: &Arc<dyn FsProvider>,
+        root: &Path,
+        state: &mut SshPollState,
+    ) -> Result<Vec<(std::path::PathBuf, u64)>, String> {
+
         let top_entries = fs_provider
-            .read_dir(projects_path)
+            .read_dir(root)
             .map_err(|e| format!("SSH read_dir failed: {}", e))?;
 
         // 平铺模式：顶层含 .json 文件 → todos 目录
@@ -125,7 +204,7 @@ impl FileWatcher {
                 .iter()
                 .filter(|e| e.is_file && e.name.ends_with(".json"))
                 .map(|e| {
-                    let full = projects_path.join(&e.name);
+                    let full = root.join(&e.name);
                     let size = e
                         .size
                         .or_else(|| fs_provider.stat(&full).ok().map(|s| s.size))
@@ -140,7 +219,7 @@ impl FileWatcher {
                 if !dir.is_directory {
                     continue;
                 }
-                let project_path = projects_path.join(&dir.name);
+                let project_path = root.join(&dir.name);
                 let entries = match fs_provider.read_dir(&project_path) {
                     Ok(e) => e,
                     Err(_) => continue,
@@ -216,65 +295,43 @@ impl FileWatcher {
             acc
         };
 
-        // 统一 size 差异检测
-        for (full_path, observed_size) in file_entries {
-            let path_str = full_path.to_string_lossy().to_string();
-            seen_files.insert(path_str.clone());
-            match state.polled_file_sizes.get(&path_str) {
-                None => {
-                    state.polled_file_sizes.insert(path_str.clone(), observed_size);
-                    if primed {
-                        pending_events.push((full_path, FileChangeType::Add));
-                    }
-                }
-                Some(&last_size) if observed_size != last_size => {
-                    state.polled_file_sizes.insert(path_str, observed_size);
-                    pending_events.push((full_path, FileChangeType::Change));
-                }
-                _ => {}
-            }
-        }
-
-        // 删除检测（仅基线之后）
-        if primed {
-            let removed: Vec<String> = state
-                .polled_file_sizes
-                .keys()
-                .filter(|k| !seen_files.contains(*k))
-                .cloned()
-                .collect();
-            for removed_path in removed {
-                state.polled_file_sizes.remove(&removed_path);
-                pending_events.push((
-                    std::path::PathBuf::from(&removed_path),
-                    FileChangeType::Unlink,
-                ));
-            }
-        } else {
-            state.primed = true;
-        }
-
-        // 统一释放锁后发送事件（减少锁竞争）
-        drop(state);
-        for (path, event_type) in pending_events {
-            Self::emit_event(sender, &path, projects_path, event_type);
-        }
-
-        Ok(())
+        Ok(file_entries)
     }
+
 
     /// 构造并发送 FileChangeEvent。
     ///
-    /// 支持三种相对路径布局：
-    /// - **todos 平铺**：`["{sessionId}.json"]`（1 段 + `.json` 后缀）
-    /// - **projects 两层**：`["projectId", "sessionId.jsonl"]`（含可选 subagents）
-    /// - **memory**（Phase 3A）：`["projectId", "memory", "{file}.md"]`
+    /// 解析分派：
+    /// - **extra agent**（pi 等两层布局根）：结构特征命中 → 读头解析
+    ///   （session_id + cwd），projectId = encode_path(cwd)，agent = Some；
+    /// - **claude/todos**：相对主根布局解析（支持 todos 平铺 / projects 两层
+    ///   / memory 三种，见下）。
     pub(crate) fn emit_event(
         sender: &broadcast::Sender<FileChangeEvent>,
         file_path: &Path,
         projects_path: &Path,
+        fs_provider: &Arc<dyn FsProvider>,
         event_type: FileChangeType,
     ) {
+        // extra agent 分派（与 local process_debounced_event 同一语义）。
+        // 读头失败 = 半写/边车 → 静默丢弃，下轮轮询重试。
+        let adapter = crate::agents::adapter_for_path(file_path);
+        if adapter.kind() != crate::types::domain::AgentKind::ClaudeCode {
+            if let Some((session_id, cwd)) = adapter.resolve_watch_event(file_path, fs_provider.as_ref()) {
+                let event = FileChangeEvent {
+                    event_type,
+                    path: file_path.to_string_lossy().to_string(),
+                    project_id: Some(crate::utils::encode_path(&cwd)),
+                    session_id: Some(session_id),
+                    is_subagent: false,
+                    kind: crate::types::domain::FileChangeEventKind::Session,
+                    agent: Some(adapter.kind()),
+                };
+                let _ = sender.send(event);
+            }
+            return;
+        }
+
         let relative = match file_path.strip_prefix(projects_path) {
             Ok(r) => r,
             Err(_) => return,
@@ -294,6 +351,7 @@ impl FileWatcher {
                 session_id: None,
                 is_subagent: false,
                 kind: crate::types::domain::FileChangeEventKind::Memory,
+                agent: None,
             };
             let _ = sender.send(event);
             return;
@@ -319,6 +377,7 @@ impl FileWatcher {
             session_id,
             is_subagent,
             kind: crate::types::domain::FileChangeEventKind::Session,
+            agent: None,
         };
         let _ = sender.send(event);
     }

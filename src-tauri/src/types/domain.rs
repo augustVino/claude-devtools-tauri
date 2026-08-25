@@ -412,6 +412,11 @@ pub struct FileChangeEvent {
     /// Phase 3A：事件种类（默认 Session，向后兼容现有 emit 点）
     #[serde(rename = "kind", default)]
     pub kind: FileChangeEventKind,
+    /// 事件归属的 agent（None = claude，向后兼容）。extra agent 事件由
+    /// orchestrator 消费后置 projectId=None 再发前端（前端「新会话刷新」
+    /// 对无 projectId 的事件按当前选中项目兜底）。
+    #[serde(rename = "agent", skip_serializing_if = "Option::is_none", default)]
+    pub agent: Option<AgentKind>,
 }
 
 // =============================================================================

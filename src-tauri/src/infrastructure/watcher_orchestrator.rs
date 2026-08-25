@@ -179,6 +179,8 @@ pub struct WatcherOrchestrator {
     #[allow(dead_code)]
     projects_dir: PathBuf,
     todos_dir: PathBuf,
+    /// 当前上下文 home（extra agent 监听根推导）
+    home_dir: PathBuf,
     fs_provider: Arc<dyn FsProvider>,
     cache: DataCache,
     file_watcher: Arc<Mutex<FileWatcher>>,
@@ -195,6 +197,7 @@ impl WatcherOrchestrator {
     pub fn new(
         projects_dir: PathBuf,
         todos_dir: PathBuf,
+        home_dir: PathBuf,
         fs_provider: Arc<dyn FsProvider>,
         cache: DataCache,
         file_watcher: Arc<Mutex<FileWatcher>>,
@@ -203,6 +206,7 @@ impl WatcherOrchestrator {
         Self {
             projects_dir,
             todos_dir,
+            home_dir,
             fs_provider,
             cache,
             file_watcher,
@@ -310,6 +314,7 @@ impl WatcherOrchestrator {
             let cancel = cancel_token.clone();
             let app = app_handle.clone();
             let projects_dir = self.projects_dir.clone();
+            let home_dir = self.home_dir.clone();
             let cache = self.cache.clone();
             let fs_provider = self.fs_provider.clone();
             let file_watcher = self.file_watcher.clone();
@@ -323,7 +328,11 @@ impl WatcherOrchestrator {
                         return;
                     }
                 }
-                if let Err(e) = watcher.watch(&projects_dir).await {
+                // 多根：claude projects_dir（主根，解析基准）+ extra agent 根
+                // （存在者；SSH 模式自动排除 codex 日期树，见 agents::watch_roots）
+                let mut roots = vec![projects_dir.clone()];
+                roots.extend(crate::agents::watch_roots(&home_dir, fs_provider.as_ref()));
+                if let Err(e) = watcher.watch(&roots).await {
                     log::error!("Failed to start main FileWatcher: {}", e);
                     return;
                 }
@@ -364,12 +373,23 @@ impl WatcherOrchestrator {
                                             cb(pid);
                                         }
                                     }
-                                    crate::events::emit_file_change(&app, event.clone());
+                                    // extra agent 事件：发前端前置 projectId=None ——
+                                    // 前端「新会话→刷侧栏」对无 projectId 的事件按
+                                    // 当前选中项目兜底；正在看的会话靠 sessionId
+                                    // 匹配 tab 刷新（refreshSessionInPlace 用 tab
+                                    // 自己的 projectId 重新寻址，缓存失效已由上面的
+                                    // invalidate（encode_path(cwd)）+ fingerprint
+                                    // 短路双保险覆盖）
+                                    let mut outbound = event.clone();
+                                    if event.agent.is_some() {
+                                        outbound.project_id = None;
+                                    }
+                                    crate::events::emit_file_change(&app, outbound.clone());
                                     if let Some(broadcaster) =
                                         app.try_state::<crate::http::sse::SSEBroadcaster>()
                                     {
                                         let _ = broadcaster.inner().send(
-                                            crate::http::sse::BackendEvent::FileChange(event),
+                                            crate::http::sse::BackendEvent::FileChange(outbound),
                                         );
                                     }
                                 }
@@ -491,6 +511,11 @@ impl WatcherOrchestrator {
                                     if event.kind == crate::types::domain::FileChangeEventKind::Memory {
                                         continue;
                                     }
+                                    // 多 agent：错误检测是 claude JSONL 语义
+                                    //（parse_jsonl_from_offset），extra agent 会话跳过
+                                    if event.agent.is_some() {
+                                        continue;
+                                    }
                                     // includeSubagentErrors gate（对齐 Electron FileWatcher.ts:583-596）
                                     let include_subagent = config_manager
                                         .get_config()
@@ -553,7 +578,7 @@ impl WatcherOrchestrator {
                         return;
                     }
                 }
-                if let Err(e) = todo_watcher_guard.watch(&todos_dir).await {
+                if let Err(e) = todo_watcher_guard.watch(&[todos_dir.clone()]).await {
                     log::error!("Failed to start todo FileWatcher: {}", e);
                     return;
                 }
@@ -683,6 +708,7 @@ mod integration_tests {
         let mut orch = WatcherOrchestrator::new(
             tmp.path().to_path_buf(),
             tmp.path().join("todos").to_path_buf(),
+            std::path::PathBuf::new(),
             fs_provider,
             cache.clone(),
             Arc::new(Mutex::new(fw)),
@@ -722,6 +748,7 @@ mod integration_tests {
         let orch = WatcherOrchestrator::new(
             tmp.path().to_path_buf(),
             tmp.path().join("todos").to_path_buf(),
+            std::path::PathBuf::new(),
             fs_provider,
             cache,
             Arc::new(Mutex::new(fw)),

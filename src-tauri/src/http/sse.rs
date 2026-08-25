@@ -97,6 +97,7 @@ mod tests {
             session_id: Some("sess".to_string()),
             is_subagent: false,
             kind: crate::types::domain::FileChangeEventKind::Session,
+            agent: None,
         });
         broadcaster.send(event);
 
@@ -114,6 +115,7 @@ mod tests {
                 session_id: None,
                 is_subagent: false,
                 kind: crate::types::domain::FileChangeEventKind::Session,
+                agent: None,
             })
             .event_name(),
             "file-change"
