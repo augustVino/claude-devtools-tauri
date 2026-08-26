@@ -9,6 +9,8 @@ pub mod data_cache;
 pub mod file_watcher;
 pub mod fs_provider;
 pub mod local_session_repository;
+pub mod git_facts_cache;
+pub mod listing_cache;
 pub mod notification;
 pub mod service_context;
 pub mod session_repository;

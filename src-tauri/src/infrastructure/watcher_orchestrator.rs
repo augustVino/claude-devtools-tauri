@@ -372,6 +372,9 @@ impl WatcherOrchestrator {
                                         if let Some(ref cb) = on_cache_invalidate {
                                             cb(pid);
                                         }
+                                        // claude listing 缓存同步失效（TTL 只作兑底）：
+                                        // 会话增删改直接影响列表内容与计数
+                                        crate::infrastructure::listing_cache::invalidate_project(pid);
                                     }
                                     // extra agent 事件：发前端前置 projectId=None ——
                                     // 前端「新会话→刷侧栏」对无 projectId 的事件按
@@ -379,9 +382,14 @@ impl WatcherOrchestrator {
                                     // 匹配 tab 刷新（refreshSessionInPlace 用 tab
                                     // 自己的 projectId 重新寻址，缓存失效已由上面的
                                     // invalidate（encode_path(cwd)）+ fingerprint
-                                    // 短路双保险覆盖）
+                                    // 短路双保险覆盖）。
+                                    // 同时失效聚合层缓存（TTL 的兑底由此接管为
+                                    // 事件驱动：变更后下次 list 立即重扫）。
                                     let mut outbound = event.clone();
                                     if event.agent.is_some() {
+                                        crate::agents::invalidate_aggregate_cache(Some(
+                                            std::path::Path::new(&event.path),
+                                        ));
                                         outbound.project_id = None;
                                     }
                                     crate::events::emit_file_change(&app, outbound.clone());
@@ -596,6 +604,9 @@ impl WatcherOrchestrator {
                                     let todo_event = crate::events::TodoChangeEvent {
                                         session_id: session_id.clone(),
                                     };
+                                    // todo 文件影响 light listing 的 todoData 字段；
+                                    // 文件名无 pid，无法定位项目 → sessions 全清
+                                    crate::infrastructure::listing_cache::invalidate_all_sessions();
                                     crate::events::emit_todo_change(&app, todo_event.clone());
                                     if let Some(broadcaster) =
                                         app.try_state::<crate::http::sse::SSEBroadcaster>()
@@ -626,12 +637,14 @@ impl WatcherOrchestrator {
             });
         }
 
-        // Phase A: 轻量 seed（延迟 2s 等 watcher 就绪）
+        // Phase A: 轻量 seed（延迟 8s：连接后首 ~5s 是 scan_projects/list_sessions
+        // 首次全量扫描的高峰，seed 的全项目枚举与之并发会挤占 SFTP 单通道
+        // —— 2026-08 SSH 实测通道拥挤时 scan 耗时放大 40 倍）
         {
             let seed_fs = self.fs_provider.clone();
             let seed_dir = self.projects_dir.clone();
             tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::time::sleep(Duration::from_secs(8)).await;
                 if let Err(e) = Self::seed_active_sessions(&*seed_fs, &seed_dir).await {
                     log::warn!("Failed to seed active sessions: {e}");
                 }

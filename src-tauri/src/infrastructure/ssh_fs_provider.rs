@@ -214,31 +214,45 @@ impl FsProvider for SshFsProvider {
     }
 
     fn read_file_head(&self, path: &Path, max_lines: usize) -> Result<String, String> {
-        // 流式读前 64KB，避免读全文（对齐 Electron createReadStream）。
-        // 64KB 通常覆盖 200+ 行 JSONL。
+        // 阶梯式头部读取：首读 8KB（cwd/首行提取等绝大多数场景绰绰有余），
+        // 行数不足且未到 EOF 再升到 64KB（preview 200 行场景）。
+        // 背景：固定 64KB 首读在 SSH 高延迟/低带宽链路上让 scan_projects 仅
+        // cwd 提取就要传 ~1.1MB（17 项目），传输时间主导总耗时
+        //（2026-08 SSH 实测：同代码 946ms 与 36s 并存，通道拥挤时放大 40 倍）。
         //
-        // 修正 codex 第二轮 C4：用 from_utf8_lossy 避免 CJK/emoji 字符在 64KB 边界
+        // 修正 codex 第二轮 C4：用 from_utf8_lossy 避免 CJK/emoji 字符在块边界
         // 被切断导致 from_utf8 失败 → 回退到全读 → 丢失截断保护。
-        const HEAD_CHUNK_BYTES: u64 = 64 * 1024;
+        const FIRST_CHUNK: u64 = 8 * 1024;
+        const FULL_CHUNK: u64 = 64 * 1024;
 
-        // 拉取前 64KB 字节
-        let bytes = match self.read_file_range(path, 0, Some(HEAD_CHUNK_BYTES)) {
+        let first = match self.read_file_range(path, 0, Some(FIRST_CHUNK)) {
             Ok(b) => b,
             Err(_) => {
                 // SFTP 服务器不支持 seek 或 read with length → 回退到全读
                 let full = self.read_file(path)?;
-                full.into_bytes()
+                return Ok(full.lines().take(max_lines).collect::<Vec<_>>().join("\n"));
             }
         };
 
-        // 关键：判断是否触发了截断（read_file_range 返回的字节数 == HEAD_CHUNK_BYTES）
-        let was_truncated = (bytes.len() as u64) >= HEAD_CHUNK_BYTES;
+        // 8KB 内行数不足且未到 EOF → 升到 64KB 重读一次
+        let mut bytes = first;
+        let reached_eof = (bytes.len() as u64) < FIRST_CHUNK;
+        if !reached_eof {
+            let complete_lines = bytes.iter().filter(|&&b| b == b'\n').count();
+            if complete_lines < max_lines {
+                bytes = match self.read_file_range(path, 0, Some(FULL_CHUNK)) {
+                    Ok(b) => b,
+                    Err(_) => bytes, // 降级用首批
+                };
+            }
+        }
 
-        // 用 from_utf8_lossy 而非 from_utf8，避免 CJK 字符在 64KB 边界被切坏抛错。
+        let was_truncated = (bytes.len() as u64) >= FULL_CHUNK;
+        // 用 from_utf8_lossy 而非 from_utf8，避免 CJK 字符在块边界被切坏抛错。
         // lossy 在边界处用 U+FFFD 替换无效字节，不影响行解析（lines 按 \n 分割）。
         let mut content = String::from_utf8_lossy(&bytes).into_owned();
 
-        // 截断保护：若读满 64KB 且末尾不是换行，丢弃最后一行（可能是不完整行）
+        // 截断保护：读满 64KB 且末尾不是换行，丢弃最后一行（可能是不完整行）
         if was_truncated && !content.ends_with('\n') {
             if let Some(last_newline) = content.rfind('\n') {
                 content.truncate(last_newline + 1);

@@ -76,7 +76,8 @@ mod codex;
 mod pi;
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use crate::infrastructure::fs_provider::FsProvider;
 use crate::types::domain::{AgentKind, Project, Session};
@@ -289,6 +290,117 @@ pub fn watch_roots(home: &Path, fs: &dyn FsProvider) -> Vec<PathBuf> {
 // 协议的 agent（Pi 起；claude 走 ProjectScanner 既有管线不重复扫描），
 // 按 cwd 权威路径与 claude 结果归并（见模块文档）。
 
+/// 聚合层缓存：SSH 模式下每次 list/scan 全量重扫（逐会话 SFTP 头读）会让
+/// 侧栏刷新风暴变成秒级往返串，这里用「TTL 结果缓存 + 事件失效」挡住重复
+/// 调用：实时性由 watcher 事件回调 invalidate 保证（本地 notify / SSH 轮询），
+/// TTL 只是防漏网的兑底。
+const AGG_CACHE_TTL: Duration = Duration::from_secs(120);
+
+#[derive(Default)]
+struct AggCache {
+    /// root 路径 → (生成时刻, 扫描结果)。TTL 过期后重扫（scan 本身仍走
+    /// adapter，代价一次付清而非每调用）。
+    scan: std::collections::HashMap<String, (Instant, Vec<AgentSessionEntry>)>,
+    /// 数据根存在性（含**负缓存**）：远端未装某 agent 时，每次聚合调用
+    /// 的 exists 探测也是一次 SFTP 往返 —— 高延迟链路上搜索/翻页风暴会把它
+    /// 放大成秒级卡顿（2026-08 SSH 实测）。负结果同样缓存，稳态零往返。
+    root_exists: std::collections::HashMap<String, (Instant, bool)>,
+    /// file_path → (mtime_ms, light Session)：mtime 未变不重读 200 行预览。
+    light: std::collections::HashMap<String, (u64, Session)>,
+    /// (projects_dir, project_id) → (生成时刻, cwd)：claude 项目权威 cwd
+    /// 的首文件头读同样昂贵。
+    claude_cwd: std::collections::HashMap<String, (Instant, Option<String>)>,
+}
+
+impl AggCache {
+    fn evict_if_bloated(&mut self) {
+        // 粗粒度上限：超额全清（重建成本低，频率低）
+        if self.light.len() > 8192 {
+            self.light.clear();
+        }
+    }
+}
+
+fn agg_cache() -> &'static Mutex<AggCache> {
+    static CACHE: OnceLock<Mutex<AggCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(AggCache::default()))
+}
+
+/// 有界并行 map（SSH 逐文件串行头读是聚合扫描的瓶颈：N 会话 = N 次
+/// 串行往返，2026-08 实测 117 会话拖 24s）。
+///
+/// 语义：**worker pool** —— `workers` 个线程从共享队列取项，项级调度
+///（任意项数都能吃到全部并发度；曾经的 chunk 分批实现批内串行：
+/// 3 项挤单线程 468ms，被并发性回归测试抓到）。队列/结果锁只在取项/
+/// 放回瞬间持有（纳秒级），`f` 在锁外执行 —— 调用方务必维持同样的锁
+/// 纪律（见 `cached_light_session` 文档）。结果保序。
+///
+/// 聚合层调用点均在 spawn_blocking 线程，`SshFsProvider::blocking_sftp`
+/// 在非 runtime 线程走 `handle.block_on`，多线程并发 block_on = SFTP
+/// 请求在 SSH 通道上多路复用；本地 LocalFsProvider 同样安全。
+pub(crate) fn par_map<T, R>(items: Vec<T>, workers: usize, f: impl Fn(T) -> R + Sync + Send) -> Vec<R>
+where
+    T: Send,
+    R: Send,
+{
+    let n = items.len();
+    if n <= 1 || workers <= 1 {
+        return items.into_iter().map(f).collect();
+    }
+    let workers = workers.min(n);
+    let queue: std::sync::Mutex<std::collections::VecDeque<(usize, T)>> =
+        std::sync::Mutex::new(items.into_iter().enumerate().collect());
+    let results: std::sync::Mutex<Vec<Option<R>>> =
+        std::sync::Mutex::new((0..n).map(|_| None).collect());
+    let f = &f;
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| loop {
+                // 队列锁：仅 pop 瞬间持有
+                let next = { queue.lock().unwrap().pop_front() };
+                let Some((idx, item)) = next else { break };
+                let r = f(item); // 用户函数在锁外
+                // 结果锁：仅写入瞬间持有
+                results.lock().unwrap()[idx] = Some(r);
+            });
+        }
+    });
+    results
+        .into_inner()
+        .expect("par_map results mutex poisoned")
+        .into_iter()
+        .map(|x| x.expect("par_map worker left slot unfilled"))
+        .collect()
+}
+
+/// 扫描单飞锁：TTL 失效后的首个调用者执行扫描，并发调用者等锁后直接
+/// 命中其写入的缓存 —— 消灭启动时 N 个并发调用（getProjects /
+/// getRepositoryGroups / getSessions 同时打进来）各自全量扫描的
+/// stampede（2026-08 SSH 实测：同一秒 3 条重复扫描日志）。
+static SCAN_SINGLE_FLIGHT: Mutex<()> = Mutex::new(());
+
+/// watcher 事件失效入口：extra agent 文件变更时调用（path 命中的根的
+/// scan 缓存 + 该文件的 light 缓存）。简单起见不做前缀细分 —— 重建一次
+/// 扫描的成本远低于错数据的成本。
+pub fn invalidate_aggregate_cache(path: Option<&Path>) {
+    let mut c = agg_cache().lock().unwrap();
+    match path {
+        Some(p) => {
+            let ps = p.to_string_lossy().to_string();
+            c.scan.retain(|root, _| !ps.starts_with(root.as_str()));
+            // root_exists 一并失效：新建的 agent 数据目录下的首个文件事件
+            // 应立即激活扫描（负缓存不得拖到 TTL）
+            c.root_exists.retain(|root, _| !ps.starts_with(root.as_str()));
+            c.light.remove(&ps);
+        }
+        None => {
+            c.scan.clear();
+            c.root_exists.clear();
+            c.light.clear();
+        }
+    }
+}
+
 /// 取 adapter 在当前上下文的实际数据根；根缺失时 None（debug 日志）。
 fn extra_scan_root(adapter: &dyn AgentAdapter, home: &Path, fs: &dyn FsProvider) -> Option<PathBuf> {
     let root = adapter.data_root_under(home);
@@ -304,54 +416,133 @@ fn extra_scan_root(adapter: &dyn AgentAdapter, home: &Path, fs: &dyn FsProvider)
     Some(root)
 }
 
+/// 根存在性探测（带 TTL 缓存，含负缓存）。稳态下聚合调用**零 SFTP 往返**。
+fn root_exists_cached(fs: &dyn FsProvider, root: &Path) -> bool {
+    let key = root.to_string_lossy().to_string();
+    {
+        let cache = agg_cache().lock().unwrap();
+        if let Some((at, exists)) = cache.root_exists.get(&key) {
+            if at.elapsed() < AGG_CACHE_TTL {
+                return *exists;
+            }
+        }
+    }
+    let exists = fs.exists(root).unwrap_or(false);
+    agg_cache()
+        .lock()
+        .unwrap()
+        .root_exists
+        .insert(key, (Instant::now(), exists));
+    exists
+}
+
 /// 一次扫描全部接入聚合协议的 agent（跳过 claude —— 其 scan_sessions
 /// 为默认空实现，天然无开销）。
+///
+/// 三层防护挡住重复 IO：scan 结果 TTL 缓存 / 根存在性 TTL 缓存（含负
+/// 缓存）/ 全局单飞锁（并发调用只有一个真正扫描，其余等锁后命中缓存）。
+/// 稳态（TTL 内、无变更事件）零 SFTP 往返。fs IO 在数据锁外执行，
+/// 单飞锁期间并发调用方阻塞等待（调用点均在 spawn_blocking，可接受）。
 fn scan_extra_entries(fs: &dyn FsProvider, home: &Path) -> Vec<AgentSessionEntry> {
-    let mut entries = Vec::new();
+    if home.as_os_str().is_empty() {
+        return Vec::new();
+    }
+    let _single_flight = SCAN_SINGLE_FLIGHT.lock().unwrap();
+    let mut out: Vec<AgentSessionEntry> = Vec::new();
     for adapter in registry() {
-        let Some(root) = extra_scan_root(adapter.as_ref(), home, fs) else {
+        let root = adapter.data_root_under(home);
+        if root.as_os_str().is_empty() {
             continue;
-        };
+        }
+        let root_key = root.to_string_lossy().to_string();
+        // 1) scan 结果缓存命中 → 零 IO
+        {
+            let cache = agg_cache().lock().unwrap();
+            if let Some((at, entries)) = cache.scan.get(&root_key) {
+                if at.elapsed() < AGG_CACHE_TTL {
+                    out.extend(entries.iter().cloned());
+                    continue;
+                }
+            }
+        }
+        // 2) 根存在性（负缓存）：未装该 agent 的机器不付任何往返
+        if !root_exists_cached(fs, &root) {
+            continue;
+        }
+        // 3) 真实扫描（单飞锁持有中：并发调用方等锁而非重复扫）
+        let started = Instant::now();
         let found = adapter.scan_sessions(&root, fs);
-        // 根存在但一个会话都没扫到：可疑（装了该 agent 且有目录），warn 提示
+        // info 级：SSH 慢链路上这是列表首屏的主要成本项，需要可直接观测
+        log::info!(
+            "agents: scanned {} sessions for {} in {:?}",
+            found.len(),
+            adapter.kind(),
+            started.elapsed()
+        );
+        // 根存在但零会话是正常态（如远端 ~/.codex 只有 config）——info 级，
+        // 不刷 warn（2026-08 SSH 实测：空根每 TTL 周期重复告警困扰排查）
         if found.is_empty() {
-            log::warn!(
-                "agents: {} data root exists but no sessions scanned under {}",
+            log::info!(
+                "agents: {} data root exists but no sessions under {} (will retry after TTL)",
                 adapter.kind(),
                 root.display()
             );
         }
-        entries.extend(found);
+        agg_cache()
+            .lock()
+            .unwrap()
+            .scan
+            .insert(root_key, (Instant::now(), found.clone()));
+        out.extend(found);
     }
-    entries
+    out
 }
 
-/// Claude 项目的权威 cwd：读项目目录下首个 jsonl 头部的 cwd 字段。
+/// Claude 项目的权威 cwd：读项目目录下首个 jsonl 头部的 cwd 字段（带
+/// TTL 缓存 —— 首文件头读在 SSH 上同样是一次往返）。
 ///
 /// 这是「统一项目 id（Claude 目录名）→ cwd」的唯一可靠途径（目录名反解
 /// 有损）。读不到（目录无 jsonl / 全部损坏）→ None，调用方降级为
 /// 自编码 id 匹配。
 fn claude_project_cwd(fs: &dyn FsProvider, projects_dir: &Path, project_id: &str) -> Option<String> {
-    let dir = projects_dir.join(extract_base_dir(project_id));
-    if !fs.exists(&dir).unwrap_or(false) {
-        return None;
-    }
-    let entries = fs.read_dir(&dir).ok()?;
-    let first_jsonl = entries
-        .iter()
-        .find(|e| e.is_file && e.name.ends_with(".jsonl"))?;
-    let head = fs.read_file_head(&dir.join(&first_jsonl.name), 5).ok()?;
-    for line in head.lines() {
-        let Ok(row) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        if let Some(cwd) = row.get("cwd").and_then(|v| v.as_str()) {
-            if !cwd.is_empty() {
-                return Some(cwd.to_string());
+    let cache_key = format!(
+        "{}/{}",
+        projects_dir.to_string_lossy(),
+        extract_base_dir(project_id)
+    );
+    {
+        let mut cache = agg_cache().lock().unwrap();
+        if let Some((at, cwd)) = cache.claude_cwd.get(&cache_key) {
+            if at.elapsed() < AGG_CACHE_TTL {
+                return cwd.clone();
             }
         }
     }
-    None
+    let dir = projects_dir.join(extract_base_dir(project_id));
+    let resolved = (|| {
+        if !fs.exists(&dir).unwrap_or(false) {
+            return None;
+        }
+        let entries = fs.read_dir(&dir).ok()?;
+        let first_jsonl = entries
+            .iter()
+            .find(|e| e.is_file && e.name.ends_with(".jsonl"))?;
+        let head = fs.read_file_head(&dir.join(&first_jsonl.name), 5).ok()?;
+        for line in head.lines() {
+            let Ok(row) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if let Some(cwd) = row.get("cwd").and_then(|v| v.as_str()) {
+                if !cwd.is_empty() {
+                    return Some(cwd.to_string());
+                }
+            }
+        }
+        None
+    })();
+    let mut cache = agg_cache().lock().unwrap();
+    cache.claude_cwd.insert(cache_key, (Instant::now(), resolved.clone()));
+    resolved
 }
 
 /// entry 是否属于目标统一项目 id。
@@ -364,6 +555,33 @@ fn entry_belongs_to(
     claude_cwd: Option<&str>,
 ) -> bool {
     claude_cwd == Some(e.project_path.as_str()) || e.project_id == project_id
+}
+
+/// light 元数据构造（带 mtime 缓存）：预览读 200 行在 SSH 上是一次
+/// SFTP 往返，mtime 未变直接复用。
+///
+/// 锁纪律（被违反过一次，务必维持）：Mutex **只在读/写缓存瞬间持有**，
+/// `adapter.light_session` 的 fs IO 必须在锁外 —— 一旦 IO 入锁，外层
+/// par_map 的 8 并发会被串行化成单流（2026-08 SSH 实测：117 会话
+/// 24.3s，每会话 ~210ms = 单次 RTT，与串行无异；修复后应 ~N/8×RTT）。
+fn cached_light_session(entry: &AgentSessionEntry, fs: &dyn FsProvider) -> Option<Session> {
+    let path_key = entry.file_path.to_string_lossy().to_string();
+    {
+        let cache = agg_cache().lock().unwrap();
+        if let Some((mtime, session)) = cache.light.get(&path_key) {
+            if *mtime == entry.mtime_ms {
+                return Some(session.clone());
+            }
+        }
+    } // 锁释放 —— 下面的 SFTP IO 在锁外，可安全并发
+    let adapter = registry()
+        .iter()
+        .find(|a| a.kind() == entry.agent)?;
+    let session = adapter.light_session(entry, fs)?;
+    let mut cache = agg_cache().lock().unwrap();
+    cache.evict_if_bloated();
+    cache.light.insert(path_key, (entry.mtime_ms, session.clone()));
+    Some(session)
 }
 
 /// 在 claude 项目列表上归并额外 agent 的项目。
@@ -440,17 +658,17 @@ pub fn append_extra_sessions(
         return sessions;
     }
     let claude_cwd = claude_project_cwd(fs, projects_dir, project_id);
-    for e in scan_extra_entries(fs, home) {
-        if entry_belongs_to(&e, project_id, claude_cwd.as_deref()) {
-            if let Some(s) = registry()
-                .iter()
-                .find(|a| a.kind() == e.agent)
-                .and_then(|a| a.light_session(&e, fs))
-            {
-                sessions.push(s);
-            }
-        }
-    }
+    let matched: Vec<AgentSessionEntry> = scan_extra_entries(fs, home)
+        .into_iter()
+        .filter(|e| entry_belongs_to(e, project_id, claude_cwd.as_deref()))
+        .collect();
+    // light 构造（缓存 miss 时每会话一次 preview 头读）并行化：串行时
+    // N 会话 = N 次 SFTP 往返叠加，31 会话实测把列表首开拖到 ~10s
+    //（2026-08 SSH）。缓存命中路径纯内存，并行无害
+    let extra = crate::agents::par_map(matched, 8, |e| cached_light_session(&e, fs))
+        .into_iter()
+        .flatten();
+    sessions.extend(extra);
     sessions.sort_by(|a, b| b.updated_at.unwrap_or(0).cmp(&a.updated_at.unwrap_or(0)));
     sessions
 }
@@ -542,8 +760,7 @@ pub fn find_extra_sessions(
     });
     let mut out = Vec::new();
     for e in matched {
-        let adapter = registry().iter().find(|a| a.kind() == e.agent);
-        let Some(light) = adapter.and_then(|a| a.light_session(e, fs)) else {
+        let Some(light) = cached_light_session(e, fs) else {
             continue;
         };
         let mut resolved = encode_path(&e.project_path);
@@ -745,6 +962,162 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].0, "-Users-x-my-repo");
         assert_eq!(found[0].1.agent, AgentKind::Pi);
+    }
+
+    /// 计数 FsProvider：验证聚合层缓存真的挡住了重复 IO（含 exists 往返 ——
+    /// SSH 高延迟链路上它就是搜索/翻页风暴变慢的元凶）。
+    #[derive(Debug)]
+    struct CountingFs {
+        inner: Arc<crate::infrastructure::fs_provider::LocalFsProvider>,
+        head_reads: std::sync::atomic::AtomicUsize,
+        exists_calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl FsProvider for CountingFs {
+        fn provider_type(&self) -> &'static str { "local" }
+        fn exists(&self, p: &Path) -> Result<bool, String> {
+            self.exists_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.exists(p)
+        }
+        fn read_file(&self, p: &Path) -> Result<String, String> { self.inner.read_file(p) }
+        fn read_file_head(&self, p: &Path, n: usize) -> Result<String, String> {
+            self.head_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.read_file_head(p, n)
+        }
+        fn read_file_range(&self, p: &Path, o: u64, l: Option<u64>) -> Result<Vec<u8>, String> {
+            self.inner.read_file_range(p, o, l)
+        }
+        fn stat(&self, p: &Path) -> Result<crate::infrastructure::fs_provider::FsStatResult, String> {
+            self.inner.stat(p)
+        }
+        fn read_dir(&self, p: &Path) -> Result<Vec<crate::infrastructure::fs_provider::FsDirent>, String> {
+            self.inner.read_dir(p)
+        }
+    }
+
+    /// TTL 缓存：第二次 scan+light 全部命中缓存，零头读；失效后重扫。
+    #[test]
+    fn aggregate_cache_blocks_repeated_io() {
+        let fx = make_fixture("-Users-x-cache", "/Users/x/cache", &["/Users/x/cache"]);
+        let fs = Arc::new(CountingFs {
+            inner: Arc::new(crate::infrastructure::fs_provider::LocalFsProvider::new()),
+            head_reads: std::sync::atomic::AtomicUsize::new(0),
+            exists_calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        // 隔离全局缓存（其他测试的 fixture 路径不同，理论上不冲突，显式清理更稳）
+        invalidate_aggregate_cache(None);
+
+        // 第一次：scan（1 次头读）+ light preview（1 次）= 2
+        let merged = merge_extra_projects(Vec::new(), fs.as_ref(), &fx.home);
+        assert_eq!(merged.len(), 1);
+        let first = fs.head_reads.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(first >= 1, "first call must read heads");
+
+        // 第二次（首个 append）：scan 已缓存，但 claude_cwd 与 light 首次
+        // 填充合法读 2 次（cwd 头 + preview 头）
+        let sessions = append_extra_sessions(Vec::new(), fs.as_ref(), &fx.projects_dir, &fx.home, "-Users-x-cache");
+        assert_eq!(sessions.len(), 1);
+        let after_warm = fs.head_reads.load(std::sync::atomic::Ordering::SeqCst);
+        let exists_warm = fs.exists_calls.load(std::sync::atomic::Ordering::SeqCst);
+
+        // 第三次：TTL 内全命中（scan + cwd + light + 根存在性），零头读零 exists
+        let sessions = append_extra_sessions(Vec::new(), fs.as_ref(), &fx.projects_dir, &fx.home, "-Users-x-cache");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            fs.head_reads.load(std::sync::atomic::Ordering::SeqCst),
+            after_warm,
+            "third call within TTL must be served from cache (zero head reads)"
+        );
+        assert_eq!(
+            fs.exists_calls.load(std::sync::atomic::Ordering::SeqCst),
+            exists_warm,
+            "steady-state aggregation must issue zero exists round-trips"
+        );
+
+        // 失效（模拟 watcher 事件）→ 重扫，头读数增长
+        let changed = fx
+            .home
+            .join(".pi")
+            .join("agent")
+            .join("sessions")
+            .join("--dir0--")
+            .join("2026-08-25T00-00-00-000Z_00000000-0000-4000-8000-000000000000.jsonl");
+        invalidate_aggregate_cache(Some(&changed));
+        let _ = append_extra_sessions(Vec::new(), fs.as_ref(), &fx.projects_dir, &fx.home, "-Users-x-cache");
+        assert!(
+            fs.head_reads.load(std::sync::atomic::Ordering::SeqCst) > first,
+            "after invalidation the scan must re-read"
+        );
+        invalidate_aggregate_cache(None);
+    }
+
+    /// 慢速 FsProvider：read_file_head 阻塞指定毫秒 —— 验证 light 构造的
+    /// 并发性（锁纪律防回归：一旦 fs IO 被锁覆盖，par_map 退化串行，
+    /// 2026-08 SSH 实测 117 会话 24.3s）。
+    #[derive(Debug)]
+    struct SlowFs {
+        delay_ms: u64,
+    }
+
+    impl FsProvider for SlowFs {
+        fn provider_type(&self) -> &'static str { "local" }
+        fn exists(&self, _: &Path) -> Result<bool, String> { Ok(true) }
+        fn read_file(&self, _: &Path) -> Result<String, String> { Ok(String::new()) }
+        fn read_file_head(&self, _: &Path, _: usize) -> Result<String, String> {
+            std::thread::sleep(std::time::Duration::from_millis(self.delay_ms));
+            // 最小合法 pi 会话：1 条用户消息（preview 计数 = 1）
+            Ok(concat!(
+                r#"{"type":"session","cwd":"/slow","timestamp":"2026-08-25T00:00:00.000Z"}"#,
+                "\n",
+                r#"{"type":"message","id":"m1","timestamp":"2026-08-25T00:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#,
+                "\n",
+            ).to_string())
+        }
+        fn read_file_range(&self, _: &Path, _: u64, _: Option<u64>) -> Result<Vec<u8>, String> {
+            Ok(Vec::new())
+        }
+        fn stat(&self, _: &Path) -> Result<crate::infrastructure::fs_provider::FsStatResult, String> {
+            Ok(crate::infrastructure::fs_provider::FsStatResult {
+                size: 1, mtime_ms: 0, birthtime_ms: 0, is_file: true, is_directory: false,
+            })
+        }
+        fn read_dir(&self, _: &Path) -> Result<Vec<crate::infrastructure::fs_provider::FsDirent>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// 并行性防回归：3 个不同 entry（缓存冷）× 150ms preview 读 —— 串行
+    /// ≥450ms；真并行（批 8）应在单批延迟量级。阈值留宽（350ms）防 CI 抖动。
+    #[test]
+    fn light_construction_runs_concurrently_not_serialized() {
+        invalidate_aggregate_cache(None);
+        let fs = Arc::new(SlowFs { delay_ms: 150 });
+        let mk_entry = |i: usize| AgentSessionEntry {
+            agent: AgentKind::Pi,
+            project_id: format!("/slow-{i}"),
+            project_path: format!("/slow-{i}"),
+            session_id: format!("s{i}"),
+            file_path: PathBuf::from(format!("/slow-{i}/s{i}.jsonl")),
+            mtime_ms: 0,
+            birthtime_ms: 0,
+            created_ms: 0,
+        };
+        let entries: Vec<AgentSessionEntry> = (0..3).map(mk_entry).collect();
+
+        let started = std::time::Instant::now();
+        let out: Vec<_> = par_map(entries, 8, |e| cached_light_session(&e, fs.as_ref()))
+            .into_iter()
+            .flatten()
+            .collect();
+        let elapsed = started.elapsed();
+
+        assert_eq!(out.len(), 3, "all three lights must resolve");
+        assert!(
+            elapsed < std::time::Duration::from_millis(350),
+            "3×150ms previews took {:?} — fs IO appears serialized by a lock (expect ~parallel 150ms, serial would be 450ms)",
+            elapsed
+        );
+        invalidate_aggregate_cache(None);
     }
 
     /// watch_roots：本地模式含 pi + codex 双子根；SSH 排除 codex；缺根跳过。

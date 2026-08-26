@@ -627,8 +627,9 @@ impl AgentAdapter for CodexAdapter {
     }
 
     fn scan_sessions(&self, root: &Path, fs: &dyn FsProvider) -> Vec<AgentSessionEntry> {
-        // root = .../.codex；两个子根都扫
-        let mut entries = Vec::new();
+        // root = .../.codex；两个子根都扫。walk 便宜（read_dir），头读并行化
+        //（par_map 批 8，与 pi 同因：SSH 串行头读是 N 次往返叠加）
+        let mut flat: Vec<(PathBuf, FsDirent)> = Vec::new();
         for sub in ["sessions", "archived_sessions"] {
             let dir = root.join(sub);
             if !fs.exists(&dir).unwrap_or(false) {
@@ -636,24 +637,25 @@ impl AgentAdapter for CodexAdapter {
             }
             let mut files = Vec::new();
             collect_rollout_files(&dir, 0, fs, &mut files);
-            for (file_path, f) in files {
-                let Some((cwd, _git, created_ms)) = read_rollout_head(&file_path, fs) else {
-                    continue;
-                };
-                let stem = f.name.trim_end_matches(".jsonl");
-                entries.push(AgentSessionEntry {
-                    agent: AgentKind::Codex,
-                    project_id: encode_path(&cwd),
-                    project_path: cwd,
-                    session_id: session_id_from_stem(stem),
-                    file_path,
-                    mtime_ms: f.mtime_ms.unwrap_or(0),
-                    birthtime_ms: f.birthtime_ms.unwrap_or(0),
-                    created_ms,
-                });
-            }
+            flat.extend(files);
         }
-        entries
+        crate::agents::par_map(flat, 8, |(file_path, f)| {
+            let (cwd, _git, created_ms) = read_rollout_head(&file_path, fs)?;
+            let stem = f.name.trim_end_matches(".jsonl");
+            Some(AgentSessionEntry {
+                agent: AgentKind::Codex,
+                project_id: encode_path(&cwd),
+                project_path: cwd,
+                session_id: session_id_from_stem(stem),
+                mtime_ms: f.mtime_ms.unwrap_or(0),
+                birthtime_ms: f.birthtime_ms.unwrap_or(0),
+                created_ms,
+                file_path,
+            })
+        })
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
     fn locate_session(

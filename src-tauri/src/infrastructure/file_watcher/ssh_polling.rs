@@ -53,7 +53,11 @@ impl FileWatcher {
 
         let roots_len = roots.len();
         let handle = tokio::spawn(async move {
-            // 立即执行首次基线扫描
+            // 首次基线扫描延迟一个周期：连接后首几秒是项目/会话列表首次
+            // 全量扫描的高峰，priming（全根枚举 + stat）与之并发会挤占 SFTP
+            // 单通道。首个 3s 周期只 priming 不发事件（primed=false 本就不发），
+            // 实时性损失 ≤ 一个 interval，可接受。
+            tokio::time::sleep(Duration::from_millis(poll_interval)).await;
             Self::poll_for_changes(&fs_provider, &roots, &poll_state, &sender).await;
 
             loop {

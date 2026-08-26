@@ -19,8 +19,9 @@ import { SessionContextMenu } from './SessionContextMenu';
 
 import type { AgentKind, PhaseTokenBreakdown, Session } from '@renderer/types/data';
 
-/** agent 徽标展示配置（claude-code 为默认主力，不展示徽标） */
-const AGENT_BADGES: Record<Exclude<AgentKind, 'claude-code'>, { label: string; color: string }> = {
+/** agent 徽标展示配置（全部 agent 均显示，含默认的 claude-code） */
+const AGENT_BADGES: Record<AgentKind, { label: string; color: string }> = {
+  'claude-code': { label: 'Claude', color: '#d97706' },
   pi: { label: 'Pi', color: '#8b5cf6' },
   codex: { label: 'Codex', color: '#10b981' },
   opencode: { label: 'OC', color: '#f59e0b' },
@@ -205,11 +206,8 @@ export const SessionItem = React.memo(function SessionItem({
 
   const sessionLabel = session.firstMessage?.slice(0, 50) ?? 'Session';
 
-  // 多 agent 徽标：claude-code 为默认主力不显示，其余 agent 显示小标签
-  const agentBadge =
-    session.agent && session.agent !== 'claude-code'
-      ? AGENT_BADGES[session.agent]
-      : undefined;
+  // agent 徽标：light 列表可能缺 agent 字段（旧缓存），缺省 claude-code
+  const agentBadge = AGENT_BADGES[session.agent ?? 'claude-code'];
 
   const handleOpenInCurrentPane = useCallback(() => {
     if (!activeProjectId) return;
@@ -298,18 +296,6 @@ export const SessionItem = React.memo(function SessionItem({
           className="mt-0.5 flex items-center gap-2 text-[10px] leading-tight"
           style={{ color: 'var(--color-text-muted)' }}
         >
-          {agentBadge && (
-            <span
-              className="shrink-0 rounded-[3px] border px-1 py-px text-[9px] font-medium uppercase tracking-wide"
-              style={{
-                borderColor: agentBadge.color,
-                color: agentBadge.color,
-              }}
-              title={`Agent: ${agentBadge.label}`}
-            >
-              {agentBadge.label}
-            </span>
-          )}
           <span className="flex items-center gap-0.5">
             <MessageSquare className="size-2.5" />
             {session.messageCount}
@@ -324,6 +310,19 @@ export const SessionItem = React.memo(function SessionItem({
                 phaseBreakdown={session.phaseBreakdown}
               />
             </>
+          )}
+          {/* agent 徽标居右：标识会话来源工具，与元信息（计数/时间/上下文）分居两侧 */}
+          {agentBadge && (
+            <span
+              className="ml-auto shrink-0 rounded-[3px] border px-1 py-px text-[9px] font-medium uppercase tracking-wide"
+              style={{
+                borderColor: agentBadge.color,
+                color: agentBadge.color,
+              }}
+              title={`Agent: ${agentBadge.label}`}
+            >
+              {agentBadge.label}
+            </span>
           )}
         </div>
       </button>

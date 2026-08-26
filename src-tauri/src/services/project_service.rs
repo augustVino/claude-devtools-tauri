@@ -13,6 +13,12 @@ use crate::error::AppError;
 use crate::infrastructure::ContextManager;
 use crate::types::domain::{Project, RepositoryGroup, Session};
 
+/// claude 扫描单飞锁（async）：并发调用（getProjects + getRepositoryGroups
+/// 同时打进来）只有一个真扫，其余等锁后复用缓存。double-checked：
+/// 等到锁后重查缓存，避免重复付整棵树的 SFTP 成本。
+static PROJECTS_SCAN_FLIGHT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static SESSIONS_SCAN_FLIGHT: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// 项目服务 — 扫描、列出、分组项目与会话（具体实现）。
 pub struct ProjectServiceImpl {
     context_manager: Arc<RwLock<ContextManager>>,
@@ -67,17 +73,51 @@ impl ProjectServiceImpl {
 #[async_trait::async_trait]
 impl super::project_service_trait::ProjectService for ProjectServiceImpl {
     async fn scan_projects(&self) -> Result<Vec<Project>, AppError> {
-        let scanner = self.scanner().await?;
-        let projects = scanner.scan_async().await;
-        // 多 agent 聚合：额外 agent（Pi 起）的项目归并进 claude 结果。
-        // 聚合是同步阻塞 IO（SFTP read），包 spawn_blocking 对齐 scan_async
-        // 的既有模式（避免在 async 上下文串行阻塞触发 IPC 超时）
-        let (fs, home) = {
-            let (fs, _projects_dir, home) = self.context_deps().await?;
-            (fs, home)
+        let started = std::time::Instant::now();
+        let (fs, projects_dir, home) = self.context_deps().await?;
+        // claude 纯结果 TTL 缓存（file-change 事件失效，见 listing_cache 模块
+        // 文档）：SSH 高延迟下每次全量重扫是侧栏变慢的元凶
+        let claude_projects = match crate::infrastructure::listing_cache::get_projects(&projects_dir)
+        {
+            Some(p) => {
+                log::info!(
+                    "[perf] scan_projects cache HIT ({} projects) in {:?}",
+                    p.len(),
+                    started.elapsed()
+                );
+                p
+            }
+            None => {
+                // 单飞：并发调用方等锁后重查缓存（double-checked），只有一个真扫
+                let _guard = PROJECTS_SCAN_FLIGHT.lock().await;
+                if let Some(p) =
+                    crate::infrastructure::listing_cache::get_projects(&projects_dir)
+                {
+                    log::info!(
+                        "[perf] scan_projects cache HIT after flight ({} projects) in {:?}",
+                        p.len(),
+                        started.elapsed()
+                    );
+                    p
+                } else {
+                    log::info!("[perf] scan_projects START (full scan, projects_dir={})", projects_dir.display());
+                    let scanner = self.scanner().await?;
+                    let t_scan = std::time::Instant::now();
+                    let scanned = scanner.scan_async().await;
+                    log::info!(
+                        "[perf] scan_projects END: {} projects in {:?} (scanner total)",
+                        scanned.len(),
+                        t_scan.elapsed()
+                    );
+                    crate::infrastructure::listing_cache::set_projects(&projects_dir, &scanned);
+                    scanned
+                }
+            }
         };
+        // 多 agent 归并在 claude 纯结果上每次内存合成（extra 部分由 agents
+        // 聚合缓存挡 IO，两层缓存互不嵌套）
         let merged = tokio::task::spawn_blocking(move || {
-            crate::agents::merge_extra_projects(projects, fs.as_ref(), &home)
+            crate::agents::merge_extra_projects(claude_projects, fs.as_ref(), &home)
         })
         .await
         .map_err(|e| AppError::Internal(format!("scan aggregation join error: {e}")))?;
@@ -85,12 +125,70 @@ impl super::project_service_trait::ProjectService for ProjectServiceImpl {
     }
 
     async fn list_sessions(&self, project_id: &str) -> Result<Vec<Session>, AppError> {
-        let scanner = self.scanner().await?;
-        let sessions = scanner.list_sessions_async(project_id).await;
+        let started = std::time::Instant::now();
         let (fs, projects_dir, home) = self.context_deps().await?;
-        let project_id = project_id.to_string();
+        let claude_sessions =
+            match crate::infrastructure::listing_cache::get_sessions(&projects_dir, project_id) {
+                Some(s) => {
+                    log::info!(
+                        "[perf] list_sessions({}) cache HIT ({} sessions) in {:?}",
+                        project_id,
+                        s.len(),
+                        started.elapsed()
+                    );
+                    s
+                }
+                None => {
+                    // 单飞：同项目并发请求（分页首批 + 侧栏刷新）只有一个真扫
+                    let _guard = SESSIONS_SCAN_FLIGHT.lock().await;
+                    if let Some(s) = crate::infrastructure::listing_cache::get_sessions(
+                        &projects_dir,
+                        project_id,
+                    ) {
+                        log::info!(
+                            "[perf] list_sessions({}) cache HIT after flight ({} sessions) in {:?}",
+                            project_id,
+                            s.len(),
+                            started.elapsed()
+                        );
+                        s
+                    } else {
+                        log::info!("[perf] list_sessions({}) START (full scan)", project_id);
+                        let scanner = self.scanner().await?;
+                        let t_scan = std::time::Instant::now();
+                        let scanned = scanner.list_sessions_async(project_id).await;
+                        log::info!(
+                            "[perf] list_sessions({}) END: {} sessions in {:?} (scanner total)",
+                            project_id,
+                            scanned.len(),
+                            t_scan.elapsed()
+                        );
+                        crate::infrastructure::listing_cache::set_sessions(
+                            &projects_dir,
+                            project_id,
+                            &scanned,
+                        );
+                        scanned
+                    }
+                }
+            };
+        let project_id_owned = project_id.to_string();
         let appended = tokio::task::spawn_blocking(move || {
-            crate::agents::append_extra_sessions(sessions, fs.as_ref(), &projects_dir, &home, &project_id)
+            let t_agg = std::time::Instant::now();
+            let result = crate::agents::append_extra_sessions(
+                claude_sessions,
+                fs.as_ref(),
+                &projects_dir,
+                &home,
+                &project_id_owned,
+            );
+            log::info!(
+                "[perf] append_extra_sessions({}): {} sessions out in {:?} (multi-agent merge)",
+                project_id_owned,
+                result.len(),
+                t_agg.elapsed()
+            );
+            result
         })
         .await
         .map_err(|e| AppError::Internal(format!("list aggregation join error: {e}")))?;
@@ -98,38 +196,27 @@ impl super::project_service_trait::ProjectService for ProjectServiceImpl {
     }
 
     async fn get_repository_groups(&self) -> Result<Vec<RepositoryGroup>, AppError> {
+        let started = std::time::Instant::now();
         let active_arc = {
             let mgr = self.context_manager.read().await;
             mgr.get_active()
                 .ok_or_else(|| AppError::Internal("No active ServiceContext".into()))?
         };
-        let (projects_dir, scanner) = {
+        let projects_dir = {
             let ctx = active_arc.read().await;
-            let projects_dir = ctx.projects_dir.clone();
-            let scanner = ProjectScanner::with_paths(
-                ctx.projects_dir.clone(),
-                ctx.todos_dir.clone(),
-                ctx.fs_provider.clone(),
-            );
-            (projects_dir, scanner)
+            ctx.projects_dir.clone()
         };
 
-        // scan_async 内部已用 fs_provider.exists 检查 projects_dir，
-        // 替代原 Path::exists()（本地 fs，SSH 模式下永远 false）。
-        let mut projects = scanner.scan_async().await;
-        // 多 agent：分组视图与项目列表必须给出一致的「有哪些项目」答案，
-        // 同样走归并（cwd 匹配，见 agents 模块文档）
-        {
-            let (fs, home) = {
-                let (fs, _projects_dir, home) = self.context_deps().await?;
-                (fs, home)
-            };
-            projects = tokio::task::spawn_blocking(move || {
-                crate::agents::merge_extra_projects(projects, fs.as_ref(), &home)
-            })
-            .await
-            .map_err(|e| AppError::Internal(format!("groups aggregation join error: {e}")))?;
-        }
+        // 复用 scan_projects（含 listing 缓存 + [perf] 日志）获取 claude 项目。
+        // 曾经直接调 scanner.scan_async：与并发的 getProjects 各自全量扫描
+        //（缓存写入前的窗口内重复付整棵树的 SFTP 成本，且无日志可见 ——
+        // 2026-08 SSH 实测「scan_projects END 后仍 loading 很久」的主因之一）。
+        let mut projects = self.scan_projects().await?;
+        log::info!(
+            "[perf] get_repository_groups: {} projects (via scan_projects) in {:?} total",
+            projects.len(),
+            started.elapsed()
+        );
         if projects.is_empty() {
             return Ok(Vec::new());
         }

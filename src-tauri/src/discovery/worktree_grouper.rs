@@ -33,19 +33,30 @@ impl WorktreeGrouper {
             return Vec::new();
         }
 
+        let started = std::time::Instant::now();
+
         // 1. Resolve repository identity for each project
+        //（git 身份全套走 per-path TTL 缓存：单次分组 ~14 次本地 fs 访问/项目，
+        // 且历史被并发调用各自重复 —— SSH 实测 4 并发 × 22 项目 ≈ 38.6s）
         let mut project_identities: std::collections::HashMap<String, Option<RepositoryIdentity>> =
             std::collections::HashMap::new();
         let mut project_branches: std::collections::HashMap<String, Option<String>> =
             std::collections::HashMap::new();
+        let mut project_facts: std::collections::HashMap<String, crate::infrastructure::git_facts_cache::GitFacts> =
+            std::collections::HashMap::new();
 
         for project in &projects {
-            let identity = self.git_resolver.resolve_identity(&project.path);
-            project_identities.insert(project.id.clone(), identity);
-
-            let branch = self.git_resolver.get_branch(&project.path);
-            project_branches.insert(project.id.clone(), branch);
+            let facts =
+                crate::infrastructure::git_facts_cache::facts_for(&project.path, &self.git_resolver);
+            project_identities.insert(project.id.clone(), facts.identity.clone());
+            project_branches.insert(project.id.clone(), facts.branch.clone());
+            project_facts.insert(project.id.clone(), facts);
         }
+        log::info!(
+            "[perf] group_by_repository: git facts for {} projects in {:?}",
+            projects.len(),
+            started.elapsed()
+        );
 
         // 2. Group projects by repository
         let mut repo_groups: std::collections::HashMap<String, RepoGroupData> =
@@ -82,15 +93,21 @@ impl WorktreeGrouper {
             let mut worktrees: Vec<Worktree> = Vec::new();
 
             for project in &group.projects {
-                let branch = group.branches.get(&project.id).cloned();
-                let is_main_worktree = !self.git_resolver.is_worktree(&project.path);
-                let source = self.git_resolver.detect_worktree_source(&project.path);
-                let display_name = self.git_resolver.get_worktree_display_name(
-                    &project.path,
-                    &source,
-                    branch.as_deref(),
-                    is_main_worktree,
-                );
+                // 复用第一段的 facts 快照（is_worktree/detect_source/display_name
+                // 与 identity 同源，二次解析纯重复）
+                let facts = project_facts
+                    .get(&project.id)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        crate::infrastructure::git_facts_cache::facts_for(
+                            &project.path,
+                            &self.git_resolver,
+                        )
+                    });
+                let branch = facts.branch.clone();
+                let is_main_worktree = facts.is_main_worktree;
+                let source = facts.source.clone();
+                let display_name = facts.display_name.clone();
 
                 worktrees.push(Worktree {
                     id: project.id.clone(),

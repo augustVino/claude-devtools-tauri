@@ -7,6 +7,15 @@ import { enhanceAIGroup, type PrecedingSlashInfo } from '@renderer/utils/aiGroup
 import { extractSlashInfo, isCommandContent } from '@shared/utils/contentSanitizer';
 import { getModelColorClass } from '@shared/utils/modelParser';
 import { estimateTokens } from '@shared/utils/tokenFormatting';
+
+/** agent 展示名（多 agent 支持；与 Rust 侧 AgentKind kebab-case 对应） */
+const AGENT_LABELS: Record<string, string> = {
+  'claude-code': 'Claude',
+  codex: 'Codex',
+  opencode: 'OpenCode',
+  pi: 'Pi',
+  dsh: 'DSH',
+};
 import { format } from 'date-fns';
 import { Bot, ChevronDown, Clock } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
@@ -140,6 +149,11 @@ const AIChatGroupInner = ({
   const projectRoot = useStore((s) => {
     const td = tabId ? s.tabSessionData[tabId] : null;
     return (td?.sessionDetail ?? s.sessionDetail)?.session?.projectPath;
+  });
+  // 会话归属 agent（多 agent 支持）：驱动 AI 组标题的 agent 名称展示
+  const sessionAgent = useStore((s) => {
+    const td = tabId ? s.tabSessionData[tabId] : null;
+    return (td?.sessionDetail ?? s.sessionDetail)?.session?.agent ?? 'claude-code';
   });
   const isSessionOngoing = useStore((s) => {
     const id = s.selectedSessionId;
@@ -410,7 +424,7 @@ const AIChatGroupInner = ({
               className="shrink-0 text-xs font-semibold"
               style={{ color: COLOR_TEXT_SECONDARY }}
             >
-              Claude
+              {AGENT_LABELS[sessionAgent] ?? 'Claude'}
             </span>
 
             {/* Main agent model */}

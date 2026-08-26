@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::agents::{path_has_components, AgentAdapter, AgentSessionEntry};
-use crate::infrastructure::fs_provider::FsProvider;
+use crate::infrastructure::fs_provider::{FsDirent, FsProvider};
 use crate::parsing::{extract_tool_calls, extract_tool_results};
 use crate::types::domain::{AgentKind, MessageType, Session, SessionMetadataLevel};
 use crate::types::jsonl::UsageMetadata;
@@ -333,10 +333,13 @@ impl AgentAdapter for PiAdapter {
     }
 
     fn scan_sessions(&self, root: &Path, fs: &dyn FsProvider) -> Vec<AgentSessionEntry> {
-        let mut entries = Vec::new();
         let Ok(project_dirs) = fs.read_dir(root) else {
-            return entries;
+            return Vec::new();
         };
+        // 先扁平化 (dir, dirent) 列表（read_dir 本身便宜），再对文件级头读
+        // 并行化 —— 串行逐文件读头在 SSH 上是 N 次往返叠加（实测 10 项目
+        // 拖 23s），par_map 批 8 并发后 ≈ N/8 次
+        let mut flat: Vec<(PathBuf, FsDirent)> = Vec::new();
         for dir in &project_dirs {
             if !dir.is_directory {
                 continue;
@@ -345,31 +348,38 @@ impl AgentAdapter for PiAdapter {
             let Ok(files) = fs.read_dir(&dir_path) else {
                 continue;
             };
-            for f in &files {
-                if !f.is_file || !f.name.ends_with(".jsonl") {
-                    continue;
+            for f in files {
+                if f.is_file && f.name.ends_with(".jsonl") {
+                    flat.push((dir_path.clone(), f));
                 }
-                let file_path = dir_path.join(&f.name);
-                // 每个文件读自己的首行：半写/损坏文件只影响它自己，
-                // 不会用坏头污染同目录其他会话（曾因目录级缓存引入此缺陷）
-                let Some((cwd, created_ms)) = read_session_head(&file_path, fs) else {
-                    log::debug!("pi: skip file without valid session head: {}", file_path.display());
-                    continue;
-                };
-                let stem = f.name.trim_end_matches(".jsonl");
-                entries.push(AgentSessionEntry {
-                    agent: AgentKind::Pi,
-                    project_id: encode_path(&cwd),
-                    project_path: cwd,
-                    session_id: session_id_from_stem(stem),
-                    file_path,
-                    mtime_ms: f.mtime_ms.unwrap_or(0),
-                    birthtime_ms: f.birthtime_ms.unwrap_or(0),
-                    created_ms,
-                });
             }
         }
-        entries
+        crate::agents::par_map(flat, 8, |(dir_path, f)| {
+            let file_path = dir_path.join(&f.name);
+            // 每个文件读自己的首行：半写/损坏文件只影响它自己，
+            // 不会用坏头污染同目录其他会话（曾因目录级缓存引入此缺陷）
+            let (cwd, created_ms) = match read_session_head(&file_path, fs) {
+                Some(h) => h,
+                None => {
+                    log::debug!("pi: skip file without valid session head: {}", file_path.display());
+                    return None;
+                }
+            };
+            let stem = f.name.trim_end_matches(".jsonl");
+            Some(AgentSessionEntry {
+                agent: AgentKind::Pi,
+                project_id: encode_path(&cwd),
+                project_path: cwd,
+                session_id: session_id_from_stem(stem),
+                mtime_ms: f.mtime_ms.unwrap_or(0),
+                birthtime_ms: f.birthtime_ms.unwrap_or(0),
+                created_ms,
+                file_path,
+            })
+        })
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
     fn locate_session(
