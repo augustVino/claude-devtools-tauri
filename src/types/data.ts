@@ -16,6 +16,7 @@
 
 // Domain types
 export type {
+  AgentKind,
   PhaseTokenBreakdown,
   Project,
   RepositoryGroup,
