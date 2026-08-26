@@ -58,6 +58,8 @@ async-trait = "0.1"
 url = "2"
 base64 = "0.22"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+ruzstd = "0.8.2"
+zstd = { version = "0.13.3", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
