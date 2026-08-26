@@ -105,8 +105,18 @@ impl SessionServiceImpl {
     }
 
     /// 通过 fs_provider 检查路径是否存在（SSH-aware）。
+    ///
+    /// SQLite 型 agent（OpenCode）用虚拟路径 `{db}#{session_id}` 寻址，
+    /// 文件系统上不存在 —— 含 `#` 的路径改判「库文件存在 + 会话在库中」
+    ///（adapter 的 parse/light 自会处理会话缺失的情形）。
     async fn path_exists(&self, path: &Path) -> Result<bool, AppError> {
         let fs_provider = self.fs_provider().await?;
+        let s = path.to_string_lossy();
+        if let Some((db, sid)) = s.split_once('#') {
+            if !db.is_empty() && !sid.is_empty() {
+                return Ok(fs_provider.exists(Path::new(db)).unwrap_or(false));
+            }
+        }
         Ok(fs_provider.exists(path).unwrap_or(false))
     }
 
@@ -452,7 +462,8 @@ impl SessionServiceImpl {
         // 始终重新解析，不使用 slim 缓存
         let session_path = self.session_path(project_id, session_id).await?;
         let fs_provider = self.fs_provider().await?;
-        if !fs_provider.exists(&session_path).unwrap_or(false) {
+        // 虚拟路径感知（同 get_session_metrics）
+        if !self.path_exists(&session_path).await? {
             return Ok(None);
         }
 
@@ -572,7 +583,8 @@ impl SessionServiceImpl {
     ) -> Result<Option<SessionMetrics>, AppError> {
         let session_path = self.session_path(project_id, session_id).await?;
         let fs_provider = self.fs_provider().await?;
-        if !fs_provider.exists(&session_path).unwrap_or(false) {
+        // 虚拟路径感知（OpenCode `{db}#{sid}`：文件系统上不存在）
+        if !self.path_exists(&session_path).await? {
             return Ok(None);
         }
 
@@ -594,7 +606,8 @@ impl SessionServiceImpl {
     ) -> Result<Vec<ConversationGroup>, AppError> {
         let session_path = self.session_path(project_id, session_id).await?;
         let fs_provider = self.fs_provider().await?;
-        if !fs_provider.exists(&session_path).unwrap_or(false) {
+        // 虚拟路径感知（同 get_session_metrics）
+        if !self.path_exists(&session_path).await? {
             return Ok(vec![]);
         }
 
@@ -617,7 +630,8 @@ impl SessionServiceImpl {
     ) -> Result<Option<crate::analysis::waterfall_builder::WaterfallData>, AppError> {
         let session_path = self.session_path(project_id, session_id).await?;
         let fs_provider = self.fs_provider().await?;
-        if !fs_provider.exists(&session_path).unwrap_or(false) {
+        // 虚拟路径感知（同 get_session_metrics）
+        if !self.path_exists(&session_path).await? {
             return Ok(None);
         }
 

@@ -48,15 +48,16 @@
 //!   以自编码 id（`encode_path(cwd)`）独立成项 —— 自编码 id **仅保证本模块
 //!   内部一致**（list/locate 复用同一函数），不承诺与 Claude 目录名一致。
 //!
-//! # 覆盖范围声明（截至 P2b）
+//! # 覆盖范围声明（截至 P3）
 //!
-//! 已接入 Pi / Codex 的入口：项目列表、会话列表、会话详情/指标/分组/瀑布、
-//! 全局与项目内搜索、按 id/部分 id 查找、仓库分组、删除（本地模式）、
-//! **文件监听实时刷新**（本地：notify 递归监听 pi sessions 与 codex
-//! sessions/archived_sessions 根；SSH：轮询两层布局根 —— pi 可用，
-//! **codex 日期树在 SSH 模式下不实时**（拉模式可用，见 [`watch_roots`]））。
+//! 已接入 Pi / Codex / OpenCode 的入口：项目列表、会话列表、会话详情/
+//! 指标/分组/瀑布、全局与项目内搜索、按 id/部分 id 查找、仓库分组。
+//! 文件监听：Pi（本地+SSH 两层轮询）、Codex（本地 notify）；OpenCode 为
+//! SQLite 型，无实时刷新（列表靠 TTL 兑底，见 opencode.rs 模块文档）。
 //! 错误检测通知（error_detector）为 claude JSONL 语义，extra agent 会话
 //! 不参与（入口按 `event.agent` 过滤）。
+//! 其他边界：删除仅本地模式且 OpenCode 为只读 no-op；SSH 模式 OpenCode
+//! 不可用（rusqlite 需本地访问，降级日志可查）。
 //!
 //! # 新增 agent 的检查单
 //!
@@ -73,6 +74,7 @@
 
 mod claude;
 mod codex;
+mod opencode;
 mod pi;
 
 use std::path::{Path, PathBuf};
@@ -86,6 +88,7 @@ use crate::utils::{encode_path, extract_base_dir, extract_project_name};
 
 pub use claude::ClaudeAdapter;
 pub use codex::CodexAdapter;
+pub use opencode::OpencodeAdapter;
 pub use pi::PiAdapter;
 
 /// 单个 agent 工具的会话数据适配器。
@@ -215,6 +218,7 @@ pub fn create_adapters() -> Vec<Arc<dyn AgentAdapter>> {
     vec![
         Arc::new(ClaudeAdapter::new()),
         Arc::new(CodexAdapter::new()),
+        Arc::new(OpencodeAdapter::new()),
         Arc::new(PiAdapter::new()),
     ]
 }
@@ -796,10 +800,11 @@ mod tests {
     #[test]
     fn registry_contains_all_registered_kinds_in_order() {
         let adapters = create_adapters();
-        assert_eq!(adapters.len(), 3);
+        assert_eq!(adapters.len(), 4);
         assert_eq!(adapters[0].kind(), AgentKind::ClaudeCode);
         assert_eq!(adapters[1].kind(), AgentKind::Codex);
-        assert_eq!(adapters[2].kind(), AgentKind::Pi);
+        assert_eq!(adapters[2].kind(), AgentKind::Opencode);
+        assert_eq!(adapters[3].kind(), AgentKind::Pi);
     }
 
     #[test]
