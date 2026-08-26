@@ -225,7 +225,7 @@ export const AdvancedSection = ({
             className="mt-2 text-xs leading-relaxed"
             style={{ color: "var(--color-text-muted)" }}
           >
-            Visualize and analyze Claude Code session executions with
+            Visualize and analyze coding agent session executions with
             interactive waterfall charts and detailed insights.
           </p>
           <div className="mt-2 flex items-center gap-2 text-xs" style={{ color: "var(--color-text-muted)" }}>

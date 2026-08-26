@@ -66,6 +66,9 @@ export const createConnectionSlice: StateCreator<AppState, [], [], ConnectionSli
   connectSsh: async (config: SshConnectionConfig): Promise<void> => {
     set({
       isContextSwitching: true,
+      // 与后端 ssh_context_id 同构（ssh-{host}）：切换 overlay 显示
+      // 目标主机名而非 Unknown（此前漏设，overlay 只能 fallback 'Unknown'）
+      targetContextId: `ssh-${config.host}`,
       connectionState: 'connecting',
       connectedHost: config.host,
       connectionError: null,
@@ -137,12 +140,13 @@ export const createConnectionSlice: StateCreator<AppState, [], [], ConnectionSli
         connectionState: 'error',
         connectionError: message,
         isContextSwitching: false,
+        targetContextId: null,
       });
     }
   },
 
   disconnectSsh: async (): Promise<void> => {
-    set({ isContextSwitching: true });
+    set({ isContextSwitching: true, targetContextId: 'local' });
 
     try {
       const status = await api.ssh.disconnect();

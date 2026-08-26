@@ -365,12 +365,14 @@ export const GeneralSection = ({
 
       {isDesktop && (
         <>
-          <SettingsSectionHeader title="Local Claude Root" />
+          <SettingsSectionHeader title="Local Data Root" />
           <p
             className="mb-4 text-sm"
             style={{ color: "var(--color-text-muted)" }}
           >
-            Choose which local folder is treated as your Claude data root
+            Choose the data root for Claude Code sessions. Other agents
+            (Codex/OpenCode/Pi/dsh) are auto-discovered from their standard
+            home directories.
           </p>
 
           <SettingRow
@@ -480,7 +482,7 @@ export const GeneralSection = ({
                   className="text-sm font-semibold"
                   style={{ color: "var(--color-text)" }}
                 >
-                  Select WSL Claude Root
+                  Select WSL Claude Root (Claude Code data)
                 </h3>
                 <p
                   className="mt-1 text-xs"

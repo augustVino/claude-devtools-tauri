@@ -203,7 +203,8 @@ export const ConnectionSection = (): React.JSX.Element => {
     <div className="space-y-6">
       <SettingsSectionHeader title="Remote Connection" />
       <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-        Connect to a remote machine to view Claude Code sessions running there
+        Connect to a remote machine to view agent sessions running there
+        (Claude Code / Codex / OpenCode / Pi / dsh)
       </p>
 
       {/* Connection Status */}

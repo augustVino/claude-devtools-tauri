@@ -429,7 +429,7 @@ export const DashboardView = (): React.JSX.Element => {
             <button
               onClick={() => openSettingsTab('general')}
               className="flex items-center gap-1.5 text-xs text-text-muted transition-colors hover:text-text-secondary"
-              title="Change Claude data folder"
+              title="Change Claude Code data folder"
             >
               <Settings className="size-3" />
               Change default folder

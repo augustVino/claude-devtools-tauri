@@ -521,7 +521,10 @@ export class TauriAPIClient implements ElectronAPI {
       const home = await homeDir();
       const result = await open({
         directory: true,
-        title: "Select Claude Root Folder",
+        // 隐藏目录（.claude/.codex 等）在 macOS 对话框默认不可见 ——
+        // 标题提示 Cmd+Shift+. 快捷键（用户目标路径几乎都在隐藏目录，
+        // 没有这个提示等于不可用）
+        title: "Select Claude Root Folder (press Cmd+Shift+. to show hidden folders)",
         defaultPath: home,
       });
       if (result === null) return null;
